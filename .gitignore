@@ -90,8 +90,8 @@ coverage/
 # Test related
 .test_coverage.dart
 
-# Generated files
-*.g.dart
+# Generated files - keep *.g.dart committed (required for Hive adapters to build)
+# *.g.dart  <-- intentionally not ignored
 *.freezed.dart
 *.mocks.dart
 

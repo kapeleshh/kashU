@@ -7,6 +7,7 @@ import '../../core/constants/app_strings.dart';
 import '../../data/models/asset.dart';
 import '../../data/models/asset_type.dart';
 import '../../shared/providers/portfolio_provider.dart';
+import '../../data/repositories/transaction_repository.dart';
 
 class AddAssetScreen extends ConsumerStatefulWidget {
   final Asset? existingAsset;
@@ -155,7 +156,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                       if (value == null || value.isEmpty) {
                         return AppStrings.errorRequired;
                       }
-                      if (double.tryParse(value) == null) {
+                      final parsed = double.tryParse(value);
+                      if (parsed == null || parsed <= 0) {
                         return AppStrings.errorInvalidNumber;
                       }
                       return null;
@@ -166,16 +168,17 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                 Expanded(
                   child: TextFormField(
                     controller: _purchasePriceController,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: AppStrings.purchasePrice,
-                      prefixText: '₹ ',
+                      prefixText: '${AppConstants.currencies[_selectedCurrency] ?? _selectedCurrency} ',
                     ),
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     validator: (value) {
                       if (value == null || value.isEmpty) {
                         return AppStrings.errorRequired;
                       }
-                      if (double.tryParse(value) == null) {
+                      final parsed = double.tryParse(value);
+                      if (parsed == null || parsed < 0) {
                         return AppStrings.errorInvalidNumber;
                       }
                       return null;
@@ -190,9 +193,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
             // Current Price
             TextFormField(
               controller: _currentPriceController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: AppStrings.currentPrice,
-                prefixText: '₹ ',
+                prefixText: '${AppConstants.currencies[_selectedCurrency] ?? _selectedCurrency} ',
               ),
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               validator: (value) {
@@ -295,36 +298,50 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     if (!_formKey.currentState!.validate()) return;
 
     final now = DateTime.now();
+    final isNew = !isEditing;
     final asset = Asset(
       id: widget.existingAsset?.id ?? const Uuid().v4(),
       name: _nameController.text.trim(),
-      symbol: _symbolController.text.trim().isNotEmpty ? _symbolController.text.trim() : null,
+      symbol: _symbolController.text.trim().isNotEmpty
+          ? _symbolController.text.trim()
+          : null,
       type: _selectedType,
-      quantity: double.parse(_quantityController.text),
-      purchasePrice: double.parse(_purchasePriceController.text),
-      currentPrice: double.parse(_currentPriceController.text),
+      quantity: double.tryParse(_quantityController.text) ?? 0,
+      purchasePrice: double.tryParse(_purchasePriceController.text) ?? 0,
+      currentPrice: double.tryParse(_currentPriceController.text) ?? 0,
       currency: _selectedCurrency,
       purchaseDate: _purchaseDate,
       platform: _selectedPlatform,
-      notes: _notesController.text.trim().isNotEmpty ? _notesController.text.trim() : null,
+      notes: _notesController.text.trim().isNotEmpty
+          ? _notesController.text.trim()
+          : null,
       createdAt: widget.existingAsset?.createdAt ?? now,
       updatedAt: now,
       priceUpdatedAt: now,
     );
 
-    final repository = ref.read(assetRepositoryProvider);
-    
+    final assetRepo = ref.read(assetRepositoryProvider);
+    final txRepo = TransactionRepository();
+
     if (isEditing) {
-      await repository.updateAsset(asset);
+      await assetRepo.updateAsset(asset);
     } else {
-      await repository.addAsset(asset);
+      await assetRepo.addAsset(asset);
+      // Log a BUY transaction for the new asset
+      await txRepo.logBuyTransaction(asset);
     }
+
+    // Refresh providers
+    ref.invalidate(allAssetsProvider);
+    ref.invalidate(portfolioSummaryProvider);
 
     if (mounted) {
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(isEditing ? 'Asset updated successfully' : 'Asset added successfully'),
+          content: Text(
+            isNew ? 'Asset added & transaction logged' : 'Asset updated successfully',
+          ),
         ),
       );
     }
@@ -343,13 +360,22 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
           ),
           TextButton(
             onPressed: () async {
-              final repository = ref.read(assetRepositoryProvider);
-              await repository.deleteAsset(widget.existingAsset!.id);
+              final assetId = widget.existingAsset!.id;
+              final assetRepo = ref.read(assetRepositoryProvider);
+              final txRepo = TransactionRepository();
+
+              // Delete asset AND its associated transactions
+              await assetRepo.deleteAsset(assetId);
+              await txRepo.deleteTransactionsForAsset(assetId);
+
+              ref.invalidate(allAssetsProvider);
+              ref.invalidate(portfolioSummaryProvider);
+
               if (mounted) {
                 Navigator.pop(context); // Close dialog
                 Navigator.pop(context); // Close screen
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Asset deleted')),
+                  const SnackBar(content: Text('Asset and its transactions deleted')),
                 );
               }
             },

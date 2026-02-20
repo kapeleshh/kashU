@@ -3,6 +3,9 @@ import '../models/asset.dart';
 import '../models/asset_type.dart';
 import '../../core/constants/app_constants.dart';
 
+// Settings box helpers
+Box _settingsBox() => Hive.box(AppConstants.settingsBox);
+
 /// Repository for managing Asset data in Hive
 class AssetRepository {
   Box<Asset>? _box;
@@ -127,6 +130,16 @@ class AssetRepository {
       final asset = Asset.fromJson(json);
       await addAsset(asset);
     }
+  }
+
+  /// Get base currency from settings
+  String getBaseCurrency() {
+    return _settingsBox().get(AppConstants.keyBaseCurrency, defaultValue: 'INR') as String;
+  }
+
+  /// Save base currency to settings
+  Future<void> setBaseCurrency(String currency) async {
+    await _settingsBox().put(AppConstants.keyBaseCurrency, currency);
   }
 
   /// Clear all assets

@@ -1,42 +1,41 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import '../../core/constants/app_colors.dart';
-import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../data/models/transaction.dart';
 import '../../data/models/transaction_type.dart';
+import '../../shared/providers/portfolio_provider.dart';
 
 class TransactionsScreen extends ConsumerWidget {
   const TransactionsScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Use TransactionRepository via provider — consistent with rest of app
+    final txRepo = ref.watch(transactionRepositoryProvider);
+    final transactions = txRepo.getAllTransactions();
+
     return Scaffold(
       appBar: AppBar(
         title: const Text(AppStrings.transactions),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () => ref.invalidate(transactionRepositoryProvider),
+          ),
+        ],
       ),
-      body: ValueListenableBuilder(
-        valueListenable: Hive.box<Transaction>(AppConstants.transactionsBox).listenable(),
-        builder: (context, Box<Transaction> box, _) {
-          final transactions = box.values.toList()
-            ..sort((a, b) => b.date.compareTo(a.date));
-
-          if (transactions.isEmpty) {
-            return _buildEmptyState();
-          }
-
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: transactions.length,
-            itemBuilder: (context, index) {
-              final transaction = transactions[index];
-              return _TransactionCard(transaction: transaction);
-            },
-          );
-        },
-      ),
+      body: transactions.isEmpty
+          ? _buildEmptyState()
+          : ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: transactions.length,
+              itemBuilder: (context, index) {
+                final transaction = transactions[index];
+                return _TransactionCard(transaction: transaction);
+              },
+            ),
     );
   }
 
@@ -60,7 +59,7 @@ class TransactionsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Transactions will appear here when you add assets',
+            'Add an asset to see your transactions here',
             style: TextStyle(
               color: AppColors.textTertiary,
               fontSize: 14,
@@ -103,9 +102,23 @@ class _TransactionCard extends StatelessWidget {
           transaction.type.displayName,
           style: const TextStyle(fontWeight: FontWeight.w600),
         ),
-        subtitle: Text(
-          '${transaction.date.day}/${transaction.date.month}/${transaction.date.year}',
-          style: TextStyle(color: AppColors.textTertiary),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${transaction.date.day}/${transaction.date.month}/${transaction.date.year}',
+              style: TextStyle(color: AppColors.textTertiary),
+            ),
+            if (transaction.notes != null && transaction.notes!.isNotEmpty)
+              Text(
+                transaction.notes!,
+                style: TextStyle(
+                  color: AppColors.textTertiary,
+                  fontSize: 12,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+          ],
         ),
         trailing: Column(
           mainAxisAlignment: MainAxisAlignment.center,

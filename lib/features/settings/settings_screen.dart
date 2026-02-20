@@ -2,13 +2,12 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
-import '../../data/models/transaction.dart';
+import '../../data/repositories/transaction_repository.dart';
 import '../../shared/providers/portfolio_provider.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -16,6 +15,8 @@ class SettingsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final baseCurrency = ref.watch(baseCurrencyProvider);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text(AppStrings.settings),
@@ -23,6 +24,23 @@ class SettingsScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // Preferences Section
+          _buildSectionHeader(context, 'Preferences'),
+          const SizedBox(height: 8),
+          _buildSettingsCard([
+            _BaseCurrencyTile(
+              currentCurrency: baseCurrency,
+              onChanged: (currency) async {
+                final assetRepo = ref.read(assetRepositoryProvider);
+                await assetRepo.setBaseCurrency(currency);
+                ref.read(baseCurrencyProvider.notifier).state = currency;
+                ref.invalidate(portfolioSummaryProvider);
+              },
+            ),
+          ]),
+
+          const SizedBox(height: 24),
+
           // Data Management Section
           _buildSectionHeader(context, AppStrings.dataManagement),
           const SizedBox(height: 8),
@@ -90,8 +108,8 @@ class SettingsScreen extends ConsumerWidget {
                 Text(
                   AppStrings.appName,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+                        fontWeight: FontWeight.bold,
+                      ),
                 ),
                 const SizedBox(height: 4),
                 Text(
@@ -115,9 +133,9 @@ class SettingsScreen extends ConsumerWidget {
     return Text(
       title,
       style: Theme.of(context).textTheme.titleSmall?.copyWith(
-        color: AppColors.textSecondary,
-        fontWeight: FontWeight.w600,
-      ),
+            color: AppColors.textSecondary,
+            fontWeight: FontWeight.w600,
+          ),
     );
   }
 
@@ -128,8 +146,9 @@ class SettingsScreen extends ConsumerWidget {
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
-        children: children.map((child) {
-          final index = children.indexOf(child);
+        children: children.asMap().entries.map((entry) {
+          final index = entry.key;
+          final child = entry.value;
           if (index < children.length - 1) {
             return Column(
               children: [
@@ -146,23 +165,20 @@ class SettingsScreen extends ConsumerWidget {
 
   Future<void> _exportData(BuildContext context, WidgetRef ref) async {
     try {
-      final repository = ref.read(assetRepositoryProvider);
-      final assets = repository.exportToJson();
-      
-      final transactionsBox = Hive.box<Transaction>(AppConstants.transactionsBox);
-      final transactions = transactionsBox.values.map((t) => t.toJson()).toList();
+      final assetRepo = ref.read(assetRepositoryProvider);
+      final txRepo = ref.read(transactionRepositoryProvider);
 
       final exportData = {
         'version': '1.0',
         'exportedAt': DateTime.now().toIso8601String(),
-        'assets': assets,
-        'transactions': transactions,
+        'assets': assetRepo.exportToJson(),
+        'transactions': txRepo.exportToJson(),
       };
 
       final jsonString = const JsonEncoder.withIndent('  ').convert(exportData);
-      
       final directory = await getApplicationDocumentsDirectory();
-      final file = File('${directory.path}/kashu_backup_${DateTime.now().millisecondsSinceEpoch}.json');
+      final file = File(
+          '${directory.path}/kashu_backup_${DateTime.now().millisecondsSinceEpoch}.json');
       await file.writeAsString(jsonString);
 
       await Share.shareXFiles(
@@ -185,17 +201,77 @@ class SettingsScreen extends ConsumerWidget {
   }
 
   void _showImportDialog(BuildContext context, WidgetRef ref) {
+    final textController = TextEditingController();
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text(AppStrings.importData),
-        content: const Text(
-          'To import data, paste your backup JSON content below or use the file import feature on your device.',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Paste your KashU backup JSON below:',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: textController,
+              maxLines: 6,
+              decoration: const InputDecoration(
+                hintText: '{ "version": "1.0", "assets": [...] }',
+                border: OutlineInputBorder(),
+              ),
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+          ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text(AppStrings.cancel),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final json = textController.text.trim();
+              if (json.isEmpty) return;
+
+              try {
+                final data = jsonDecode(json) as Map<String, dynamic>;
+                final assetRepo = ref.read(assetRepositoryProvider);
+                final txRepo = ref.read(transactionRepositoryProvider);
+
+                if (data['assets'] != null) {
+                  await assetRepo.importFromJson(
+                    List<Map<String, dynamic>>.from(data['assets'] as List),
+                  );
+                }
+                if (data['transactions'] != null) {
+                  await txRepo.importFromJson(
+                    List<Map<String, dynamic>>.from(
+                        data['transactions'] as List),
+                  );
+                }
+
+                ref.invalidate(allAssetsProvider);
+                ref.invalidate(portfolioSummaryProvider);
+
+                if (context.mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Import successful!')),
+                  );
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Import failed: invalid JSON - $e')),
+                  );
+                }
+              }
+            },
+            child: const Text('Import'),
           ),
         ],
       ),
@@ -217,11 +293,10 @@ class SettingsScreen extends ConsumerWidget {
           ),
           TextButton(
             onPressed: () async {
-              final repository = ref.read(assetRepositoryProvider);
-              await repository.clearAll();
-              
-              final transactionsBox = Hive.box<Transaction>(AppConstants.transactionsBox);
-              await transactionsBox.clear();
+              final assetRepo = ref.read(assetRepositoryProvider);
+              final txRepo = ref.read(transactionRepositoryProvider);
+              await assetRepo.clearAll();
+              await txRepo.clearAll();
 
               ref.invalidate(portfolioSummaryProvider);
               ref.invalidate(allAssetsProvider);
@@ -304,6 +379,102 @@ class SettingsScreen extends ConsumerWidget {
         ],
       ),
     );
+  }
+}
+
+/// Tile for selecting the base display currency
+class _BaseCurrencyTile extends StatelessWidget {
+  final String currentCurrency;
+  final ValueChanged<String> onChanged;
+
+  const _BaseCurrencyTile({
+    required this.currentCurrency,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: AppColors.primary.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(Icons.currency_exchange, color: AppColors.primary, size: 20),
+      ),
+      title: const Text('Base Currency'),
+      subtitle: Text(
+        '$currentCurrency (${AppConstants.currencies[currentCurrency] ?? currentCurrency})',
+        style: TextStyle(color: AppColors.textTertiary, fontSize: 13),
+      ),
+      trailing: Icon(Icons.chevron_right, color: AppColors.textTertiary),
+      onTap: () => _showCurrencyPicker(context),
+    );
+  }
+
+  void _showCurrencyPicker(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 16),
+          Text(
+            'Select Base Currency',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Flexible(
+            child: ListView(
+              shrinkWrap: true,
+              children: AppConstants.currencies.entries.map((entry) {
+                final isSelected = entry.key == currentCurrency;
+                return ListTile(
+                  leading: Text(
+                    entry.value,
+                    style: const TextStyle(fontSize: 22),
+                  ),
+                  title: Text(entry.key),
+                  subtitle: Text(_currencyName(entry.key)),
+                  trailing: isSelected
+                      ? Icon(Icons.check_circle, color: AppColors.primary)
+                      : null,
+                  selected: isSelected,
+                  onTap: () {
+                    onChanged(entry.key);
+                    Navigator.pop(context);
+                  },
+                );
+              }).toList(),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
+  String _currencyName(String code) {
+    const names = {
+      'INR': 'Indian Rupee',
+      'USD': 'US Dollar',
+      'EUR': 'Euro',
+      'GBP': 'British Pound',
+      'JPY': 'Japanese Yen',
+      'AED': 'UAE Dirham',
+      'SGD': 'Singapore Dollar',
+      'AUD': 'Australian Dollar',
+      'CAD': 'Canadian Dollar',
+      'CHF': 'Swiss Franc',
+    };
+    return names[code] ?? code;
   }
 }
 
