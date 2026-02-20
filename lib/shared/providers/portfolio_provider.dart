@@ -3,6 +3,7 @@ import '../../data/models/asset.dart';
 import '../../data/models/portfolio_summary.dart';
 import '../../data/repositories/asset_repository.dart';
 import '../../data/repositories/transaction_repository.dart';
+import '../../services/price_update_service.dart';
 
 /// Provider for AssetRepository
 final assetRepositoryProvider = Provider<AssetRepository>((ref) {
@@ -57,3 +58,15 @@ final allAssetsProvider = Provider<List<Asset>>((ref) {
   final repository = ref.watch(assetRepositoryProvider);
   return repository.getAllAssets();
 });
+
+/// Provider for PriceUpdateService
+final priceUpdateServiceProvider = Provider<PriceUpdateService>((ref) {
+  final assetRepo = ref.watch(assetRepositoryProvider);
+  return PriceUpdateService(assetRepository: assetRepo);
+});
+
+/// Tracks whether a price refresh is currently in progress
+final isRefreshingPricesProvider = StateProvider<bool>((ref) => false);
+
+/// Holds the result of the last price refresh (null if never refreshed)
+final lastRefreshResultProvider = StateProvider<PriceRefreshResult?>((ref) => null);

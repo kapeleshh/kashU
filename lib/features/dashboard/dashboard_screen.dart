@@ -11,6 +11,73 @@ import '../assets/assets_screen.dart';
 import '../transactions/transactions_screen.dart';
 import '../settings/settings_screen.dart';
 
+// Helper to refresh all prices and update the portfolio
+Future<void> _doRefreshPrices(WidgetRef ref, BuildContext context) async {
+  ref.read(isRefreshingPricesProvider.notifier).state = true;
+  try {
+    final service = ref.read(priceUpdateServiceProvider);
+    final result = await service.refreshAllPrices();
+    ref.read(lastRefreshResultProvider.notifier).state = result;
+
+    // Refresh portfolio data
+    ref.invalidate(allAssetsProvider);
+    ref.invalidate(portfolioSummaryProvider);
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.summary),
+          backgroundColor:
+              result.hasErrors ? AppColors.error : AppColors.success,
+          action: result.hasErrors
+              ? SnackBarAction(
+                  label: 'Details',
+                  onPressed: () => _showErrorDetails(context, result.errors),
+                )
+              : null,
+        ),
+      );
+    }
+  } finally {
+    ref.read(isRefreshingPricesProvider.notifier).state = false;
+  }
+}
+
+String _formatTime(DateTime dt) {
+  final now = DateTime.now();
+  final diff = now.difference(dt);
+  if (diff.inSeconds < 60) return 'Just now';
+  if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+  return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+}
+
+void _showErrorDetails(BuildContext context, List<String> errors) {
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Price Update Errors'),
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: errors
+              .map((e) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text('• $e', style: const TextStyle(fontSize: 13)),
+                  ))
+              .toList(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
+}
+
 class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
 
@@ -82,6 +149,8 @@ class _DashboardContent extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final portfolioAsync = ref.watch(portfolioSummaryProvider);
+    final isRefreshing = ref.watch(isRefreshingPricesProvider);
+    final lastResult = ref.watch(lastRefreshResultProvider);
 
     return SafeArea(
       child: CustomScrollView(
@@ -112,21 +181,74 @@ class _DashboardContent extends ConsumerWidget {
                 const SizedBox(width: 12),
                 const Text(
                   AppStrings.appName,
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontWeight: FontWeight.bold),
                 ),
               ],
             ),
             actions: [
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                onPressed: () {
-                  ref.invalidate(portfolioSummaryProvider);
-                },
-              ),
+              // Refresh Prices button
+              isRefreshing
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      ),
+                    )
+                  : IconButton(
+                      icon: const Icon(Icons.sync),
+                      tooltip: 'Refresh Prices',
+                      onPressed: () => _doRefreshPrices(ref, context),
+                    ),
             ],
           ),
+
+          // Last updated banner
+          if (lastResult != null)
+            SliverToBoxAdapter(
+              child: Container(
+                color: lastResult.hasErrors
+                    ? AppColors.error.withOpacity(0.1)
+                    : AppColors.success.withOpacity(0.1),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                child: Row(
+                  children: [
+                    Icon(
+                      lastResult.hasErrors
+                          ? Icons.warning_amber_outlined
+                          : Icons.check_circle_outline,
+                      size: 14,
+                      color: lastResult.hasErrors
+                          ? AppColors.error
+                          : AppColors.success,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      lastResult.summary,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: lastResult.hasErrors
+                            ? AppColors.error
+                            : AppColors.success,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      _formatTime(lastResult.completedAt),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textTertiary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
 
           // Content
           SliverPadding(
