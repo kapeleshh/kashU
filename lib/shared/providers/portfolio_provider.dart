@@ -3,6 +3,7 @@ import '../../data/models/asset.dart';
 import '../../data/models/portfolio_summary.dart';
 import '../../data/repositories/asset_repository.dart';
 import '../../data/repositories/transaction_repository.dart';
+import '../../services/currency_converter_service.dart';
 import '../../services/price_update_service.dart';
 
 /// Provider for AssetRepository
@@ -24,9 +25,9 @@ final baseCurrencyProvider = StateProvider<String>((ref) {
 /// Provider for portfolio summary
 final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
   final repository = ref.watch(assetRepositoryProvider);
-  
+
   final assets = repository.getAllAssets();
-  
+
   if (assets.isEmpty) {
     return PortfolioSummary.empty();
   }
@@ -34,8 +35,8 @@ final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
   final totalValue = repository.getTotalValue();
   final totalInvested = repository.getTotalInvested();
   final totalGainLoss = totalValue - totalInvested;
-  final totalGainLossPercentage = totalInvested > 0 
-      ? (totalGainLoss / totalInvested) * 100 
+  final totalGainLossPercentage = totalInvested > 0
+      ? (totalGainLoss / totalInvested) * 100
       : 0.0;
 
   return PortfolioSummary(
@@ -53,20 +54,31 @@ final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
   );
 });
 
-/// Provider for all assets - correctly typed as List<Asset>
+/// Provider for all assets - correctly typed as `List<Asset>`
 final allAssetsProvider = Provider<List<Asset>>((ref) {
   final repository = ref.watch(assetRepositoryProvider);
   return repository.getAllAssets();
 });
 
-/// Provider for PriceUpdateService
+/// Provider for CurrencyConverterService (singleton with cache)
+final currencyConverterServiceProvider =
+    Provider<CurrencyConverterService>((ref) {
+  return CurrencyConverterService();
+});
+
+/// Provider for PriceUpdateService (includes currency conversion)
 final priceUpdateServiceProvider = Provider<PriceUpdateService>((ref) {
   final assetRepo = ref.watch(assetRepositoryProvider);
-  return PriceUpdateService(assetRepository: assetRepo);
+  final currencyConverter = ref.watch(currencyConverterServiceProvider);
+  return PriceUpdateService(
+    assetRepository: assetRepo,
+    currencyConverter: currencyConverter,
+  );
 });
 
 /// Tracks whether a price refresh is currently in progress
 final isRefreshingPricesProvider = StateProvider<bool>((ref) => false);
 
 /// Holds the result of the last price refresh (null if never refreshed)
-final lastRefreshResultProvider = StateProvider<PriceRefreshResult?>((ref) => null);
+final lastRefreshResultProvider =
+    StateProvider<PriceRefreshResult?>((ref) => null);
