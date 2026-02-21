@@ -48,8 +48,15 @@ abstract class PriceService {
 class PriceSymbols {
   PriceSymbols._();
 
-  /// Gold futures on Yahoo Finance (USD/troy oz)
-  static const String goldUSD = 'GC=F';
+  /// COMEX Gold futures (USD per troy oz) — international price
+  static const String goldComex = 'GC=F';
+
+  /// MCX Gold (India) — returns INR per 10 grams, reflects Indian market
+  /// including import duty (~15%) and GST (3%)
+  static const String goldMCX = 'GOLDM.MCX';
+
+  /// MCX Gold Mini — same price as goldMCX but smaller contract
+  static const String goldMCXMini = 'GOLDM.MCX';
 
   /// Bitcoin on CoinGecko
   static const String bitcoin = 'bitcoin';
@@ -57,18 +64,40 @@ class PriceSymbols {
   /// Ethereum on CoinGecko
   static const String ethereum = 'ethereum';
 
+  /// Returns the best gold symbol for the given base currency.
+  ///
+  /// - INR → MCX Gold (`GOLDM.MCX`) which reflects actual Indian market price
+  ///   including import duty and GST. Returns INR per 10g (divide by 10 for per gram).
+  /// - Other currencies → COMEX international spot price (`GC=F`) in USD/troy oz,
+  ///   converted via forex rates.
+  static String goldSymbolForCurrency(String baseCurrency) {
+    if (baseCurrency == 'INR') return goldMCX;
+    return goldComex;
+  }
+
+  /// Returns true if the given symbol is an MCX symbol (Indian exchange)
+  static bool isMCXSymbol(String symbol) {
+    return symbol.toUpperCase().endsWith('.MCX');
+  }
+
+  /// Returns true if the given symbol is the COMEX gold futures symbol
+  static bool isComexGold(String symbol) {
+    return symbol == goldComex;
+  }
+
   /// Returns the default symbol for auto-tracking (if none entered by user)
-  static String? defaultSymbol(AssetType type) {
+  /// [baseCurrency] is used to pick the best gold source
+  static String? defaultSymbol(AssetType type, {String baseCurrency = 'INR'}) {
     switch (type) {
       case AssetType.gold:
-        return goldUSD;
+        return goldSymbolForCurrency(baseCurrency);
       default:
         return null;
     }
   }
 
   /// Returns symbol input hint text for each asset type
-  static String symbolHint(AssetType type) {
+  static String symbolHint(AssetType type, {String baseCurrency = 'INR'}) {
     switch (type) {
       case AssetType.stock:
         return 'e.g. RELIANCE.NS, AAPL, TCS.NS';
@@ -77,7 +106,10 @@ class PriceSymbols {
       case AssetType.crypto:
         return 'e.g. bitcoin, ethereum, solana';
       case AssetType.gold:
-        return 'GC=F (auto-filled)';
+        if (baseCurrency == 'INR') {
+          return 'GOLDM.MCX (MCX India rate, auto-filled)';
+        }
+        return 'GC=F (COMEX international, auto-filled)';
       case AssetType.bond:
         return 'e.g. bond ticker (optional)';
       case AssetType.fixedDeposit:

@@ -51,7 +51,9 @@ class PriceUpdateService {
   Future<PriceRefreshResult> refreshAllPrices() async {
     final assets = _assetRepository.getAllAssets();
     final baseCurrency = _assetRepository.getBaseCurrency();
-    final trackable = assets.where(_isTrackable).toList();
+    final trackable = assets
+        .where((a) => _isTrackable(a, baseCurrency: baseCurrency))
+        .toList();
 
     int updated = 0;
     int skipped = assets.length - trackable.length;
@@ -100,9 +102,12 @@ class PriceUpdateService {
       }
     }
 
-    // --- Handle gold (Yahoo Finance GC=F → USD/troy oz → base currency/gram) ---
+    // --- Handle gold ---
+    // Two cases:
+    // 1. MCX symbol (GOLDM.MCX) → returns INR per 10g → divide by 10 for per gram
+    // 2. COMEX symbol (GC=F)    → returns USD per troy oz → convert to target/gram
     for (final asset in goldAssets) {
-      final symbol = _getSymbol(asset);
+      final symbol = _getSymbol(asset, baseCurrency: baseCurrency);
       if (symbol == null) {
         skipped++;
         continue;
@@ -110,25 +115,32 @@ class PriceUpdateService {
 
       final result = await _yahooService.fetchPrice(symbol);
       if (result.success) {
-        // Yahoo Finance returns gold in USD per troy oz
-        // Convert to the asset's stored currency per gram
         final targetCurrency =
             asset.currency.isNotEmpty ? asset.currency : baseCurrency;
-
         double pricePerGram;
-        if (exchangeRates.success) {
-          pricePerGram = await _currencyConverter.goldUSDPerOzToTargetPerGram(
-            result.price,
-            targetCurrency,
-          );
+
+        if (PriceSymbols.isMCXSymbol(symbol)) {
+          // MCX Gold returns INR per 10 grams → convert to per gram
+          // No forex conversion needed — already in INR
+          pricePerGram = result.price / 10.0;
         } else {
-          // Fallback: use approximate rates built into converter
-          pricePerGram = await _currencyConverter.goldUSDPerOzToTargetPerGram(
-            result.price,
-            targetCurrency,
-          );
-          errors.add(
-              'Warning: exchange rates unavailable, using approximate rates for ${asset.name}');
+          // COMEX GC=F returns USD per troy oz
+          // Convert: USD/oz → target currency/gram
+          if (exchangeRates.success) {
+            pricePerGram =
+                await _currencyConverter.goldUSDPerOzToTargetPerGram(
+              result.price,
+              targetCurrency,
+            );
+          } else {
+            pricePerGram =
+                await _currencyConverter.goldUSDPerOzToTargetPerGram(
+              result.price,
+              targetCurrency,
+            );
+            errors.add(
+                'Warning: using approximate forex rates for ${asset.name}');
+          }
         }
 
         await _assetRepository.updateAssetPrice(asset.id, pricePerGram);
@@ -210,21 +222,31 @@ class PriceUpdateService {
     }
 
     if (asset.type == AssetType.gold) {
-      // Gold: Yahoo returns USD/troy oz, convert to asset currency/gram
-      final result = await _yahooService.fetchPrice(symbol);
+      final goldSymbol = _getSymbol(asset, baseCurrency: baseCurrency);
+      if (goldSymbol == null) {
+        return PriceResult.failure(asset.name, 'No gold symbol available');
+      }
+      final result = await _yahooService.fetchPrice(goldSymbol);
       if (!result.success) return result;
 
       final targetCurrency =
           asset.currency.isNotEmpty ? asset.currency : baseCurrency;
-      final pricePerGram =
-          await _currencyConverter.goldUSDPerOzToTargetPerGram(
-        result.price,
-        targetCurrency,
-      );
+      double pricePerGram;
+
+      if (PriceSymbols.isMCXSymbol(goldSymbol)) {
+        // MCX: INR per 10g → per gram
+        pricePerGram = result.price / 10.0;
+      } else {
+        // COMEX: USD/troy oz → targetCurrency/gram
+        pricePerGram = await _currencyConverter.goldUSDPerOzToTargetPerGram(
+          result.price,
+          targetCurrency,
+        );
+      }
 
       await _assetRepository.updateAssetPrice(asset.id, pricePerGram);
       return PriceResult(
-        symbol: symbol,
+        symbol: goldSymbol,
         price: pricePerGram,
         currency: targetCurrency,
         fetchedAt: DateTime.now(),
@@ -260,15 +282,16 @@ class PriceUpdateService {
   }
 
   /// Determines if an asset can be auto-tracked
-  bool _isTrackable(Asset asset) {
+  bool _isTrackable(Asset asset, {String baseCurrency = 'INR'}) {
     if (!PriceSymbols.supportsAutoTracking(asset.type)) return false;
-    return _getSymbol(asset) != null;
+    return _getSymbol(asset, baseCurrency: baseCurrency) != null;
   }
 
-  /// Gets the effective symbol for an asset (user-set or auto-default)
-  String? _getSymbol(Asset asset) {
+  /// Gets the effective symbol for an asset (user-set or auto-default).
+  /// [baseCurrency] is used to pick the best gold source when no symbol is set.
+  String? _getSymbol(Asset asset, {String baseCurrency = 'INR'}) {
     final userSymbol = asset.symbol?.trim();
     if (userSymbol != null && userSymbol.isNotEmpty) return userSymbol;
-    return PriceSymbols.defaultSymbol(asset.type);
+    return PriceSymbols.defaultSymbol(asset.type, baseCurrency: baseCurrency);
   }
 }

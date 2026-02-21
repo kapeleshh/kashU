@@ -278,11 +278,14 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
   /// Builds a smart symbol input field based on the selected asset type
   Widget _buildSymbolField() {
-    final supportsTracking = PriceSymbols.supportsAutoTracking(_selectedType);
-    final hint = PriceSymbols.symbolHint(_selectedType);
-    final defaultSym = PriceSymbols.defaultSymbol(_selectedType);
+    // Read base currency from provider so gold symbol hint is currency-aware
+    final baseCurrency = ref.read(baseCurrencyProvider);
 
-    // Auto-fill default symbol for gold if field is empty
+    final supportsTracking = PriceSymbols.supportsAutoTracking(_selectedType);
+    final hint = PriceSymbols.symbolHint(_selectedType, baseCurrency: baseCurrency);
+    final defaultSym = PriceSymbols.defaultSymbol(_selectedType, baseCurrency: baseCurrency);
+
+    // Auto-fill default symbol for gold if field is empty (e.g. GOLDM.MCX for INR)
     if (defaultSym != null && _symbolController.text.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _symbolController.text.isEmpty) {
@@ -315,7 +318,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
           Text(
             _selectedType == AssetType.crypto
                 ? '💡 Use CoinGecko ID (e.g. bitcoin, ethereum)'
-                : '💡 Use Yahoo Finance symbol (e.g. RELIANCE.NS for NSE)',
+                : _selectedType == AssetType.gold && baseCurrency == 'INR'
+                    ? '💡 MCX India rate (includes import duty & GST)'
+                    : '💡 Use Yahoo Finance symbol (e.g. RELIANCE.NS for NSE)',
             style: TextStyle(
               fontSize: 11,
               color: AppColors.textTertiary,

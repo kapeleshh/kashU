@@ -99,6 +99,6 @@ class YahooFinanceService implements PriceService {
     }
   }
 
-  /// Convenience method: fetch gold price in USD per troy oz
-  Future<PriceResult> fetchGoldPrice() => fetchPrice(PriceSymbols.goldUSD);
+  /// Convenience method: fetch gold price using COMEX international symbol
+  Future<PriceResult> fetchGoldPrice() => fetchPrice(PriceSymbols.goldComex);
 }
