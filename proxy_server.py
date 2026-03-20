@@ -21,7 +21,8 @@ ALLOWED_PROXY_HOSTS = [
     'query1.finance.yahoo.com',
     'query2.finance.yahoo.com',
     'open.er-api.com',
-    'api.mfapi.in',  # Indian mutual fund NAV data
+    'api.mfapi.in',       # Indian mutual fund NAV data
+    'api.coingecko.com',  # Cryptocurrency prices and search
 ]
 
 class ProxyHandler(http.server.SimpleHTTPRequestHandler):

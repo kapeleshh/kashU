@@ -7,9 +7,11 @@ import '../../core/constants/app_strings.dart';
 import '../../data/models/asset.dart';
 import '../../data/models/asset_type.dart';
 import '../../shared/providers/portfolio_provider.dart';
+import '../../shared/widgets/crypto_search_field.dart';
 import '../../shared/widgets/mutual_fund_search_field.dart';
 import '../../shared/widgets/stock_search_field.dart';
 import '../../data/repositories/transaction_repository.dart';
+import '../../services/coingecko_service.dart';
 import '../../services/mutual_fund_service.dart';
 import '../../services/price_service.dart';
 import '../../services/stock_search_service.dart';
@@ -56,6 +58,11 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   // ignore: unused_field
   MutualFundResult? _selectedMf;
 
+  // Crypto search state
+  final Key _cryptoSearchKey = UniqueKey();
+  bool _isFetchingCryptoPrice = false;
+  String? _cryptoFetchStatus;
+
   bool get isEditing => widget.existingAsset != null;
 
   /// Types that use the stock search autocomplete
@@ -65,6 +72,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
   /// Whether this type uses the mutual fund search
   bool get _usesMfSearch => _selectedType == AssetType.mutualFund;
+
+  /// Whether this type uses the crypto search
+  bool get _usesCryptoSearch => _selectedType == AssetType.crypto;
 
   @override
   void initState() {
@@ -184,6 +194,36 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                   style: TextStyle(
                     fontSize: 11,
                     color: _mfFetchStatus!.startsWith('✅')
+                        ? AppColors.success
+                        : AppColors.error,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              const SizedBox(height: 16),
+            ],
+
+            // Crypto search (CoinGecko)
+            if (_usesCryptoSearch && !isEditing) ...[
+              CryptoSearchField(
+                key: _cryptoSearchKey,
+                onSelected: _onCryptoSelected,
+              ),
+              const SizedBox(height: 8),
+              if (_isFetchingCryptoPrice)
+                Text(
+                  '⏳ Fetching live price...',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.primary,
+                    fontStyle: FontStyle.italic,
+                  ),
+                )
+              else if (_cryptoFetchStatus != null)
+                Text(
+                  _cryptoFetchStatus!,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: _cryptoFetchStatus!.startsWith('✅')
                         ? AppColors.success
                         : AppColors.error,
                     fontStyle: FontStyle.italic,
@@ -520,6 +560,46 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       setState(() {
         _isFetchingMfNav = false;
         _mfFetchStatus = '⚠ Could not fetch NAV. Enter manually.';
+      });
+    }
+  }
+
+  /// Called when user selects a crypto from the search dropdown.
+  /// Auto-fills name, symbol (CoinGecko ID), and fetches live price in INR.
+  Future<void> _onCryptoSelected(CryptoSearchResult result) async {
+    setState(() {
+      _nameController.text = result.name;
+      _symbolController.text = result.id; // CoinGecko ID (e.g. "bitcoin")
+      _cryptoFetchStatus = null;
+      _isFetchingCryptoPrice = true;
+    });
+
+    try {
+      // Fetch price in INR
+      final cryptoService = CoinGeckoService(vsCurrency: 'inr');
+      final priceResult = await cryptoService.fetchPrice(result.id);
+
+      if (!mounted) return;
+
+      if (priceResult.success && priceResult.price > 0) {
+        setState(() {
+          _isFetchingCryptoPrice = false;
+          _currentPriceController.text =
+              priceResult.price.toStringAsFixed(2);
+          _cryptoFetchStatus =
+              '✅ Live price: ₹${priceResult.price.toStringAsFixed(2)} (${result.symbol})';
+        });
+      } else {
+        setState(() {
+          _isFetchingCryptoPrice = false;
+          _cryptoFetchStatus = '⚠ Could not fetch price. Enter manually.';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isFetchingCryptoPrice = false;
+        _cryptoFetchStatus = '⚠ Could not fetch price. Enter manually.';
       });
     }
   }
