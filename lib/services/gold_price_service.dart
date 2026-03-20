@@ -113,6 +113,14 @@ class GoldTaxConfig {
     gstRate: 0,
   );
 
+  /// Indian silver tax configuration
+  /// Silver import duty: 10% BCD + 3% GST (no AIDC for silver)
+  static const GoldTaxConfig silver = GoldTaxConfig(
+    importDutyRate: 0.10,
+    aidcRate: 0.0,
+    gstRate: 0.03,
+  );
+
   double get totalTaxMultiplier => (1 + importDutyRate + aidcRate) * (1 + gstRate);
 
   double get effectiveTaxPercent => (totalTaxMultiplier - 1) * 100;
@@ -183,29 +191,37 @@ class GoldPriceService implements PriceService {
     );
   }
 
-  /// Fetch gold price with full breakdown (base + tax components).
+  /// Fetch silver price with full breakdown.
+  /// Uses COMEX SI=F with Indian silver import taxes.
+  Future<GoldPriceBreakdown?> fetchSilverPriceBreakdown({
+    String targetCurrency = 'INR',
+  }) async {
+    return fetchMetalPriceBreakdown(
+      comexSymbol: PriceSymbols.silverComex,
+      targetCurrency: targetCurrency,
+      taxConfig: targetCurrency == 'INR' ? GoldTaxConfig.silver : GoldTaxConfig.none,
+    );
+  }
+
+  /// Fetch any metal price with full breakdown.
   ///
-  /// [targetCurrency] — the currency to convert into (e.g. 'INR', 'USD')
-  /// [taxConfig]      — which taxes to apply (default: Indian duties for INR)
-  ///
-  /// Returns null if the COMEX price cannot be fetched.
-  Future<GoldPriceBreakdown?> fetchGoldPriceBreakdown({
+  /// [comexSymbol]    — COMEX symbol (GC=F for gold, SI=F for silver)
+  /// [targetCurrency] — the currency to convert into
+  /// [taxConfig]      — which taxes to apply
+  Future<GoldPriceBreakdown?> fetchMetalPriceBreakdown({
+    required String comexSymbol,
     String targetCurrency = 'INR',
     GoldTaxConfig? taxConfig,
   }) async {
     final effectiveTax = taxConfig ??
         (targetCurrency == 'INR' ? GoldTaxConfig.india : GoldTaxConfig.none);
 
-    // Step 1: Fetch COMEX GC=F → USD per troy oz
-    final comexResult = await _yahooService.fetchPrice(PriceSymbols.goldComex);
+    final comexResult = await _yahooService.fetchPrice(comexSymbol);
     if (!comexResult.success) return null;
 
     final usdPerTroyOz = comexResult.price;
-
-    // Step 2: USD/troy oz → USD/gram
     final usdPerGram = usdPerTroyOz / CurrencyConverterService.gramsPerTroyOz;
 
-    // Step 3: USD/gram → targetCurrency/gram via live forex
     bool usedLiveForex = false;
     double forexRate;
     double basePerGram;
@@ -220,7 +236,6 @@ class GoldPriceService implements PriceService {
         forexRate = rates.getRate(targetCurrency);
         usedLiveForex = true;
       } else {
-        // Fallback to hardcoded approximate rate
         forexRate = CurrencyConverterService.fallbackRate(targetCurrency);
         usedLiveForex = false;
       }
@@ -239,4 +254,22 @@ class GoldPriceService implements PriceService {
       usedLiveForex: usedLiveForex,
     );
   }
+
+  /// Fetch gold price with full breakdown (base + tax components).
+  ///
+  /// [targetCurrency] — the currency to convert into (e.g. 'INR', 'USD')
+  /// [taxConfig]      — which taxes to apply (default: Indian duties for INR)
+  ///
+  /// Returns null if the COMEX price cannot be fetched.
+  Future<GoldPriceBreakdown?> fetchGoldPriceBreakdown({
+    String targetCurrency = 'INR',
+    GoldTaxConfig? taxConfig,
+  }) async {
+    return fetchMetalPriceBreakdown(
+      comexSymbol: PriceSymbols.goldComex,
+      targetCurrency: targetCurrency,
+      taxConfig: taxConfig,
+    );
+  }
+
 }

@@ -19,7 +19,7 @@ class AppStrings {
   // Asset Types
   static const String stocks = 'Stocks';
   static const String mutualFunds = 'Mutual Funds';
-  static const String gold = 'Gold';
+  static const String gold = 'Metals';
   static const String crypto = 'Crypto';
   static const String bonds = 'Bonds';
   static const String fixedDeposits = 'Deposits';
