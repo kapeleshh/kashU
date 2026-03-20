@@ -4,6 +4,7 @@ import '../../data/models/portfolio_summary.dart';
 import '../../data/repositories/asset_repository.dart';
 import '../../data/repositories/transaction_repository.dart';
 import '../../services/currency_converter_service.dart';
+import '../../services/gold_price_service.dart';
 import '../../services/price_update_service.dart';
 
 /// Provider for AssetRepository
@@ -66,13 +67,21 @@ final currencyConverterServiceProvider =
   return CurrencyConverterService();
 });
 
-/// Provider for PriceUpdateService (includes currency conversion)
+/// Provider for GoldPriceService (uses COMEX GC=F + live forex + Indian taxes)
+final goldPriceServiceProvider = Provider<GoldPriceService>((ref) {
+  final currencyConverter = ref.watch(currencyConverterServiceProvider);
+  return GoldPriceService(currencyConverter: currencyConverter);
+});
+
+/// Provider for PriceUpdateService (includes currency conversion + gold tax)
 final priceUpdateServiceProvider = Provider<PriceUpdateService>((ref) {
   final assetRepo = ref.watch(assetRepositoryProvider);
   final currencyConverter = ref.watch(currencyConverterServiceProvider);
+  final goldPriceService = ref.watch(goldPriceServiceProvider);
   return PriceUpdateService(
     assetRepository: assetRepo,
     currencyConverter: currencyConverter,
+    goldPriceService: goldPriceService,
   );
 });
 

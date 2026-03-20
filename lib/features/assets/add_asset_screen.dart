@@ -285,7 +285,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     final hint = PriceSymbols.symbolHint(_selectedType, baseCurrency: baseCurrency);
     final defaultSym = PriceSymbols.defaultSymbol(_selectedType, baseCurrency: baseCurrency);
 
-    // Auto-fill default symbol for gold if field is empty (e.g. GOLDM.MCX for INR)
+    // Auto-fill default symbol for gold if field is empty (GC=F for all currencies)
     if (defaultSym != null && _symbolController.text.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _symbolController.text.isEmpty) {
@@ -318,8 +318,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
           Text(
             _selectedType == AssetType.crypto
                 ? '💡 Use CoinGecko ID (e.g. bitcoin, ethereum)'
-                : _selectedType == AssetType.gold && baseCurrency == 'INR'
-                    ? '💡 MCX India rate (includes import duty & GST)'
+                : _selectedType == AssetType.gold
+                    ? '💡 COMEX price (USD) → converted to INR/gram with BCD 10% + AIDC 5% + GST 3%'
                     : '💡 Use Yahoo Finance symbol (e.g. RELIANCE.NS for NSE)',
             style: TextStyle(
               fontSize: 11,
