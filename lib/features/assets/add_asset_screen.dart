@@ -145,7 +145,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: AssetType.values.map((type) {
+              // Bond is temporarily hidden — code preserved for future use
+              children: AssetType.values.where((type) => type != AssetType.bond).map((type) {
                 final isSelected = _selectedType == type;
                 return ChoiceChip(
                   avatar: Icon(
