@@ -34,6 +34,10 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   String? _selectedPlatform;
   DateTime _purchaseDate = DateTime.now();
 
+  // Gold live price fetch state
+  bool _isFetchingGoldPrice = false;
+  String? _goldFetchStatus; // null = idle, message = success/error
+
   bool get isEditing => widget.existingAsset != null;
 
   @override
@@ -105,7 +109,23 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                   label: Text(type.displayName),
                   selected: isSelected,
                   selectedColor: type.color,
-                  onSelected: (_) => setState(() => _selectedType = type),
+                  onSelected: (_) {
+                    setState(() {
+                      _selectedType = type;
+                      // Reset gold fetch status when switching types
+                      _goldFetchStatus = null;
+                    });
+                    // Auto-fill symbol and fetch live price when Gold is selected
+                    if (type == AssetType.gold) {
+                      _symbolController.text = PriceSymbols.goldComex;
+                      _fetchGoldPrice();
+                    } else {
+                      // Clear symbol if switching away from gold to a non-default type
+                      if (_symbolController.text == PriceSymbols.goldComex) {
+                        _symbolController.clear();
+                      }
+                    }
+                  },
                 );
               }).toList(),
             ),
@@ -278,15 +298,15 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
   /// Builds a smart symbol input field based on the selected asset type
   Widget _buildSymbolField() {
-    // Read base currency from provider so gold symbol hint is currency-aware
     final baseCurrency = ref.read(baseCurrencyProvider);
-
     final supportsTracking = PriceSymbols.supportsAutoTracking(_selectedType);
     final hint = PriceSymbols.symbolHint(_selectedType, baseCurrency: baseCurrency);
     final defaultSym = PriceSymbols.defaultSymbol(_selectedType, baseCurrency: baseCurrency);
 
-    // Auto-fill default symbol for gold if field is empty (GC=F for all currencies)
-    if (defaultSym != null && _symbolController.text.isEmpty) {
+    // Auto-fill default symbol for non-gold types if field is empty
+    if (defaultSym != null &&
+        _selectedType != AssetType.gold &&
+        _symbolController.text.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _symbolController.text.isEmpty) {
           setState(() => _symbolController.text = defaultSym);
@@ -305,30 +325,70 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                 ? '${AppStrings.symbol} (for auto price updates)'
                 : AppStrings.symbol,
             hintText: hint,
-            suffixIcon: supportsTracking
-                ? Icon(Icons.sync, color: AppColors.primary, size: 18)
-                : Icon(Icons.lock_outline, color: AppColors.textTertiary, size: 18),
+            suffixIcon: _isFetchingGoldPrice
+                ? const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : supportsTracking
+                    ? Icon(Icons.sync, color: AppColors.primary, size: 18)
+                    : Icon(Icons.lock_outline, color: AppColors.textTertiary, size: 18),
           ),
           textCapitalization: _selectedType == AssetType.crypto
               ? TextCapitalization.none
               : TextCapitalization.characters,
         ),
-        if (supportsTracking) ...[
-          const SizedBox(height: 4),
+        const SizedBox(height: 4),
+        if (_isFetchingGoldPrice)
+          Row(
+            children: [
+              const SizedBox(width: 4),
+              Text(
+                '⏳ Fetching live gold price from COMEX...',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: AppColors.primary,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
+          )
+        else if (_goldFetchStatus != null)
+          Row(
+            children: [
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  _goldFetchStatus!,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: _goldFetchStatus!.startsWith('✅')
+                        ? AppColors.success
+                        : AppColors.error,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ),
+            ],
+          )
+        else if (supportsTracking)
           Text(
             _selectedType == AssetType.crypto
                 ? '💡 Use CoinGecko ID (e.g. bitcoin, ethereum)'
                 : _selectedType == AssetType.gold
-                    ? '💡 COMEX price (USD) → converted to INR/gram with BCD 10% + AIDC 5% + GST 3%'
+                    ? '💡 Symbol auto-filled. Price will be fetched from COMEX (GC=F) → INR/gram'
                     : '💡 Use Yahoo Finance symbol (e.g. RELIANCE.NS for NSE)',
             style: TextStyle(
               fontSize: 11,
               color: AppColors.textTertiary,
               fontStyle: FontStyle.italic,
             ),
-          ),
-        ] else ...[
-          const SizedBox(height: 4),
+          )
+        else
           Text(
             '⚠ Auto price tracking not available for ${_selectedType.displayName}',
             style: TextStyle(
@@ -337,9 +397,50 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               fontStyle: FontStyle.italic,
             ),
           ),
-        ],
       ],
     );
+  }
+
+  /// Fetches live gold price and auto-fills the current price field
+  Future<void> _fetchGoldPrice() async {
+    setState(() {
+      _isFetchingGoldPrice = true;
+      _goldFetchStatus = null;
+    });
+
+    try {
+      final goldService = ref.read(goldPriceServiceProvider);
+      final breakdown = await goldService.fetchGoldPriceBreakdown(
+        targetCurrency: _selectedCurrency,
+      );
+
+      if (!mounted) return;
+
+      if (breakdown == null) {
+        setState(() {
+          _isFetchingGoldPrice = false;
+          _goldFetchStatus = '❌ Could not fetch price. Check internet connection.';
+        });
+        return;
+      }
+
+      final price = breakdown.finalPerGram;
+      setState(() {
+        _isFetchingGoldPrice = false;
+        _currentPriceController.text = price.toStringAsFixed(2);
+        _goldFetchStatus =
+            '✅ Live price: ₹${price.toStringAsFixed(2)}/gram '
+            '(COMEX \$${breakdown.usdPerTroyOz.toStringAsFixed(0)}/oz, '
+            '1 USD = ₹${breakdown.forexRate.toStringAsFixed(1)}, '
+            'taxes ${breakdown.effectiveTaxPercent.toStringAsFixed(1)}%)';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isFetchingGoldPrice = false;
+        _goldFetchStatus = '❌ Error: $e';
+      });
+    }
   }
 
   Future<void> _selectDate() async {
@@ -423,6 +524,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               final assetId = widget.existingAsset!.id;
               final assetRepo = ref.read(assetRepositoryProvider);
               final txRepo = TransactionRepository();
+              final navigator = Navigator.of(context);
+              final messenger = ScaffoldMessenger.of(context);
 
               // Delete asset AND its associated transactions
               await assetRepo.deleteAsset(assetId);
@@ -432,9 +535,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               ref.invalidate(portfolioSummaryProvider);
 
               if (mounted) {
-                Navigator.pop(context); // Close dialog
-                Navigator.pop(context); // Close screen
-                ScaffoldMessenger.of(context).showSnackBar(
+                navigator.pop(); // Close dialog
+                navigator.pop(); // Close screen
+                messenger.showSnackBar(
                   const SnackBar(content: Text('Asset and its transactions deleted')),
                 );
               }
