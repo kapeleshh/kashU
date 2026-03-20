@@ -298,7 +298,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
             TextFormField(
               controller: _nameController,
               decoration: InputDecoration(
-                labelText: AppStrings.assetName,
+                labelText: _usesFdBondCalculator
+                    ? 'Deposit Name'
+                    : AppStrings.assetName,
                 hintText: (_usesStockSearch || _usesMfSearch) && !isEditing
                     ? 'Auto-filled from search'
                     : _usesFdBondCalculator
