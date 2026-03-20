@@ -344,43 +344,31 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
         ),
         const SizedBox(height: 4),
         if (_isFetchingGoldPrice)
-          Row(
-            children: [
-              const SizedBox(width: 4),
-              Text(
-                '⏳ Fetching live gold price from COMEX...',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppColors.primary,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ],
+          Text(
+            '⏳ Fetching live gold price...',
+            style: TextStyle(
+              fontSize: 11,
+              color: AppColors.primary,
+              fontStyle: FontStyle.italic,
+            ),
           )
         else if (_goldFetchStatus != null)
-          Row(
-            children: [
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  _goldFetchStatus!,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: _goldFetchStatus!.startsWith('✅')
-                        ? AppColors.success
-                        : AppColors.error,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ),
-            ],
+          Text(
+            _goldFetchStatus!,
+            style: TextStyle(
+              fontSize: 11,
+              color: _goldFetchStatus!.startsWith('✅')
+                  ? AppColors.success
+                  : AppColors.error,
+              fontStyle: FontStyle.italic,
+            ),
           )
         else if (supportsTracking)
           Text(
             _selectedType == AssetType.crypto
                 ? '💡 Use CoinGecko ID (e.g. bitcoin, ethereum)'
                 : _selectedType == AssetType.gold
-                    ? '💡 Symbol auto-filled. Price will be fetched from COMEX (GC=F) → INR/gram'
+                    ? '💡 Live gold price will be fetched automatically'
                     : '💡 Use Yahoo Finance symbol (e.g. RELIANCE.NS for NSE)',
             style: TextStyle(
               fontSize: 11,
@@ -428,11 +416,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       setState(() {
         _isFetchingGoldPrice = false;
         _currentPriceController.text = price.toStringAsFixed(2);
-        _goldFetchStatus =
-            '✅ Live price: ₹${price.toStringAsFixed(2)}/gram '
-            '(COMEX \$${breakdown.usdPerTroyOz.toStringAsFixed(0)}/oz, '
-            '1 USD = ₹${breakdown.forexRate.toStringAsFixed(1)}, '
-            'taxes ${breakdown.effectiveTaxPercent.toStringAsFixed(1)}%)';
+        _goldFetchStatus = '✅ Live gold price: ₹${price.toStringAsFixed(2)}/gram';
       });
     } catch (e) {
       if (!mounted) return;

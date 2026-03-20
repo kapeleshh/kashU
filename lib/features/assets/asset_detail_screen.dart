@@ -358,7 +358,7 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
               const Icon(Icons.auto_awesome, color: Color(0xFFFFD700), size: 18),
               const SizedBox(width: 8),
               Text(
-                'Live Gold Price (COMEX → INR/gram)',
+                'Live Gold Price',
                 style: TextStyle(
                   fontWeight: FontWeight.w600,
                   color: AppColors.textPrimary,
@@ -382,7 +382,7 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      _fetchError!,
+                      'Could not fetch live price. Check your connection.',
                       style: TextStyle(color: AppColors.error, fontSize: 12),
                     ),
                   ),
@@ -391,32 +391,19 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
             ),
 
           if (_lastBreakdown != null) ...[
-            _buildBreakdownRow('COMEX (GC=F)', '\$${_lastBreakdown!.usdPerTroyOz.toStringAsFixed(2)}/troy oz'),
-            _buildBreakdownRow('USD/gram', '\$${_lastBreakdown!.usdPerGram.toStringAsFixed(4)}'),
-            _buildBreakdownRow(
-              'Forex rate',
-              '1 USD = ₹${_lastBreakdown!.forexRate.toStringAsFixed(2)}${_lastBreakdown!.usedLiveForex ? ' (live)' : ' (approx)'}',
-            ),
-            _buildBreakdownRow('Base price', '₹${_lastBreakdown!.basePerGram.toStringAsFixed(2)}/gram'),
-            _buildBreakdownRow(
-              'Import Duty + AIDC',
-              '${((_lastBreakdown!.importDutyRate + _lastBreakdown!.aidcRate) * 100).toStringAsFixed(0)}%',
-            ),
-            _buildBreakdownRow('GST', '${(_lastBreakdown!.gstRate * 100).toStringAsFixed(0)}%'),
-            const Divider(height: 16),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  'Final price (incl. taxes)',
-                  style: TextStyle(fontWeight: FontWeight.bold),
+                Text(
+                  'Current price per gram',
+                  style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
                 ),
                 Text(
-                  '₹${_lastBreakdown!.finalPerGram.toStringAsFixed(2)}/gram',
+                  '₹${_lastBreakdown!.finalPerGram.toStringAsFixed(2)}',
                   style: const TextStyle(
                     fontWeight: FontWeight.bold,
                     color: Color(0xFFFFD700),
-                    fontSize: 16,
+                    fontSize: 18,
                   ),
                 ),
               ],
@@ -427,9 +414,7 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
               child: ElevatedButton.icon(
                 onPressed: () => _applyLivePrice(_lastBreakdown!.finalPerGram),
                 icon: const Icon(Icons.check_circle_outline, size: 18),
-                label: Text(
-                  'Apply ₹${_lastBreakdown!.finalPerGram.toStringAsFixed(2)}/gram',
-                ),
+                label: const Text('Apply Live Price'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFFFD700),
                   foregroundColor: Colors.black,
@@ -440,7 +425,7 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
 
           if (_lastBreakdown == null && _fetchError == null)
             Text(
-              'Fetches COMEX gold futures (GC=F), converts to INR/gram\nwith live forex + Indian import duty (10%) + AIDC (5%) + GST (3%)',
+              'Tap below to fetch the current gold price',
               style: TextStyle(
                 color: AppColors.textSecondary,
                 fontSize: 12,
@@ -461,29 +446,10 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
                   : const Icon(Icons.refresh, size: 18),
               label: Text(
                 _isFetchingLivePrice
-                    ? 'Fetching from COMEX...'
-                    : (_lastBreakdown != null ? 'Refresh Live Price' : 'Fetch Live Price'),
+                    ? 'Fetching...'
+                    : (_lastBreakdown != null ? 'Refresh Price' : 'Fetch Live Price'),
               ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBreakdownRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
-          ),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
           ),
         ],
       ),
