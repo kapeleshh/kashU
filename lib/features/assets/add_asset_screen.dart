@@ -301,7 +301,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                 labelText: AppStrings.assetName,
                 hintText: (_usesStockSearch || _usesMfSearch) && !isEditing
                     ? 'Auto-filled from search'
-                    : 'e.g., Reliance Industries',
+                    : _usesFdBondCalculator
+                        ? 'e.g., SBI FD, HDFC RD'
+                        : 'e.g., Reliance Industries',
               ),
               validator: (value) {
                 if (value == null || value.isEmpty) {
@@ -313,8 +315,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
             const SizedBox(height: 16),
 
-            // Symbol field (hidden for stock search types when adding new)
-            if (!_usesStockSearch || isEditing) ...[
+            // Symbol field — hidden for deposits (no symbol needed) and stock search
+            if (!_usesStockSearch && !_usesFdBondCalculator || isEditing) ...[
               _buildSymbolField(),
               const SizedBox(height: 16),
             ] else if (_selectedStock != null) ...[

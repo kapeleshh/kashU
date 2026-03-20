@@ -22,7 +22,7 @@ class AppStrings {
   static const String gold = 'Gold';
   static const String crypto = 'Crypto';
   static const String bonds = 'Bonds';
-  static const String fixedDeposits = 'Fixed Deposits';
+  static const String fixedDeposits = 'Deposits';
   static const String cash = 'Cash';
   static const String realEstate = 'Real Estate';
 
