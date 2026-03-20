@@ -8,6 +8,7 @@ import '../../data/models/asset.dart';
 import '../../data/models/asset_type.dart';
 import '../../shared/providers/portfolio_provider.dart';
 import '../../shared/widgets/crypto_search_field.dart';
+import '../../shared/widgets/fd_bond_input_field.dart';
 import '../../shared/widgets/mutual_fund_search_field.dart';
 import '../../shared/widgets/stock_search_field.dart';
 import '../../data/repositories/transaction_repository.dart';
@@ -63,11 +64,18 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   bool _isFetchingCryptoPrice = false;
   String? _cryptoFetchStatus;
 
+  // FD/Bond calculator state (stored for potential future use e.g. maturity date in notes)
+  // ignore: unused_field
+  FdBondInputResult? _fdBondResult;
+
   bool get isEditing => widget.existingAsset != null;
 
   /// Types that use the stock search autocomplete
-  bool get _usesStockSearch =>
-      _selectedType == AssetType.stock ||
+  bool get _usesStockSearch => _selectedType == AssetType.stock;
+
+  /// Whether this type uses the FD/Bond calculator
+  bool get _usesFdBondCalculator =>
+      _selectedType == AssetType.fixedDeposit ||
       _selectedType == AssetType.bond;
 
   /// Whether this type uses the mutual fund search
@@ -229,6 +237,27 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                     fontStyle: FontStyle.italic,
                   ),
                 ),
+              const SizedBox(height: 16),
+            ],
+
+            // FD/Bond calculator
+            if (_usesFdBondCalculator && !isEditing) ...[
+              FdBondInputField(
+                isFd: _selectedType == AssetType.fixedDeposit,
+                onChanged: (result) {
+                  setState(() {
+                    _fdBondResult = result;
+                    // Auto-fill principal as purchase price
+                    _purchasePriceController.text =
+                        result.principal.toStringAsFixed(2);
+                    // Auto-fill current value
+                    _currentPriceController.text =
+                        result.calculation.currentValue.toStringAsFixed(2);
+                    // Set purchase date to start date
+                    _purchaseDate = result.startDate;
+                  });
+                },
+              ),
               const SizedBox(height: 16),
             ],
 
