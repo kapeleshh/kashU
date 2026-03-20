@@ -37,6 +37,9 @@ dependencies:
   share_plus: ^7.2.2
   collection: ^1.18.0
 
+  # Networking (for price tracking)
+  http: ^1.2.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

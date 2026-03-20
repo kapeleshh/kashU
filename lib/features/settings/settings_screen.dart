@@ -7,7 +7,6 @@ import 'package:share_plus/share_plus.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
-import '../../data/repositories/transaction_repository.dart';
 import '../../shared/providers/portfolio_provider.dart';
 
 class SettingsScreen extends ConsumerWidget {
