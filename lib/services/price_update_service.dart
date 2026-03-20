@@ -3,6 +3,7 @@ import '../data/models/asset_type.dart';
 import '../data/repositories/asset_repository.dart';
 import 'coingecko_service.dart';
 import 'currency_converter_service.dart';
+import 'gold_price_service.dart';
 import 'price_service.dart';
 import 'yahoo_finance_service.dart';
 
@@ -33,18 +34,29 @@ class PriceRefreshResult {
 /// Orchestrates price updates for all assets in the portfolio.
 /// Routes each asset to the correct API based on AssetType.
 /// Converts prices to the asset's stored currency automatically.
+///
+/// Gold price strategy:
+///   1. Fetch COMEX GC=F (USD/troy oz) via Yahoo Finance — always reliable.
+///   2. Convert USD/oz → USD/gram (÷ 31.1035).
+///   3. Convert USD/gram → INR/gram via live forex (open.er-api.com).
+///   4. Apply Indian taxes: BCD 10% + AIDC 5% + GST 3% ≈ 18.45% effective.
+///
+/// This replaces the old GOLDM.MCX approach which was frequently unavailable.
 class PriceUpdateService {
   final AssetRepository _assetRepository;
   final YahooFinanceService _yahooService;
   final CurrencyConverterService _currencyConverter;
+  final GoldPriceService _goldPriceService;
 
   PriceUpdateService({
     required AssetRepository assetRepository,
     YahooFinanceService? yahooService,
     CurrencyConverterService? currencyConverter,
+    GoldPriceService? goldPriceService,
   })  : _assetRepository = assetRepository,
         _yahooService = yahooService ?? YahooFinanceService(),
-        _currencyConverter = currencyConverter ?? CurrencyConverterService();
+        _currencyConverter = currencyConverter ?? CurrencyConverterService(),
+        _goldPriceService = goldPriceService ?? GoldPriceService();
 
   /// Refresh prices for all assets that have a symbol or auto-trackable type.
   /// Returns a summary of the operation.
@@ -63,7 +75,7 @@ class PriceUpdateService {
     // Pre-fetch exchange rates once (shared across all conversions this session)
     final exchangeRates = await _currencyConverter.fetchRates();
 
-    // Batch crypto assets into one CoinGecko call (efficient)
+    // Split by type
     final cryptoAssets =
         trackable.where((a) => a.type == AssetType.crypto).toList();
     final goldAssets =
@@ -73,8 +85,6 @@ class PriceUpdateService {
         .toList();
 
     // --- Handle crypto (batched via CoinGecko) ---
-    // CoinGecko returns prices in the requested vs_currency.
-    // We request in the asset's currency or base currency.
     if (cryptoAssets.isNotEmpty) {
       final symbols = cryptoAssets
           .map((a) => _getSymbol(a))
@@ -82,7 +92,6 @@ class PriceUpdateService {
           .cast<String>()
           .toList();
 
-      // Request crypto prices in base currency (e.g. INR or USD)
       final cryptoService =
           CoinGeckoService(vsCurrency: baseCurrency.toLowerCase());
       final results = await cryptoService.fetchMultiplePrices(symbols);
@@ -102,58 +111,64 @@ class PriceUpdateService {
       }
     }
 
-    // --- Handle gold ---
-    // Two cases:
-    // 1. MCX symbol (GOLDM.MCX) → returns INR per 10g → divide by 10 for per gram
-    // 2. COMEX symbol (GC=F)    → returns USD per troy oz → convert to target/gram
-    for (final asset in goldAssets) {
-      final symbol = _getSymbol(asset, baseCurrency: baseCurrency);
-      if (symbol == null) {
-        skipped++;
-        continue;
-      }
+    // --- Handle gold (COMEX GC=F → USD/gram → INR/gram with Indian taxes) ---
+    // All gold assets share the same international price, so fetch once
+    // and reuse for all gold assets (with per-asset currency conversion).
+    if (goldAssets.isNotEmpty) {
+      // Determine which currency to fetch for (use baseCurrency; individual
+      // asset currencies handled below via forexRate reuse)
+      final primaryCurrency =
+          goldAssets.first.currency.isNotEmpty ? goldAssets.first.currency : baseCurrency;
 
-      final result = await _yahooService.fetchPrice(symbol);
-      if (result.success) {
-        final targetCurrency =
-            asset.currency.isNotEmpty ? asset.currency : baseCurrency;
-        double pricePerGram;
+      final breakdown = await _goldPriceService.fetchGoldPriceBreakdown(
+        targetCurrency: primaryCurrency,
+      );
 
-        if (PriceSymbols.isMCXSymbol(symbol)) {
-          // MCX Gold returns INR per 10 grams → convert to per gram
-          // No forex conversion needed — already in INR
-          pricePerGram = result.price / 10.0;
-        } else {
-          // COMEX GC=F returns USD per troy oz
-          // Convert: USD/oz → target currency/gram
-          if (exchangeRates.success) {
-            pricePerGram =
-                await _currencyConverter.goldUSDPerOzToTargetPerGram(
-              result.price,
-              targetCurrency,
-            );
-          } else {
-            pricePerGram =
-                await _currencyConverter.goldUSDPerOzToTargetPerGram(
-              result.price,
-              targetCurrency,
-            );
-            errors.add(
-                'Warning: using approximate forex rates for ${asset.name}');
-          }
+      if (breakdown == null) {
+        for (final asset in goldAssets) {
+          failed++;
+          errors.add(
+            '${asset.name}: Could not fetch COMEX gold price (GC=F). '
+            'Check internet connection.',
+          );
         }
-
-        await _assetRepository.updateAssetPrice(asset.id, pricePerGram);
-        updated++;
       } else {
-        failed++;
-        errors.add('${asset.name} ($symbol): ${result.error}');
-      }
+        // For any gold asset that uses a different currency, apply a simple
+        // cross-rate conversion from the breakdown's base USD/gram.
+        for (final asset in goldAssets) {
+          final targetCurrency =
+              asset.currency.isNotEmpty ? asset.currency : baseCurrency;
 
-      await Future.delayed(const Duration(milliseconds: 300));
+          double pricePerGram;
+          if (targetCurrency == primaryCurrency) {
+            pricePerGram = breakdown.finalPerGram;
+          } else {
+            // Re-derive for this asset's currency using the same USD/gram base
+            double targetForexRate;
+            if (exchangeRates.success) {
+              targetForexRate = exchangeRates.getRate(targetCurrency);
+            } else {
+              targetForexRate =
+                  CurrencyConverterService.fallbackRate(targetCurrency);
+              errors.add(
+                  'Warning: using approximate forex rate for ${asset.name}');
+            }
+            final basePerGramInTarget = breakdown.usdPerGram * targetForexRate;
+
+            // Apply Indian taxes for INR, no tax for other currencies
+            final taxConfig = targetCurrency == 'INR'
+                ? GoldTaxConfig.india
+                : GoldTaxConfig.none;
+            pricePerGram = basePerGramInTarget * taxConfig.totalTaxMultiplier;
+          }
+
+          await _assetRepository.updateAssetPrice(asset.id, pricePerGram);
+          updated++;
+        }
+      }
     }
 
-    // --- Handle stocks, bonds (Yahoo Finance, may return in USD or local currency) ---
+    // --- Handle stocks, bonds (Yahoo Finance) ---
     for (final asset in otherAssets) {
       final symbol = _getSymbol(asset);
       if (symbol == null) {
@@ -208,7 +223,6 @@ class PriceUpdateService {
     }
 
     if (asset.type == AssetType.crypto) {
-      // CoinGecko: request in asset's own currency
       final targetCurrency =
           asset.currency.isNotEmpty ? asset.currency : baseCurrency;
       final cryptoService =
@@ -222,39 +236,32 @@ class PriceUpdateService {
     }
 
     if (asset.type == AssetType.gold) {
-      final goldSymbol = _getSymbol(asset, baseCurrency: baseCurrency);
-      if (goldSymbol == null) {
-        return PriceResult.failure(asset.name, 'No gold symbol available');
-      }
-      final result = await _yahooService.fetchPrice(goldSymbol);
-      if (!result.success) return result;
-
       final targetCurrency =
           asset.currency.isNotEmpty ? asset.currency : baseCurrency;
-      double pricePerGram;
 
-      if (PriceSymbols.isMCXSymbol(goldSymbol)) {
-        // MCX: INR per 10g → per gram
-        pricePerGram = result.price / 10.0;
-      } else {
-        // COMEX: USD/troy oz → targetCurrency/gram
-        pricePerGram = await _currencyConverter.goldUSDPerOzToTargetPerGram(
-          result.price,
-          targetCurrency,
+      final breakdown = await _goldPriceService.fetchGoldPriceBreakdown(
+        targetCurrency: targetCurrency,
+      );
+
+      if (breakdown == null) {
+        return PriceResult.failure(
+          asset.name,
+          'Could not fetch COMEX gold price (GC=F). Check internet connection.',
         );
       }
 
-      await _assetRepository.updateAssetPrice(asset.id, pricePerGram);
+      await _assetRepository.updateAssetPrice(asset.id, breakdown.finalPerGram);
+
       return PriceResult(
-        symbol: goldSymbol,
-        price: pricePerGram,
+        symbol: PriceSymbols.goldComex,
+        price: breakdown.finalPerGram,
         currency: targetCurrency,
         fetchedAt: DateTime.now(),
         success: true,
       );
     }
 
-    // Stocks/bonds
+    // Stocks / bonds via Yahoo Finance
     final result = await _yahooService.fetchPrice(symbol);
     if (result.success) {
       double price = result.price;
@@ -288,7 +295,6 @@ class PriceUpdateService {
   }
 
   /// Gets the effective symbol for an asset (user-set or auto-default).
-  /// [baseCurrency] is used to pick the best gold source when no symbol is set.
   String? _getSymbol(Asset asset, {String baseCurrency = 'INR'}) {
     final userSymbol = asset.symbol?.trim();
     if (userSymbol != null && userSymbol.isNotEmpty) return userSymbol;

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import '../data/models/asset_type.dart';
 import 'price_service.dart';
@@ -13,14 +14,28 @@ import 'price_service.dart';
 ///   - Gold futures:       GC=F
 ///   - Silver futures:     SI=F
 ///   - NSE ETFs:           NIFTYBEES.NS, GOLDBEES.NS
+///
+/// On web, requests are routed through a local proxy at /proxy?url=...
+/// to bypass browser CORS restrictions.
 class YahooFinanceService implements PriceService {
   static const String _baseUrl =
       'https://query1.finance.yahoo.com/v8/finance/chart';
+
+  /// Local proxy base URL (used on web to bypass CORS)
+  static const String _proxyBase = 'http://localhost:8080/proxy?url=';
 
   final http.Client _client;
 
   YahooFinanceService({http.Client? client})
       : _client = client ?? http.Client();
+
+  /// Build the request URL — uses proxy on web, direct on mobile/desktop
+  Uri _buildUrl(String directUrl) {
+    if (kIsWeb) {
+      return Uri.parse('$_proxyBase${Uri.encodeComponent(directUrl)}');
+    }
+    return Uri.parse(directUrl);
+  }
 
   @override
   bool supportsAssetType(AssetType type) {
@@ -44,7 +59,7 @@ class YahooFinanceService implements PriceService {
       return PriceResult.failure(symbol, 'Symbol is empty');
     }
 
-    final url = Uri.parse('$_baseUrl/$symbol?interval=1d&range=1d');
+    final url = _buildUrl('$_baseUrl/$symbol?interval=1d&range=1d');
 
     try {
       final response = await _client.get(
@@ -54,7 +69,7 @@ class YahooFinanceService implements PriceService {
               'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           'Accept': 'application/json',
         },
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 15));
 
       if (response.statusCode != 200) {
         return PriceResult.failure(

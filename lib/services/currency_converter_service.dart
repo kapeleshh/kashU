@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
 /// Result of a currency conversion fetch
@@ -43,8 +44,12 @@ class ExchangeRateResult {
 /// No API key required for the latest USD-based rates endpoint.
 ///
 /// API: https://open.er-api.com/v6/latest/USD
+/// On web, requests are routed through a local proxy to bypass CORS.
 class CurrencyConverterService {
   static const String _baseUrl = 'https://open.er-api.com/v6/latest';
+
+  /// Local proxy base URL (used on web to bypass CORS)
+  static const String _proxyBase = 'http://localhost:8080/proxy?url=';
 
   /// Grams per troy ounce — used to convert gold price
   static const double gramsPerTroyOz = 31.1035;
@@ -61,6 +66,14 @@ class CurrencyConverterService {
   CurrencyConverterService({http.Client? client})
       : _client = client ?? http.Client();
 
+  /// Build the request URL — uses proxy on web, direct on mobile/desktop
+  Uri _buildUrl(String directUrl) {
+    if (kIsWeb) {
+      return Uri.parse('$_proxyBase${Uri.encodeComponent(directUrl)}');
+    }
+    return Uri.parse(directUrl);
+  }
+
   /// Fetch latest exchange rates with base = USD.
   /// Returns cached result if fetched within the last 30 minutes.
   Future<ExchangeRateResult> fetchRates({bool forceRefresh = false}) async {
@@ -72,13 +85,13 @@ class CurrencyConverterService {
       return _cachedRates!;
     }
 
-    final url = Uri.parse('$_baseUrl/USD');
+    final url = _buildUrl('$_baseUrl/USD');
 
     try {
       final response = await _client.get(
         url,
         headers: {'Accept': 'application/json'},
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 15));
 
       if (response.statusCode != 200) {
         return ExchangeRateResult.failure(
@@ -129,7 +142,7 @@ class CurrencyConverterService {
     }
 
     // Fallback to hardcoded approximate rates (used when offline)
-    return usdAmount * _fallbackRate(targetCurrency);
+    return usdAmount * fallbackRate(targetCurrency);
   }
 
   /// Convert gold price from USD per troy oz → target currency per gram
@@ -147,8 +160,9 @@ class CurrencyConverterService {
     return convertFromUSD(usdPerGram, targetCurrency);
   }
 
-  /// Hardcoded approximate fallback rates (USD → target) for offline mode
-  static double _fallbackRate(String currency) {
+  /// Hardcoded approximate fallback rates (USD → target) for offline mode.
+  /// Public so other services (e.g. GoldPriceService) can use them.
+  static double fallbackRate(String currency) {
     const fallbacks = {
       'INR': 83.5,
       'EUR': 0.92,
