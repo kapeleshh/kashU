@@ -3,10 +3,80 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../services/stock_search_service.dart';
 
+/// Exchange filter options for the stock search field.
+enum ExchangeFilter {
+  all,
+  nse,
+  bse,
+  nasdaq,
+  nyse;
+
+  String get label {
+    switch (this) {
+      case ExchangeFilter.all:
+        return 'All';
+      case ExchangeFilter.nse:
+        return 'NSE';
+      case ExchangeFilter.bse:
+        return 'BSE';
+      case ExchangeFilter.nasdaq:
+        return 'NASDAQ';
+      case ExchangeFilter.nyse:
+        return 'NYSE';
+    }
+  }
+
+  /// Yahoo Finance exchange codes that map to this filter
+  List<String> get exchangeCodes {
+    switch (this) {
+      case ExchangeFilter.all:
+        return [];
+      case ExchangeFilter.nse:
+        return ['NSI'];
+      case ExchangeFilter.bse:
+        return ['BSE', 'BOM'];
+      case ExchangeFilter.nasdaq:
+        return ['NMS', 'NGM', 'NCM'];
+      case ExchangeFilter.nyse:
+        return ['NYQ', 'ASE'];
+    }
+  }
+
+  Color get color {
+    switch (this) {
+      case ExchangeFilter.all:
+        return Colors.grey;
+      case ExchangeFilter.nse:
+        return const Color(0xFF1565C0); // Blue
+      case ExchangeFilter.bse:
+        return const Color(0xFF6A1B9A); // Purple
+      case ExchangeFilter.nasdaq:
+        return const Color(0xFF00838F); // Teal
+      case ExchangeFilter.nyse:
+        return const Color(0xFF2E7D32); // Green
+    }
+  }
+
+  String get searchHint {
+    switch (this) {
+      case ExchangeFilter.all:
+        return 'Search by company name or symbol...';
+      case ExchangeFilter.nse:
+        return 'Search NSE stocks (e.g. Reliance, TCS, Infosys)...';
+      case ExchangeFilter.bse:
+        return 'Search BSE stocks (e.g. Reliance, HDFC, Wipro)...';
+      case ExchangeFilter.nasdaq:
+        return 'Search NASDAQ stocks (e.g. Apple, Google, Tesla)...';
+      case ExchangeFilter.nyse:
+        return 'Search NYSE stocks (e.g. Coca-Cola, JPMorgan)...';
+    }
+  }
+}
+
 /// A search-as-you-type field for finding stocks, ETFs, and mutual funds.
 ///
-/// The user types a company name (e.g. "Reliance", "TCS", "Apple") and
-/// gets a live dropdown of matching results from Yahoo Finance.
+/// Includes exchange filter chips (NSE / BSE / NASDAQ / NYSE / All) to
+/// restrict results to a specific exchange.
 ///
 /// On selection, [onSelected] is called with the chosen [StockSearchResult].
 class StockSearchField extends StatefulWidget {
@@ -16,7 +86,7 @@ class StockSearchField extends StatefulWidget {
   /// Optional initial display text (e.g. when editing an existing asset).
   final String? initialText;
 
-  /// Hint text shown when the field is empty.
+  /// Default hint text (overridden by exchange filter selection).
   final String hintText;
 
   const StockSearchField({
@@ -35,11 +105,13 @@ class _StockSearchFieldState extends State<StockSearchField> {
   final _focusNode = FocusNode();
   final _searchService = StockSearchService();
 
-  List<StockSearchResult> _results = [];
+  List<StockSearchResult> _allResults = []; // unfiltered results from API
+  List<StockSearchResult> _filteredResults = []; // after exchange filter
   bool _isSearching = false;
   bool _showDropdown = false;
   Timer? _debounce;
   StockSearchResult? _selectedResult;
+  ExchangeFilter _selectedExchange = ExchangeFilter.all;
 
   @override
   void initState() {
@@ -49,7 +121,6 @@ class _StockSearchFieldState extends State<StockSearchField> {
     }
     _focusNode.addListener(() {
       if (!_focusNode.hasFocus) {
-        // Delay hiding so tap on dropdown item registers first
         Future.delayed(const Duration(milliseconds: 200), () {
           if (mounted) setState(() => _showDropdown = false);
         });
@@ -65,18 +136,35 @@ class _StockSearchFieldState extends State<StockSearchField> {
     super.dispose();
   }
 
+  /// Apply the current exchange filter to [_allResults]
+  List<StockSearchResult> _applyFilter(List<StockSearchResult> results) {
+    if (_selectedExchange == ExchangeFilter.all) return results;
+    final codes = _selectedExchange.exchangeCodes;
+    return results
+        .where((r) => codes.contains(r.exchange))
+        .toList();
+  }
+
+  void _onExchangeChanged(ExchangeFilter exchange) {
+    setState(() {
+      _selectedExchange = exchange;
+      _filteredResults = _applyFilter(_allResults);
+      // If there are results, keep dropdown open
+      if (_allResults.isNotEmpty) _showDropdown = true;
+    });
+  }
+
   void _onTextChanged(String value) {
-    // If user clears the field, reset selection
     if (value.isEmpty) {
       setState(() {
-        _results = [];
+        _allResults = [];
+        _filteredResults = [];
         _showDropdown = false;
         _selectedResult = null;
       });
       return;
     }
 
-    // Don't search if user just selected a result and text matches
     if (_selectedResult != null && value == _selectedResult!.name) return;
 
     setState(() {
@@ -90,7 +178,8 @@ class _StockSearchFieldState extends State<StockSearchField> {
       final results = await _searchService.search(value);
       if (mounted) {
         setState(() {
-          _results = results;
+          _allResults = results;
+          _filteredResults = _applyFilter(results);
           _isSearching = false;
         });
       }
@@ -102,7 +191,8 @@ class _StockSearchFieldState extends State<StockSearchField> {
       _selectedResult = result;
       _controller.text = result.name;
       _showDropdown = false;
-      _results = [];
+      _allResults = [];
+      _filteredResults = [];
     });
     _focusNode.unfocus();
     widget.onSelected(result);
@@ -110,16 +200,58 @@ class _StockSearchFieldState extends State<StockSearchField> {
 
   @override
   Widget build(BuildContext context) {
+    final hint = _selectedExchange == ExchangeFilter.all
+        ? widget.hintText
+        : _selectedExchange.searchHint;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Exchange filter chips
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: ExchangeFilter.values.map((exchange) {
+              final isSelected = _selectedExchange == exchange;
+              final color = exchange.color;
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: FilterChip(
+                  label: Text(
+                    exchange.label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: isSelected ? Colors.white : color,
+                    ),
+                  ),
+                  selected: isSelected,
+                  onSelected: (_) => _onExchangeChanged(exchange),
+                  selectedColor: color,
+                  backgroundColor: color.withValues(alpha: 0.08),
+                  checkmarkColor: Colors.white,
+                  side: BorderSide(
+                    color: isSelected ? color : color.withValues(alpha: 0.3),
+                    width: 1,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+
+        const SizedBox(height: 10),
+
+        // Search text field
         TextField(
           controller: _controller,
           focusNode: _focusNode,
           onChanged: _onTextChanged,
           decoration: InputDecoration(
             labelText: 'Search Stock / ETF / Fund',
-            hintText: widget.hintText,
+            hintText: hint,
             prefixIcon: const Icon(Icons.search),
             suffixIcon: _isSearching
                 ? const Padding(
@@ -131,7 +263,8 @@ class _StockSearchFieldState extends State<StockSearchField> {
                     ),
                   )
                 : _selectedResult != null
-                    ? Icon(Icons.check_circle, color: AppColors.success, size: 20)
+                    ? Icon(Icons.check_circle,
+                        color: AppColors.success, size: 20)
                     : _controller.text.isNotEmpty
                         ? IconButton(
                             icon: const Icon(Icons.clear, size: 18),
@@ -160,7 +293,7 @@ class _StockSearchFieldState extends State<StockSearchField> {
                 ),
               ],
             ),
-            child: _isSearching && _results.isEmpty
+            child: _isSearching && _filteredResults.isEmpty
                 ? const Padding(
                     padding: EdgeInsets.all(16),
                     child: Center(
@@ -170,11 +303,13 @@ class _StockSearchFieldState extends State<StockSearchField> {
                       ),
                     ),
                   )
-                : _results.isEmpty
+                : _filteredResults.isEmpty
                     ? Padding(
                         padding: const EdgeInsets.all(16),
                         child: Text(
-                          'No results found. Try a different name or symbol.',
+                          _selectedExchange == ExchangeFilter.all
+                              ? 'No results found. Try a different name or symbol.'
+                              : 'No ${_selectedExchange.label} results found. Try "All" or a different name.',
                           style: TextStyle(
                             color: AppColors.textSecondary,
                             fontSize: 13,
@@ -184,11 +319,11 @@ class _StockSearchFieldState extends State<StockSearchField> {
                     : ListView.separated(
                         shrinkWrap: true,
                         padding: const EdgeInsets.symmetric(vertical: 4),
-                        itemCount: _results.length,
+                        itemCount: _filteredResults.length,
                         separatorBuilder: (context, index) =>
                             Divider(color: AppColors.divider, height: 1),
                         itemBuilder: (context, index) {
-                          final result = _results[index];
+                          final result = _filteredResults[index];
                           return _SearchResultTile(
                             result: result,
                             onTap: () => _onResultSelected(result),
@@ -202,14 +337,16 @@ class _StockSearchFieldState extends State<StockSearchField> {
         if (_selectedResult != null && !_showDropdown) ...[
           const SizedBox(height: 6),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: AppColors.success.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
               children: [
-                Icon(Icons.check_circle, color: AppColors.success, size: 16),
+                Icon(Icons.check_circle,
+                    color: AppColors.success, size: 16),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -226,7 +363,8 @@ class _StockSearchFieldState extends State<StockSearchField> {
                     _controller.clear();
                     setState(() {
                       _selectedResult = null;
-                      _results = [];
+                      _allResults = [];
+                      _filteredResults = [];
                     });
                   },
                   style: TextButton.styleFrom(
@@ -259,13 +397,13 @@ class _SearchResultTile extends StatelessWidget {
   Color _exchangeColor(String exchange) {
     switch (exchange) {
       case 'NSE':
-        return const Color(0xFF1565C0); // Blue
+        return const Color(0xFF1565C0);
       case 'BSE':
-        return const Color(0xFF6A1B9A); // Purple
+        return const Color(0xFF6A1B9A);
       case 'NYSE':
-        return const Color(0xFF2E7D32); // Green
+        return const Color(0xFF2E7D32);
       case 'NASDAQ':
-        return const Color(0xFF00838F); // Teal
+        return const Color(0xFF00838F);
       default:
         return Colors.grey;
     }
@@ -284,7 +422,8 @@ class _SearchResultTile extends StatelessWidget {
           children: [
             // Exchange badge
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
                 color: exchangeColor.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(4),
@@ -323,10 +462,11 @@ class _SearchResultTile extends StatelessWidget {
                 ],
               ),
             ),
-            // Type badge (ETF, EQUITY, etc.)
+            // Type badge (ETF, MUTUALFUND, etc.)
             if (result.quoteType != 'EQUITY')
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: Colors.orange.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(4),
