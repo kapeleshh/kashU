@@ -7,8 +7,10 @@ import '../../core/constants/app_strings.dart';
 import '../../data/models/asset.dart';
 import '../../data/models/asset_type.dart';
 import '../../shared/providers/portfolio_provider.dart';
+import '../../shared/widgets/mutual_fund_search_field.dart';
 import '../../shared/widgets/stock_search_field.dart';
 import '../../data/repositories/transaction_repository.dart';
+import '../../services/mutual_fund_service.dart';
 import '../../services/price_service.dart';
 import '../../services/stock_search_service.dart';
 import '../../services/yahoo_finance_service.dart';
@@ -47,13 +49,22 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   String? _stockFetchStatus;
   StockSearchResult? _selectedStock;
 
+  // Mutual fund search state
+  final Key _mfSearchKey = UniqueKey();
+  bool _isFetchingMfNav = false;
+  String? _mfFetchStatus;
+  // ignore: unused_field
+  MutualFundResult? _selectedMf;
+
   bool get isEditing => widget.existingAsset != null;
 
   /// Types that use the stock search autocomplete
   bool get _usesStockSearch =>
       _selectedType == AssetType.stock ||
-      _selectedType == AssetType.mutualFund ||
       _selectedType == AssetType.bond;
+
+  /// Whether this type uses the mutual fund search
+  bool get _usesMfSearch => _selectedType == AssetType.mutualFund;
 
   @override
   void initState() {
@@ -151,16 +162,44 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
             const SizedBox(height: 24),
 
-            // Stock search OR name field depending on type
+            // Mutual fund search (MFAPI.in)
+            if (_usesMfSearch && !isEditing) ...[
+              MutualFundSearchField(
+                key: _mfSearchKey,
+                onSelected: _onMfSelected,
+              ),
+              const SizedBox(height: 8),
+              if (_isFetchingMfNav)
+                Text(
+                  '⏳ Fetching latest NAV...',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.primary,
+                    fontStyle: FontStyle.italic,
+                  ),
+                )
+              else if (_mfFetchStatus != null)
+                Text(
+                  _mfFetchStatus!,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: _mfFetchStatus!.startsWith('✅')
+                        ? AppColors.success
+                        : AppColors.error,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              const SizedBox(height: 16),
+            ],
+
+            // Stock search
             if (_usesStockSearch && !isEditing) ...[
               StockSearchField(
                 key: _stockSearchKey,
                 onSelected: _onStockSelected,
-                hintText: _selectedType == AssetType.mutualFund
-                    ? 'Search mutual fund or ETF name...'
-                    : _selectedType == AssetType.bond
-                        ? 'Search bond or treasury name...'
-                        : 'Search by company name (e.g. Reliance, TCS, Apple)...',
+                hintText: _selectedType == AssetType.bond
+                    ? 'Search bond or treasury name...'
+                    : 'Search by company name (e.g. Reliance, TCS, Apple)...',
               ),
               const SizedBox(height: 8),
               if (_isFetchingStockPrice)
@@ -186,12 +225,12 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               const SizedBox(height: 16),
             ],
 
-            // Name field (always shown; auto-filled for stocks)
+            // Name field (always shown; auto-filled for stocks/MFs)
             TextFormField(
               controller: _nameController,
               decoration: InputDecoration(
                 labelText: AppStrings.assetName,
-                hintText: _usesStockSearch && !isEditing
+                hintText: (_usesStockSearch || _usesMfSearch) && !isEditing
                     ? 'Auto-filled from search'
                     : 'e.g., Reliance Industries',
               ),
@@ -441,6 +480,46 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       setState(() {
         _isFetchingStockPrice = false;
         _stockFetchStatus = '⚠ Could not fetch price. Enter manually.';
+      });
+    }
+  }
+
+  /// Called when user selects a mutual fund from the search dropdown.
+  /// Auto-fills name, symbol (scheme code), and fetches latest NAV.
+  Future<void> _onMfSelected(MutualFundResult result) async {
+    setState(() {
+      _selectedMf = result;
+      _nameController.text = result.shortName;
+      _symbolController.text = result.schemeCode.toString();
+      _mfFetchStatus = null;
+      _isFetchingMfNav = true;
+    });
+
+    try {
+      final mfService = MutualFundService();
+      final navResult = await mfService.fetchNav(result.schemeCode);
+
+      if (!mounted) return;
+
+      if (navResult != null && navResult.nav != null) {
+        setState(() {
+          _isFetchingMfNav = false;
+          _currentPriceController.text =
+              navResult.nav!.toStringAsFixed(4);
+          _mfFetchStatus =
+              '✅ Latest NAV: ₹${navResult.nav!.toStringAsFixed(4)} (${navResult.navDate ?? ''})';
+        });
+      } else {
+        setState(() {
+          _isFetchingMfNav = false;
+          _mfFetchStatus = '⚠ Could not fetch NAV. Enter manually.';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isFetchingMfNav = false;
+        _mfFetchStatus = '⚠ Could not fetch NAV. Enter manually.';
       });
     }
   }
