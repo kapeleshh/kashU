@@ -1,120 +1,196 @@
-# KashU - Your Personal Investment Portfolio Tracker
+# KashU — Your Personal Investment Portfolio Tracker
 
-<p align="center">
-  <img src="assets/icons/kashu_logo.png" width="120" alt="KashU Logo">
-</p>
+**KashU** is a privacy-focused, offline-first Flutter app to track all your investments in one place — stocks, mutual funds, metals, crypto, deposits, and more — with live prices pulled automatically from free APIs.
 
-**KashU** is a privacy-focused, offline-first mobile app built with Flutter to track all your investments in one place.
+---
 
 ## ✨ Features
 
-### Phase 1 (MVP) - Completed
-- **Multi-Asset Support**: Track Stocks, Mutual Funds, Gold, Crypto, Bonds, Fixed Deposits, Cash, and Real Estate
-- **Multi-Currency**: Support for INR (default), USD, EUR, GBP, and more
-- **Dashboard**: Total portfolio value, asset allocation chart, top gainers/losers
-- **Asset Management**: Add, edit, delete investments with detailed information
-- **Manual Price Updates**: Update current prices whenever you want
-- **Transaction History**: Track all your buy/sell/dividend transactions
-- **Platform Grouping**: View assets by type or by platform (Zerodha, Groww, etc.)
-- **Data Export/Import**: Backup your data as JSON
-- **Dark Theme**: Beautiful minimal dark UI
-- **Offline-First**: All data stored locally on device
+### Asset Types Supported
 
-### Coming Soon (Phase 2+)
-- 📊 Performance Charts & Trend Analysis
-- 📝 Investment Journal
-- 📈 Benchmark Comparison
-- 🎯 Risk Score Calculator
-- 🔄 Rebalancing Assistant
-- 📅 Dividend Calendar
-- 🔮 What-If Simulator
-- 🔐 PIN/Biometric Authentication
+| Asset | Price Source | How it works |
+|-------|-------------|--------------|
+| **Stocks / ETFs** | Yahoo Finance | Search by company name → auto-fill symbol + live price |
+| **Mutual Funds** | MFAPI.in (37,500+ Indian funds) | Search by fund name → auto-fill NAV |
+| **Metals (Gold & Silver)** | COMEX via Yahoo Finance | Auto-fetch GC=F / SI=F → convert to INR/gram with Indian taxes |
+| **Crypto** | CoinGecko | Search by name/symbol → live INR price |
+| **Deposits (FD/RD)** | Compound interest calculator | Enter principal + rate OR maturity amount → auto-calculate current value |
+| **Real Estate / Cash** | Manual | Enter value manually |
+
+### Smart Search
+- **Stocks**: Type a company name (e.g. "Reliance", "Apple") → live dropdown with exchange filter (NSE / BSE / NASDAQ / NYSE)
+- **Mutual Funds**: Type fund name → filter by Direct/Regular and Growth/IDCW
+- **Crypto**: Type coin name → results sorted by market cap rank
+
+### Live Price Tracking
+- **Gold**: COMEX GC=F → USD/gram → INR/gram with Budget 2024 taxes (BCD 5% + AIDC 1% + GST 3%)
+- **Silver**: COMEX SI=F → USD/gram → INR/gram with silver taxes (BCD 10% + GST 3%)
+- **Stocks**: Yahoo Finance real-time prices
+- **Crypto**: CoinGecko live prices in INR
+
+### Deposit Calculator
+- **Fixed Deposit**: Enter principal + rate OR just the maturity amount (app back-calculates the rate)
+- **Recurring Deposit**: Monthly installment with RD formula
+- Shows: current value, maturity value, interest earned, progress bar
+
+### Portfolio Dashboard
+- Total portfolio value, total invested, gain/loss
+- Asset allocation chart
+- Top gainers / top losers
+
+### Other Features
+- Multi-currency support (INR, USD, EUR, GBP, etc.)
+- Transaction history (buy/sell/dividend)
+- Platform grouping (Zerodha, Groww, etc.)
+- Data export/import (JSON)
+- Dark theme
+- Offline-first (all data stored locally with Hive)
+
+---
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Flutter SDK (3.11+)
-- Dart SDK (3.11+)
+- Flutter SDK 3.11+
+- Dart SDK 3.11+
 
 ### Installation
 
-1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/kashu.git
-cd kashu
-```
-
-2. Install dependencies:
-```bash
+git clone https://github.com/kapeleshh/kashU.git
+cd kashU
 flutter pub get
-```
-
-3. Generate Hive adapters:
-```bash
 dart run build_runner build --delete-conflicting-outputs
 ```
 
-4. Run the app:
+### Run on Web (with live price APIs)
+
 ```bash
-flutter run
+# Start the CORS proxy + serve the Flutter web build
+python3 proxy_server.py
+# Open http://localhost:8080 in your browser
 ```
+
+The `proxy_server.py` is required for web because browsers block direct calls to Yahoo Finance, CoinGecko, and MFAPI.in. It proxies all API requests with CORS headers.
+
+### Run on Android
+
+**From Windows** (double-click):
+```
+build_apk.bat
+```
+
+APK output: `build\app\outputs\flutter-apk\app-debug.apk`
+
+> **Note:** Android build tools are Windows `.exe` files and cannot run from WSL2. Use `build_apk.bat` from Windows PowerShell or File Explorer.
+
+**From macOS/Linux:**
+```bash
+flutter build apk --debug
+```
+
+### Run on iOS
+```bash
+flutter build ios --debug
+```
+
+---
 
 ## 📁 Project Structure
 
 ```
-kashu/
+kashU/
 ├── lib/
-│   ├── main.dart                 # App entry point
+│   ├── main.dart
 │   ├── core/
-│   │   ├── constants/            # Colors, strings, constants
-│   │   ├── theme/                # App theme
-│   │   └── utils/                # Utility functions
+│   │   ├── constants/          # Colors, strings, app constants
+│   │   ├── theme/              # Dark theme
+│   │   └── utils/              # Currency formatter
 │   ├── data/
-│   │   ├── models/               # Data models (Asset, Transaction)
-│   │   └── repositories/         # Data access layer
+│   │   ├── models/             # Asset, Transaction (Hive models)
+│   │   └── repositories/       # AssetRepository, TransactionRepository
 │   ├── features/
-│   │   ├── dashboard/            # Dashboard screen
-│   │   ├── assets/               # Assets list & detail screens
-│   │   ├── transactions/         # Transactions screen
-│   │   └── settings/             # Settings screen
+│   │   ├── dashboard/          # Portfolio overview
+│   │   ├── assets/             # Add/Edit/Detail screens
+│   │   ├── transactions/       # Transaction history
+│   │   └── settings/           # App settings
 │   └── shared/
-│       ├── widgets/              # Reusable widgets
-│       └── providers/            # Riverpod providers
-├── assets/
-│   ├── icons/
-│   ├── images/
-│   └── fonts/
-└── test/
+│       ├── providers/          # Riverpod providers
+│       └── widgets/
+│           ├── stock_search_field.dart       # Stock/ETF search with exchange filter
+│           ├── mutual_fund_search_field.dart # MF search with plan/option filter
+│           ├── crypto_search_field.dart      # Crypto search with market cap rank
+│           └── fd_bond_input_field.dart      # FD/RD calculator widget
+├── lib/services/
+│   ├── gold_price_service.dart     # Gold & Silver COMEX prices
+│   ├── yahoo_finance_service.dart  # Stock prices
+│   ├── coingecko_service.dart      # Crypto prices + search
+│   ├── mutual_fund_service.dart    # MFAPI.in NAV data
+│   ├── stock_search_service.dart   # Yahoo Finance search
+│   ├── currency_converter_service.dart  # Live forex rates
+│   └── fd_bond_calculator.dart     # Compound interest math
+├── proxy_server.py             # CORS proxy for web testing
+├── build_apk.bat               # Windows APK build script
+└── android/
+    └── app/build.gradle.kts    # Android build config
 ```
-
-## 🛠 Tech Stack
-
-- **Framework**: Flutter 3.x
-- **State Management**: Riverpod
-- **Local Database**: Hive
-- **Charts**: fl_chart
-- **Security**: flutter_secure_storage, local_auth
-
-## 📱 Screenshots
-
-Coming soon...
-
-## 🔒 Privacy
-
-KashU is designed with privacy in mind:
-- All data is stored locally on your device
-- No accounts required
-- No data is sent to any servers
-- Full control over your financial data
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
 
 ---
 
-Made with ❤️ for investors who value privacy and simplicity.
+## 🛠 Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Framework | Flutter 3.41 |
+| State Management | Riverpod 2.x |
+| Local Database | Hive (offline-first) |
+| Charts | fl_chart |
+| HTTP | http package |
+| Price APIs | Yahoo Finance, CoinGecko, MFAPI.in, open.er-api.com |
+
+---
+
+## 🌐 APIs Used (All Free, No API Key Required)
+
+| API | Used For |
+|-----|---------|
+| `query1.finance.yahoo.com` | Stock prices, Gold/Silver COMEX prices, Stock search |
+| `api.coingecko.com` | Crypto prices and search |
+| `api.mfapi.in` | Indian mutual fund NAV (37,500+ schemes) |
+| `open.er-api.com` | Live USD → INR forex rates |
+
+---
+
+## 💰 Gold & Silver Price Calculation
+
+```
+COMEX GC=F (Gold) → $4,700/troy oz
+÷ 31.1035 = $151.1/gram
+× ₹93.07 (live forex) = ₹14,057/gram (base)
+× (1 + 0.05 + 0.01) × (1 + 0.03) = ₹15,347/gram (with taxes)
+
+Indian Gold Taxes (Budget 2024):
+  BCD: 5%  |  AIDC: 1%  |  GST: 3%  |  Effective: ~9.18%
+
+Indian Silver Taxes:
+  BCD: 10%  |  GST: 3%  |  Effective: ~13.30%
+```
+
+---
+
+## 🔒 Privacy
+
+- All portfolio data stored **locally on device** (Hive)
+- No accounts, no login required
+- No financial data sent to any server
+- API calls are only for **price data** (no personal info)
+
+---
+
+## 📄 License
+
+MIT License
+
+---
+
+Made with ❤️ for Indian investors who value privacy and simplicity.
