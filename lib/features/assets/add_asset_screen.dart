@@ -42,7 +42,10 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   String? _selectedPlatform;
   DateTime _purchaseDate = DateTime.now();
 
-  // Gold live price fetch state
+  // Gold/Silver toggle state
+  bool _isSilver = false; // false = Gold, true = Silver
+
+  // Gold/Silver live price fetch state
   bool _isFetchingGoldPrice = false;
   String? _goldFetchStatus;
 
@@ -178,6 +181,18 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                 );
               }).toList(),
             ),
+
+            // Gold / Silver toggle (shown when Metals is selected)
+            if (_selectedType == AssetType.gold && !isEditing) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  _metalChip('🟡 Gold', false, const Color(0xFFFFD700)),
+                  const SizedBox(width: 8),
+                  _metalChip('⚪ Silver', true, const Color(0xFF9E9E9E)),
+                ],
+              ),
+            ],
 
             const SizedBox(height: 24),
 
@@ -733,7 +748,42 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     );
   }
 
-  /// Fetches live gold price and auto-fills the current price field
+  /// Gold/Silver toggle chip
+  Widget _metalChip(String label, bool isSilver, Color color) {
+    final isSelected = _isSilver == isSilver;
+    return FilterChip(
+      label: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: isSelected ? Colors.white : color,
+        ),
+      ),
+      selected: isSelected,
+      onSelected: (_) {
+        setState(() {
+          _isSilver = isSilver;
+          _goldFetchStatus = null;
+          // Update symbol
+          _symbolController.text =
+              isSilver ? PriceSymbols.silverComex : PriceSymbols.goldComex;
+        });
+        _fetchGoldPrice();
+      },
+      selectedColor: color,
+      backgroundColor: color.withValues(alpha: 0.1),
+      checkmarkColor: Colors.white,
+      side: BorderSide(
+        color: isSelected ? color : color.withValues(alpha: 0.3),
+        width: 1,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    );
+  }
+
+  /// Fetches live metal (gold or silver) price and auto-fills the current price field
   Future<void> _fetchGoldPrice() async {
     setState(() {
       _isFetchingGoldPrice = true;
@@ -742,9 +792,12 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
     try {
       final goldService = ref.read(goldPriceServiceProvider);
-      final breakdown = await goldService.fetchGoldPriceBreakdown(
-        targetCurrency: _selectedCurrency,
-      );
+
+      final breakdown = _isSilver
+          ? await goldService.fetchSilverPriceBreakdown(
+              targetCurrency: _selectedCurrency)
+          : await goldService.fetchGoldPriceBreakdown(
+              targetCurrency: _selectedCurrency);
 
       if (!mounted) return;
 
@@ -758,11 +811,12 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       }
 
       final price = breakdown.finalPerGram;
+      final metalName = _isSilver ? 'silver' : 'gold';
       setState(() {
         _isFetchingGoldPrice = false;
         _currentPriceController.text = price.toStringAsFixed(2);
         _goldFetchStatus =
-            '✅ Live gold price: ₹${price.toStringAsFixed(2)}/gram';
+            '✅ Live $metalName price: ₹${price.toStringAsFixed(2)}/gram';
       });
     } catch (e) {
       if (!mounted) return;

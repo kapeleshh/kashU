@@ -49,9 +49,12 @@ class PriceSymbols {
   PriceSymbols._();
 
   /// COMEX Gold futures (USD per troy oz) — international price.
-  /// This is the single source of truth for gold prices.
   /// We convert to INR/gram locally using live forex + Indian taxes.
   static const String goldComex = 'GC=F';
+
+  /// COMEX Silver futures (USD per troy oz) — international price.
+  /// We convert to INR/gram locally using live forex + Indian taxes.
+  static const String silverComex = 'SI=F';
 
   /// Bitcoin on CoinGecko
   static const String bitcoin = 'bitcoin';
