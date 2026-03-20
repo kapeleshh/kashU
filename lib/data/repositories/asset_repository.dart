@@ -58,10 +58,13 @@ class AssetRepository {
   Future<void> updateAssetPrice(String id, double newPrice) async {
     final asset = getAssetById(id);
     if (asset != null) {
-      asset.currentPrice = newPrice;
-      asset.updatedAt = DateTime.now();
-      asset.priceUpdatedAt = DateTime.now();
-      await asset.save();
+      // Create updated copy and put back into box (more reliable on web/IndexedDB)
+      final updated = asset.copyWith(
+        currentPrice: newPrice,
+        updatedAt: DateTime.now(),
+        priceUpdatedAt: DateTime.now(),
+      );
+      await box.put(id, updated);
     }
   }
 
