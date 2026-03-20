@@ -7,8 +7,11 @@ import '../../core/constants/app_strings.dart';
 import '../../data/models/asset.dart';
 import '../../data/models/asset_type.dart';
 import '../../shared/providers/portfolio_provider.dart';
+import '../../shared/widgets/stock_search_field.dart';
 import '../../data/repositories/transaction_repository.dart';
 import '../../services/price_service.dart';
+import '../../services/stock_search_service.dart';
+import '../../services/yahoo_finance_service.dart';
 
 class AddAssetScreen extends ConsumerStatefulWidget {
   final Asset? existingAsset;
@@ -21,14 +24,14 @@ class AddAssetScreen extends ConsumerStatefulWidget {
 
 class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   final _formKey = GlobalKey<FormState>();
-  
+
   late TextEditingController _nameController;
   late TextEditingController _symbolController;
   late TextEditingController _quantityController;
   late TextEditingController _purchasePriceController;
   late TextEditingController _currentPriceController;
   late TextEditingController _notesController;
-  
+
   AssetType _selectedType = AssetType.stock;
   String _selectedCurrency = 'INR';
   String? _selectedPlatform;
@@ -36,22 +39,37 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
   // Gold live price fetch state
   bool _isFetchingGoldPrice = false;
-  String? _goldFetchStatus; // null = idle, message = success/error
+  String? _goldFetchStatus;
+
+  // Stock search state
+  Key _stockSearchKey = UniqueKey(); // reset widget when type changes
+  bool _isFetchingStockPrice = false;
+  String? _stockFetchStatus;
+  StockSearchResult? _selectedStock;
 
   bool get isEditing => widget.existingAsset != null;
+
+  /// Types that use the stock search autocomplete
+  bool get _usesStockSearch =>
+      _selectedType == AssetType.stock ||
+      _selectedType == AssetType.mutualFund ||
+      _selectedType == AssetType.bond;
 
   @override
   void initState() {
     super.initState();
     final asset = widget.existingAsset;
-    
+
     _nameController = TextEditingController(text: asset?.name ?? '');
     _symbolController = TextEditingController(text: asset?.symbol ?? '');
-    _quantityController = TextEditingController(text: asset?.quantity.toString() ?? '');
-    _purchasePriceController = TextEditingController(text: asset?.purchasePrice.toString() ?? '');
-    _currentPriceController = TextEditingController(text: asset?.currentPrice.toString() ?? '');
+    _quantityController =
+        TextEditingController(text: asset?.quantity.toString() ?? '');
+    _purchasePriceController =
+        TextEditingController(text: asset?.purchasePrice.toString() ?? '');
+    _currentPriceController =
+        TextEditingController(text: asset?.currentPrice.toString() ?? '');
     _notesController = TextEditingController(text: asset?.notes ?? '');
-    
+
     if (asset != null) {
       _selectedType = asset.type;
       _selectedCurrency = asset.currency;
@@ -112,15 +130,16 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                   onSelected: (_) {
                     setState(() {
                       _selectedType = type;
-                      // Reset gold fetch status when switching types
                       _goldFetchStatus = null;
+                      _stockFetchStatus = null;
+                      _selectedStock = null;
+                      // Reset stock search widget
+                      _stockSearchKey = UniqueKey();
                     });
-                    // Auto-fill symbol and fetch live price when Gold is selected
                     if (type == AssetType.gold) {
                       _symbolController.text = PriceSymbols.goldComex;
                       _fetchGoldPrice();
                     } else {
-                      // Clear symbol if switching away from gold to a non-default type
                       if (_symbolController.text == PriceSymbols.goldComex) {
                         _symbolController.clear();
                       }
@@ -129,15 +148,52 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                 );
               }).toList(),
             ),
-            
+
             const SizedBox(height: 24),
-            
-            // Name
+
+            // Stock search OR name field depending on type
+            if (_usesStockSearch && !isEditing) ...[
+              StockSearchField(
+                key: _stockSearchKey,
+                onSelected: _onStockSelected,
+                hintText: _selectedType == AssetType.mutualFund
+                    ? 'Search mutual fund or ETF name...'
+                    : _selectedType == AssetType.bond
+                        ? 'Search bond or treasury name...'
+                        : 'Search by company name (e.g. Reliance, TCS, Apple)...',
+              ),
+              const SizedBox(height: 8),
+              if (_isFetchingStockPrice)
+                Text(
+                  '⏳ Fetching live price...',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.primary,
+                    fontStyle: FontStyle.italic,
+                  ),
+                )
+              else if (_stockFetchStatus != null)
+                Text(
+                  _stockFetchStatus!,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: _stockFetchStatus!.startsWith('✅')
+                        ? AppColors.success
+                        : AppColors.error,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              const SizedBox(height: 16),
+            ],
+
+            // Name field (always shown; auto-filled for stocks)
             TextFormField(
               controller: _nameController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: AppStrings.assetName,
-                hintText: 'e.g., Reliance Industries',
+                hintText: _usesStockSearch && !isEditing
+                    ? 'Auto-filled from search'
+                    : 'e.g., Reliance Industries',
               ),
               validator: (value) {
                 if (value == null || value.isEmpty) {
@@ -146,14 +202,57 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                 return null;
               },
             ),
-            
+
             const SizedBox(height: 16),
-            
-            // Symbol field with smart hints based on asset type
-            _buildSymbolField(),
-            
-            const SizedBox(height: 16),
-            
+
+            // Symbol field (hidden for stock search types when adding new)
+            if (!_usesStockSearch || isEditing) ...[
+              _buildSymbolField(),
+              const SizedBox(height: 16),
+            ] else if (_selectedStock != null) ...[
+              // Show read-only symbol chip when stock is selected
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppColors.card,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.tag, color: AppColors.textTertiary, size: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Symbol: ',
+                      style: TextStyle(color: AppColors.textSecondary),
+                    ),
+                    Text(
+                      _symbolController.text,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        _selectedStock!.exchangeLabel,
+                        style: TextStyle(
+                          color: AppColors.primary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
             // Quantity and Purchase Price Row
             Row(
               children: [
@@ -165,7 +264,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                       hintText: 'e.g., 10',
                       suffixText: _selectedType.unitLabel,
                     ),
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
                     validator: (value) {
                       if (value == null || value.isEmpty) {
                         return AppStrings.errorRequired;
@@ -184,9 +284,11 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                     controller: _purchasePriceController,
                     decoration: InputDecoration(
                       labelText: AppStrings.purchasePrice,
-                      prefixText: '${AppConstants.currencies[_selectedCurrency] ?? _selectedCurrency} ',
+                      prefixText:
+                          '${AppConstants.currencies[_selectedCurrency] ?? _selectedCurrency} ',
                     ),
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
                     validator: (value) {
                       if (value == null || value.isEmpty) {
                         return AppStrings.errorRequired;
@@ -201,17 +303,20 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                 ),
               ],
             ),
-            
+
             const SizedBox(height: 16),
-            
+
             // Current Price
             TextFormField(
               controller: _currentPriceController,
               decoration: InputDecoration(
                 labelText: AppStrings.currentPrice,
-                prefixText: '${AppConstants.currencies[_selectedCurrency] ?? _selectedCurrency} ',
+                prefixText:
+                    '${AppConstants.currencies[_selectedCurrency] ?? _selectedCurrency} ',
+                hintText: _isFetchingStockPrice ? 'Fetching...' : null,
               ),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
               validator: (value) {
                 if (value == null || value.isEmpty) {
                   return AppStrings.errorRequired;
@@ -222,9 +327,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                 return null;
               },
             ),
-            
+
             const SizedBox(height: 16),
-            
+
             // Purchase Date
             ListTile(
               contentPadding: EdgeInsets.zero,
@@ -236,9 +341,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               trailing: const Icon(Icons.calendar_today),
               onTap: _selectDate,
             ),
-            
+
             const SizedBox(height: 16),
-            
+
             // Platform Dropdown
             DropdownButtonFormField<String>(
               initialValue: _selectedPlatform,
@@ -251,11 +356,12 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                   child: Text(platform),
                 );
               }).toList(),
-              onChanged: (value) => setState(() => _selectedPlatform = value),
+              onChanged: (value) =>
+                  setState(() => _selectedPlatform = value),
             ),
-            
+
             const SizedBox(height: 16),
-            
+
             // Currency Dropdown
             DropdownButtonFormField<String>(
               initialValue: _selectedCurrency,
@@ -268,11 +374,12 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                   child: Text('${entry.key} (${entry.value})'),
                 );
               }).toList(),
-              onChanged: (value) => setState(() => _selectedCurrency = value ?? 'INR'),
+              onChanged: (value) =>
+                  setState(() => _selectedCurrency = value ?? 'INR'),
             ),
-            
+
             const SizedBox(height: 16),
-            
+
             // Notes
             TextFormField(
               controller: _notesController,
@@ -282,9 +389,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               ),
               maxLines: 3,
             ),
-            
+
             const SizedBox(height: 32),
-            
+
             // Save Button
             ElevatedButton(
               onPressed: _saveAsset,
@@ -296,14 +403,57 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     );
   }
 
-  /// Builds a smart symbol input field based on the selected asset type
+  /// Called when user selects a stock from the search dropdown.
+  /// Auto-fills name, symbol, and fetches live price.
+  Future<void> _onStockSelected(StockSearchResult result) async {
+    setState(() {
+      _selectedStock = result;
+      _nameController.text = result.name;
+      _symbolController.text = result.symbol;
+      _stockFetchStatus = null;
+      _isFetchingStockPrice = true;
+    });
+
+    // Fetch live price for the selected stock
+    try {
+      final yahooService = YahooFinanceService();
+      final priceResult = await yahooService.fetchPrice(result.symbol);
+
+      if (!mounted) return;
+
+      if (priceResult.success && priceResult.price > 0) {
+        setState(() {
+          _isFetchingStockPrice = false;
+          _currentPriceController.text =
+              priceResult.price.toStringAsFixed(2);
+          _stockFetchStatus =
+              '✅ Live price: ${priceResult.currency} ${priceResult.price.toStringAsFixed(2)}';
+        });
+      } else {
+        setState(() {
+          _isFetchingStockPrice = false;
+          _stockFetchStatus =
+              '⚠ Could not fetch price. Enter manually.';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isFetchingStockPrice = false;
+        _stockFetchStatus = '⚠ Could not fetch price. Enter manually.';
+      });
+    }
+  }
+
+  /// Builds a smart symbol input field for non-stock types (gold, crypto, etc.)
   Widget _buildSymbolField() {
     final baseCurrency = ref.read(baseCurrencyProvider);
     final supportsTracking = PriceSymbols.supportsAutoTracking(_selectedType);
-    final hint = PriceSymbols.symbolHint(_selectedType, baseCurrency: baseCurrency);
-    final defaultSym = PriceSymbols.defaultSymbol(_selectedType, baseCurrency: baseCurrency);
+    final hint =
+        PriceSymbols.symbolHint(_selectedType, baseCurrency: baseCurrency);
+    final defaultSym =
+        PriceSymbols.defaultSymbol(_selectedType, baseCurrency: baseCurrency);
 
-    // Auto-fill default symbol for non-gold types if field is empty
     if (defaultSym != null &&
         _selectedType != AssetType.gold &&
         _symbolController.text.isEmpty) {
@@ -336,7 +486,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                   )
                 : supportsTracking
                     ? Icon(Icons.sync, color: AppColors.primary, size: 18)
-                    : Icon(Icons.lock_outline, color: AppColors.textTertiary, size: 18),
+                    : Icon(Icons.lock_outline,
+                        color: AppColors.textTertiary, size: 18),
           ),
           textCapitalization: _selectedType == AssetType.crypto
               ? TextCapitalization.none
@@ -407,7 +558,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       if (breakdown == null) {
         setState(() {
           _isFetchingGoldPrice = false;
-          _goldFetchStatus = '❌ Could not fetch price. Check internet connection.';
+          _goldFetchStatus =
+              '❌ Could not fetch price. Check internet connection.';
         });
         return;
       }
@@ -416,7 +568,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       setState(() {
         _isFetchingGoldPrice = false;
         _currentPriceController.text = price.toStringAsFixed(2);
-        _goldFetchStatus = '✅ Live gold price: ₹${price.toStringAsFixed(2)}/gram';
+        _goldFetchStatus =
+            '✅ Live gold price: ₹${price.toStringAsFixed(2)}/gram';
       });
     } catch (e) {
       if (!mounted) return;
@@ -472,11 +625,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       await assetRepo.updateAsset(asset);
     } else {
       await assetRepo.addAsset(asset);
-      // Log a BUY transaction for the new asset
       await txRepo.logBuyTransaction(asset);
     }
 
-    // Refresh providers
     ref.invalidate(allAssetsProvider);
     ref.invalidate(portfolioSummaryProvider);
 
@@ -485,7 +636,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            isNew ? 'Asset added & transaction logged' : 'Asset updated successfully',
+            isNew
+                ? 'Asset added & transaction logged'
+                : 'Asset updated successfully',
           ),
         ),
       );
@@ -511,7 +664,6 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               final navigator = Navigator.of(context);
               final messenger = ScaffoldMessenger.of(context);
 
-              // Delete asset AND its associated transactions
               await assetRepo.deleteAsset(assetId);
               await txRepo.deleteTransactionsForAsset(assetId);
 
@@ -519,10 +671,12 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               ref.invalidate(portfolioSummaryProvider);
 
               if (mounted) {
-                navigator.pop(); // Close dialog
-                navigator.pop(); // Close screen
+                navigator.pop();
+                navigator.pop();
                 messenger.showSnackBar(
-                  const SnackBar(content: Text('Asset and its transactions deleted')),
+                  const SnackBar(
+                      content:
+                          Text('Asset and its transactions deleted')),
                 );
               }
             },
