@@ -1,4 +1,4 @@
-# KashU — Your Personal Investment Portfolio Tracker
+e# KashU — Your Personal Investment Portfolio Tracker
 
 **KashU** is a privacy-focused, offline-first Flutter app to track all your investments in one place — stocks, mutual funds, metals, crypto, deposits, and more — with live prices pulled automatically from free APIs.
 
@@ -187,10 +187,12 @@ Indian Silver Taxes:
 
 ---
 
-## 📄 License
+## ☕ Support
 
-MIT License
+If you find KashU useful, consider buying me a coffee!
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support-yellow?style=for-the-badge&logo=buy-me-a-coffee)](https://buymeacoffee.com/onelunchman13)
 
 ---
 
-Made with ❤️ for Indian investors who value privacy and simplicity.
+Made with ❤️ who value privacy and simplicity.
