@@ -5,7 +5,7 @@
     android:targetCellWidth="3"
     android:targetCellHeight="2"
     android:updatePeriodMillis="1800000"
-    android:initialLayout="@layout/portfolio_widget_layout"
+    android:initialLayout="@layout/portfolio_widget"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen"
     android:description="@string/widget_description" />
