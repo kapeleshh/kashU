@@ -1,6 +1,7 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
+import '../core/utils/platform_config.dart';
+import '../core/utils/retry_helper.dart';
 import '../data/models/asset_type.dart';
 import 'price_service.dart';
 
@@ -17,25 +18,20 @@ import 'price_service.dart';
 ///
 /// On web, requests are routed through a local proxy at /proxy?url=...
 /// to bypass browser CORS restrictions.
+///
+/// Stability note: `query1.finance.yahoo.com` is an unofficial endpoint —
+/// Yahoo has broken it without notice before. On failure, this service
+/// automatically retries against `query2.finance.yahoo.com` as a fallback.
 class YahooFinanceService implements PriceService {
-  static const String _baseUrl =
+  static const String _primaryHost =
       'https://query1.finance.yahoo.com/v8/finance/chart';
-
-  /// Local proxy base URL (used on web to bypass CORS)
-  static const String _proxyBase = 'http://localhost:8080/proxy?url=';
+  static const String _fallbackHost =
+      'https://query2.finance.yahoo.com/v8/finance/chart';
 
   final http.Client _client;
 
   YahooFinanceService({http.Client? client})
       : _client = client ?? http.Client();
-
-  /// Build the request URL — uses proxy on web, direct on mobile/desktop
-  Uri _buildUrl(String directUrl) {
-    if (kIsWeb) {
-      return Uri.parse('$_proxyBase${Uri.encodeComponent(directUrl)}');
-    }
-    return Uri.parse(directUrl);
-  }
 
   @override
   bool supportsAssetType(AssetType type) {
@@ -59,7 +55,32 @@ class YahooFinanceService implements PriceService {
       return PriceResult.failure(symbol, 'Symbol is empty');
     }
 
-    final url = _buildUrl('$_baseUrl/$symbol?interval=1d&range=1d');
+    // Retry with exponential backoff; also fall back to the secondary host
+    // if the primary returns a non-200 or a hard error.
+    return RetryHelper.withRetry(
+      maxAttempts: 3,
+      initialDelay: const Duration(seconds: 1),
+      action: () => _fetchFromHost(_primaryHost, symbol),
+      isFailure: (r) => !r.success,
+      isRetriable: (r) {
+        // Don't retry on "symbol not found" — that won't change on retry.
+        final msg = r.error ?? '';
+        return !msg.contains('not found') &&
+            !msg.contains('Symbol is empty') &&
+            !msg.contains('Invalid price');
+      },
+    ).then((primary) async {
+      // If primary failed, try the fallback host once
+      if (!primary.success) {
+        final fallback = await _fetchFromHost(_fallbackHost, symbol);
+        return fallback.success ? fallback : primary;
+      }
+      return primary;
+    });
+  }
+
+  Future<PriceResult> _fetchFromHost(String baseUrl, String symbol) async {
+    final url = PlatformConfig.buildUrl('$baseUrl/$symbol?interval=1d&range=1d');
 
     try {
       final response = await _client.get(
@@ -92,7 +113,6 @@ class YahooFinanceService implements PriceService {
         return PriceResult.failure(symbol, 'Invalid response structure');
       }
 
-      // Use regularMarketPrice (current/last close)
       final price = (meta['regularMarketPrice'] as num?)?.toDouble();
       final currency = meta['currency'] as String? ?? 'USD';
 

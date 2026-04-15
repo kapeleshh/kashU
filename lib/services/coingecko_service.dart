@@ -1,6 +1,7 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
+import '../core/utils/platform_config.dart';
+import '../core/utils/retry_helper.dart';
 import '../data/models/asset_type.dart';
 import 'price_service.dart';
 
@@ -51,14 +52,11 @@ class CryptoSearchResult {
 ///
 /// Symbol format: lowercase coin ID as used by CoinGecko
 ///   - bitcoin, ethereum, solana, binancecoin
-///   - ripple, cardano, polkadot, dogecoin
 ///
-/// Find coin IDs at: https://api.coingecko.com/api/v3/coins/list
+/// Requests are retried on network errors but NOT on 429 (rate limit),
+/// since retrying immediately would just hit the limit again.
 class CoinGeckoService implements PriceService {
   static const String _baseUrl = 'https://api.coingecko.com/api/v3';
-
-  /// Local proxy base URL (used on web to bypass CORS)
-  static const String _proxyBase = 'http://localhost:8080/proxy?url=';
 
   final http.Client _client;
 
@@ -69,14 +67,6 @@ class CoinGeckoService implements PriceService {
     http.Client? client,
     this.vsCurrency = 'usd',
   }) : _client = client ?? http.Client();
-
-  /// Build the request URL — uses proxy on web, direct on mobile/desktop
-  Uri _buildUrl(String directUrl) {
-    if (kIsWeb) {
-      return Uri.parse('$_proxyBase${Uri.encodeComponent(directUrl)}');
-    }
-    return Uri.parse(directUrl);
-  }
 
   @override
   bool supportsAssetType(AssetType type) => type == AssetType.crypto;
@@ -91,9 +81,8 @@ class CoinGeckoService implements PriceService {
   }) async {
     if (query.trim().isEmpty) return [];
 
-    final directUrl =
-        '$_baseUrl/search?query=${Uri.encodeComponent(query.trim())}';
-    final url = _buildUrl(directUrl);
+    final url = PlatformConfig.buildUrl(
+        '$_baseUrl/search?query=${Uri.encodeComponent(query.trim())}');
 
     try {
       final response = await _client.get(
@@ -110,7 +99,6 @@ class CoinGeckoService implements PriceService {
           .whereType<Map<String, dynamic>>()
           .map(CryptoSearchResult.fromJson)
           .where((r) => r.id.isNotEmpty && r.name.isNotEmpty)
-          // Sort by market cap rank (ranked coins first, then unranked)
           .toList()
         ..sort((a, b) {
           if (a.marketCapRank == null && b.marketCapRank == null) return 0;
@@ -132,9 +120,19 @@ class CoinGeckoService implements PriceService {
       return PriceResult.failure(symbol, 'Symbol is empty');
     }
 
-    final directUrl =
-        '$_baseUrl/simple/price?ids=$coinId&vs_currencies=$vsCurrency';
-    final url = _buildUrl(directUrl);
+    return RetryHelper.withRetry(
+      maxAttempts: 3,
+      initialDelay: const Duration(seconds: 2),
+      action: () => _fetchSingle(coinId, symbol),
+      isFailure: (r) => !r.success,
+      // Don't retry on rate limit — it will not help immediately
+      isRetriable: (r) => !(r.error?.contains('Rate limit') ?? false),
+    );
+  }
+
+  Future<PriceResult> _fetchSingle(String coinId, String originalSymbol) async {
+    final url = PlatformConfig.buildUrl(
+        '$_baseUrl/simple/price?ids=$coinId&vs_currencies=$vsCurrency');
 
     try {
       final response = await _client.get(
@@ -144,14 +142,14 @@ class CoinGeckoService implements PriceService {
 
       if (response.statusCode == 429) {
         return PriceResult.failure(
-          symbol,
+          originalSymbol,
           'Rate limit reached. Please wait a moment and try again.',
         );
       }
 
       if (response.statusCode != 200) {
         return PriceResult.failure(
-          symbol,
+          originalSymbol,
           'HTTP ${response.statusCode}: CoinGecko API error',
         );
       }
@@ -160,7 +158,7 @@ class CoinGeckoService implements PriceService {
 
       if (!data.containsKey(coinId)) {
         return PriceResult.failure(
-          symbol,
+          originalSymbol,
           'Coin "$coinId" not found. Check spelling (e.g. "bitcoin", "ethereum")',
         );
       }
@@ -169,31 +167,31 @@ class CoinGeckoService implements PriceService {
       final price = (coinData[vsCurrency] as num?)?.toDouble();
 
       if (price == null || price <= 0) {
-        return PriceResult.failure(symbol, 'Invalid price data for $coinId');
+        return PriceResult.failure(
+            originalSymbol, 'Invalid price data for $coinId');
       }
 
       return PriceResult(
-        symbol: symbol,
+        symbol: originalSymbol,
         price: price,
         currency: vsCurrency.toUpperCase(),
         fetchedAt: DateTime.now(),
         success: true,
       );
     } on http.ClientException catch (e) {
-      return PriceResult.failure(symbol, 'Network error: ${e.message}');
+      return PriceResult.failure(originalSymbol, 'Network error: ${e.message}');
     } catch (e) {
-      return PriceResult.failure(symbol, 'Unexpected error: $e');
+      return PriceResult.failure(originalSymbol, 'Unexpected error: $e');
     }
   }
 
-  /// Fetch prices for multiple coins in one API call (more efficient)
+  /// Fetch prices for multiple coins in one API call (more efficient).
   Future<List<PriceResult>> fetchMultiplePrices(List<String> symbols) async {
     if (symbols.isEmpty) return [];
 
     final ids = symbols.map((s) => s.trim().toLowerCase()).join(',');
-    final directUrl =
-        '$_baseUrl/simple/price?ids=$ids&vs_currencies=$vsCurrency';
-    final url = _buildUrl(directUrl);
+    final url = PlatformConfig.buildUrl(
+        '$_baseUrl/simple/price?ids=$ids&vs_currencies=$vsCurrency');
 
     try {
       final response = await _client.get(

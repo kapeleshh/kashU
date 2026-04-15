@@ -2,18 +2,60 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
+import '../../services/auth_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
 
-class SettingsScreen extends ConsumerWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  bool _appLockEnabled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _appLockEnabled = Hive.box(AppConstants.settingsBox)
+        .get(AppConstants.keyAppLockEnabled, defaultValue: false) as bool;
+  }
+
+  Future<void> _toggleAppLock(bool value) async {
+    if (value) {
+      // Verify device supports authentication before enabling
+      final authService = AuthService();
+      final available = await authService.isAvailable();
+      final enrolled = await authService.isEnrolled();
+
+      if (!available || !enrolled) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No biometrics or PIN set up on this device. '
+              'Please configure device security in your system Settings first.',
+            ),
+          ),
+        );
+        return;
+      }
+    }
+
+    await Hive.box(AppConstants.settingsBox)
+        .put(AppConstants.keyAppLockEnabled, value);
+    if (mounted) setState(() => _appLockEnabled = value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final baseCurrency = ref.watch(baseCurrencyProvider);
 
     return Scaffold(
@@ -35,6 +77,35 @@ class SettingsScreen extends ConsumerWidget {
                 ref.read(baseCurrencyProvider.notifier).state = currency;
                 ref.invalidate(portfolioSummaryProvider);
               },
+            ),
+          ]),
+
+          const SizedBox(height: 24),
+
+          // Security Section
+          _buildSectionHeader(context, AppStrings.security),
+          const SizedBox(height: 8),
+          _buildSettingsCard([
+            SwitchListTile(
+              secondary: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(Icons.lock_outline,
+                    color: AppColors.primary, size: 20),
+              ),
+              title: const Text('Require Authentication'),
+              subtitle: Text(
+                'Use biometrics or device PIN to unlock the app',
+                style:
+                    TextStyle(color: AppColors.textTertiary, fontSize: 13),
+              ),
+              value: _appLockEnabled,
+              activeColor: AppColors.primary,
+              onChanged: _toggleAppLock,
             ),
           ]),
 

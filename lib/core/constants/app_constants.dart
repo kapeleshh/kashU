@@ -15,6 +15,8 @@ class AppConstants {
   static const String keyBaseCurrency = 'base_currency';
   static const String keyThemeMode = 'theme_mode';
   static const String keyOnboardingComplete = 'onboarding_complete';
+  static const String keyAppLockEnabled = 'app_lock_enabled';
+  static const String keySchemaVersion = 'schema_version';
 
   // Animation Durations
   static const Duration animationFast = Duration(milliseconds: 200);
