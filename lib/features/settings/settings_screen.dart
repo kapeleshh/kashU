@@ -11,6 +11,7 @@ import '../../core/constants/app_strings.dart';
 import '../../services/auth_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
 import '../rebalancing/rebalancing_screen.dart';
+import '../export/tax_export_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -135,6 +136,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildSectionHeader(context, AppStrings.dataManagement),
           const SizedBox(height: 8),
           _buildSettingsCard([
+            _SettingsTile(
+              icon: Icons.receipt_long_outlined,
+              title: 'Tax Export',
+              subtitle: 'Export holdings & capital gains as CSV or PDF',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const TaxExportScreen()),
+              ),
+            ),
             _SettingsTile(
               icon: Icons.upload_outlined,
               title: AppStrings.exportData,
