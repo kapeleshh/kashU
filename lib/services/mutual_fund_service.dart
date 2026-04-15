@@ -1,6 +1,7 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
+import '../core/utils/platform_config.dart';
+import '../core/utils/result.dart';
 
 /// A single mutual fund scheme from MFAPI.in
 class MutualFundResult {
@@ -52,7 +53,6 @@ class MutualFundResult {
 
   /// Short display name — strips plan/option suffix for cleaner UI
   String get shortName {
-    // Remove common suffixes to get the core fund name
     var name = schemeName
         .replaceAll(RegExp(r'\s*-\s*Direct Plan.*', caseSensitive: false), '')
         .replaceAll(RegExp(r'\s*-\s*Regular Plan.*', caseSensitive: false), '')
@@ -115,7 +115,6 @@ class MutualFundResult {
 /// On web, requests are routed through the local CORS proxy.
 class MutualFundService {
   static const String _baseUrl = 'https://api.mfapi.in/mf';
-  static const String _proxyBase = 'http://localhost:8080/proxy?url=';
 
   final http.Client _client;
 
@@ -127,17 +126,9 @@ class MutualFundService {
   MutualFundService({http.Client? client})
       : _client = client ?? http.Client();
 
-  Uri _buildUrl(String directUrl) {
-    if (kIsWeb) {
-      return Uri.parse('$_proxyBase${Uri.encodeComponent(directUrl)}');
-    }
-    return Uri.parse(directUrl);
-  }
-
   /// Fetch and cache the full list of mutual fund schemes.
   /// Returns empty list on error.
   Future<List<MutualFundResult>> _getFundList() async {
-    // Return cached list if still fresh
     if (_cachedFundList != null &&
         _cacheTime != null &&
         DateTime.now().difference(_cacheTime!) < _cacheDuration) {
@@ -146,7 +137,7 @@ class MutualFundService {
 
     try {
       final response = await _client
-          .get(_buildUrl(_baseUrl))
+          .get(PlatformConfig.buildUrl(_baseUrl))
           .timeout(const Duration(seconds: 20));
 
       if (response.statusCode != 200) return [];
@@ -185,7 +176,6 @@ class MutualFundService {
     return funds
         .where((f) {
           final name = f.schemeName.toLowerCase();
-          // All search terms must appear in the name
           final matchesQuery = terms.every((t) => name.contains(t));
           if (!matchesQuery) return false;
           if (directOnly && !f.isDirect) return false;
@@ -197,30 +187,37 @@ class MutualFundService {
   }
 
   /// Fetch the latest NAV for a given scheme code.
-  /// Returns null on error.
-  Future<MutualFundResult?> fetchNav(int schemeCode) async {
+  ///
+  /// Returns [Ok<MutualFundResult>] on success,
+  /// or [Err<MutualFundResult>] with an error message on failure.
+  Future<Result<MutualFundResult>> fetchNav(int schemeCode) async {
     try {
-      final url = _buildUrl('$_baseUrl/$schemeCode');
+      final url = PlatformConfig.buildUrl('$_baseUrl/$schemeCode');
       final response = await _client
           .get(url)
           .timeout(const Duration(seconds: 10));
 
-      if (response.statusCode != 200) return null;
+      if (response.statusCode != 200) {
+        return Err('HTTP ${response.statusCode} for scheme $schemeCode');
+      }
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final meta = data['meta'] as Map<String, dynamic>? ?? {};
       final navData = data['data'] as List<dynamic>? ?? [];
 
-      if (navData.isEmpty) return null;
+      if (navData.isEmpty) {
+        return Err('No NAV data returned for scheme $schemeCode');
+      }
 
       final latest = navData[0] as Map<String, dynamic>;
       final navStr = latest['nav'] as String? ?? '0';
       final navDate = latest['date'] as String? ?? '';
       final nav = double.tryParse(navStr) ?? 0;
 
-      if (nav <= 0) return null;
+      if (nav <= 0) {
+        return Err('Invalid NAV value for scheme $schemeCode');
+      }
 
-      // Find the fund in cache to get its name
       final cached = _cachedFundList?.firstWhere(
         (f) => f.schemeCode == schemeCode,
         orElse: () => MutualFundResult(
@@ -232,7 +229,7 @@ class MutualFundService {
         ),
       );
 
-      return (cached ?? MutualFundResult(
+      final fund = (cached ?? MutualFundResult(
         schemeCode: schemeCode,
         schemeName: meta['scheme_name'] as String? ?? '',
         fundHouse: meta['fund_house'] as String? ?? '',
@@ -240,11 +237,14 @@ class MutualFundService {
         schemeType: meta['scheme_type'] as String? ?? '',
       )).withMeta(
         fundHouse: meta['fund_house'] as String? ?? cached?.fundHouse ?? '',
-        schemeCategory: meta['scheme_category'] as String? ?? cached?.schemeCategory ?? '',
+        schemeCategory:
+            meta['scheme_category'] as String? ?? cached?.schemeCategory ?? '',
         schemeType: meta['scheme_type'] as String? ?? cached?.schemeType ?? '',
       ).withNav(nav, navDate);
-    } catch (_) {
-      return null;
+
+      return Ok(fund);
+    } catch (e) {
+      return Err('Failed to fetch NAV for scheme $schemeCode: $e');
     }
   }
 

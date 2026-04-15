@@ -61,7 +61,7 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen> with SingleTickerPr
           : TabBarView(
               controller: _tabController,
               children: [
-                _buildAssetsByType(assets as List<Asset>),
+                _buildAssetsByType(assets),
                 _buildAssetsByPlatform(assets),
               ],
             ),
@@ -138,7 +138,7 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen> with SingleTickerPr
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: type.color.withOpacity(0.15),
+                      color: type.color.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Icon(type.icon, color: type.color, size: 20),
@@ -196,7 +196,7 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen> with SingleTickerPr
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.15),
+                      color: AppColors.primary.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Icon(Icons.account_balance, color: AppColors.primary, size: 20),
@@ -240,7 +240,7 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen> with SingleTickerPr
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            color: asset.type.color.withOpacity(0.15),
+            color: asset.type.color.withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Icon(

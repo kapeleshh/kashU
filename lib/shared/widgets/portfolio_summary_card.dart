@@ -45,7 +45,7 @@ class PortfolioSummaryCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withOpacity(0.3),
+            color: AppColors.primary.withValues(alpha: 0.3),
             blurRadius: 20,
             offset: const Offset(0, 10),
           ),
@@ -60,7 +60,7 @@ class PortfolioSummaryCard extends StatelessWidget {
               Text(
                 AppStrings.totalPortfolioValue,
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.8),
+                  color: Colors.white.withValues(alpha: 0.8),
                   fontSize: 14,
                 ),
               ),
@@ -68,7 +68,7 @@ class PortfolioSummaryCard extends StatelessWidget {
                 Text(
                   'Updated just now',
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.6),
+                    color: Colors.white.withValues(alpha: 0.6),
                     fontSize: 12,
                   ),
                 ),
@@ -105,14 +105,14 @@ class PortfolioSummaryCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.1),
+                color: Colors.white.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
                 children: [
                   Icon(
                     Icons.info_outline,
-                    color: Colors.white.withOpacity(0.8),
+                    color: Colors.white.withValues(alpha: 0.8),
                     size: 20,
                   ),
                   const SizedBox(width: 8),
@@ -120,7 +120,7 @@ class PortfolioSummaryCard extends StatelessWidget {
                     child: Text(
                       AppStrings.noAssets,
                       style: TextStyle(
-                        color: Colors.white.withOpacity(0.8),
+                        color: Colors.white.withValues(alpha: 0.8),
                         fontSize: 13,
                       ),
                     ),
@@ -147,7 +147,7 @@ class PortfolioSummaryCard extends StatelessWidget {
         Text(
           label,
           style: TextStyle(
-            color: Colors.white.withOpacity(0.6),
+            color: Colors.white.withValues(alpha: 0.6),
             fontSize: 12,
           ),
         ),
@@ -176,7 +176,7 @@ class PortfolioSummaryCard extends StatelessWidget {
                 TextSpan(
                   text: suffix,
                   style: TextStyle(
-                    color: valueColor?.withOpacity(0.8) ?? Colors.white.withOpacity(0.8),
+                    color: valueColor?.withValues(alpha: 0.8) ?? Colors.white.withValues(alpha: 0.8),
                     fontSize: 12,
                   ),
                 ),
@@ -244,7 +244,7 @@ class PortfolioSummaryCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.card,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.error.withOpacity(0.3)),
+        border: Border.all(color: AppColors.error.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [

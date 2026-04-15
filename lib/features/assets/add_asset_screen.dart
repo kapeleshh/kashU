@@ -590,13 +590,14 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
       if (!mounted) return;
 
-      if (navResult != null && navResult.nav != null) {
+      if (navResult.isOk && navResult.valueOrNull?.nav != null) {
+        final mf = navResult.valueOrNull!;
         setState(() {
           _isFetchingMfNav = false;
           _currentPriceController.text =
-              navResult.nav!.toStringAsFixed(4);
+              mf.nav!.toStringAsFixed(4);
           _mfFetchStatus =
-              '✅ Latest NAV: ₹${navResult.nav!.toStringAsFixed(4)} (${navResult.navDate ?? ''})';
+              '✅ Latest NAV: ₹${mf.nav!.toStringAsFixed(4)} (${mf.navDate ?? ''})';
         });
       } else {
         setState(() {

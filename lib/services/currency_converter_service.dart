@@ -1,6 +1,7 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
+import '../core/utils/platform_config.dart';
+import '../core/utils/retry_helper.dart';
 
 /// Result of a currency conversion fetch
 class ExchangeRateResult {
@@ -48,9 +49,6 @@ class ExchangeRateResult {
 class CurrencyConverterService {
   static const String _baseUrl = 'https://open.er-api.com/v6/latest';
 
-  /// Local proxy base URL (used on web to bypass CORS)
-  static const String _proxyBase = 'http://localhost:8080/proxy?url=';
-
   /// Grams per troy ounce — used to convert gold price
   static const double gramsPerTroyOz = 31.1035;
 
@@ -66,16 +64,9 @@ class CurrencyConverterService {
   CurrencyConverterService({http.Client? client})
       : _client = client ?? http.Client();
 
-  /// Build the request URL — uses proxy on web, direct on mobile/desktop
-  Uri _buildUrl(String directUrl) {
-    if (kIsWeb) {
-      return Uri.parse('$_proxyBase${Uri.encodeComponent(directUrl)}');
-    }
-    return Uri.parse(directUrl);
-  }
-
   /// Fetch latest exchange rates with base = USD.
   /// Returns cached result if fetched within the last 30 minutes.
+  /// Retries up to 3 times with exponential backoff on network failures.
   Future<ExchangeRateResult> fetchRates({bool forceRefresh = false}) async {
     // Return cached rates if still fresh
     if (!forceRefresh &&
@@ -85,7 +76,23 @@ class CurrencyConverterService {
       return _cachedRates!;
     }
 
-    final url = _buildUrl('$_baseUrl/USD');
+    final result = await RetryHelper.withRetry(
+      maxAttempts: 3,
+      initialDelay: const Duration(seconds: 1),
+      action: _fetchFromNetwork,
+      isFailure: (r) => !r.success,
+    );
+
+    if (result.success) {
+      _cachedRates = result;
+      _cacheTime = DateTime.now();
+    }
+
+    return result;
+  }
+
+  Future<ExchangeRateResult> _fetchFromNetwork() async {
+    final url = PlatformConfig.buildUrl('$_baseUrl/USD');
 
     try {
       final response = await _client.get(
@@ -112,18 +119,12 @@ class CurrencyConverterService {
         (key, value) => MapEntry(key, (value as num).toDouble()),
       );
 
-      final result = ExchangeRateResult(
+      return ExchangeRateResult(
         base: 'USD',
         rates: rates,
         fetchedAt: DateTime.now(),
         success: true,
       );
-
-      // Cache the result
-      _cachedRates = result;
-      _cacheTime = DateTime.now();
-
-      return result;
     } on http.ClientException catch (e) {
       return ExchangeRateResult.failure('Network error: ${e.message}');
     } catch (e) {
@@ -141,22 +142,15 @@ class CurrencyConverterService {
       return rates.convert(usdAmount, targetCurrency);
     }
 
-    // Fallback to hardcoded approximate rates (used when offline)
     return usdAmount * fallbackRate(targetCurrency);
   }
 
   /// Convert gold price from USD per troy oz → target currency per gram
-  ///
-  /// Yahoo Finance `GC=F` returns price in USD per troy oz.
-  /// Gold in India (and most apps) is tracked per gram.
   Future<double> goldUSDPerOzToTargetPerGram(
     double usdPerTroyOz,
     String targetCurrency,
   ) async {
-    // Step 1: USD/troy oz → USD/gram
     final usdPerGram = usdPerTroyOz / gramsPerTroyOz;
-
-    // Step 2: USD/gram → targetCurrency/gram
     return convertFromUSD(usdPerGram, targetCurrency);
   }
 
