@@ -6,6 +6,7 @@ import 'currency_converter_service.dart';
 import 'gold_price_service.dart';
 import 'price_cache_service.dart';
 import 'price_service.dart';
+import 'stooq_service.dart';
 import 'yahoo_finance_service.dart';
 
 /// Summary of a bulk price refresh operation
@@ -51,6 +52,7 @@ typedef _RefreshStats = ({int updated, int failed, List<String> errors});
 class PriceUpdateService {
   final AssetRepository _assetRepository;
   final YahooFinanceService _yahooService;
+  final StooqService _stooqService;
   final CurrencyConverterService _currencyConverter;
   final GoldPriceService _goldPriceService;
   final PriceCacheService _priceCache;
@@ -59,12 +61,14 @@ class PriceUpdateService {
   PriceUpdateService({
     required AssetRepository assetRepository,
     YahooFinanceService? yahooService,
+    StooqService? stooqService,
     CurrencyConverterService? currencyConverter,
     GoldPriceService? goldPriceService,
     PriceCacheService? priceCache,
     CoinGeckoService Function(String vsCurrency)? coinGeckoFactory,
   })  : _assetRepository = assetRepository,
         _yahooService = yahooService ?? YahooFinanceService(),
+        _stooqService = stooqService ?? StooqService(),
         _currencyConverter = currencyConverter ?? CurrencyConverterService(),
         _goldPriceService = goldPriceService ?? GoldPriceService(),
         _priceCache = priceCache ?? PriceCacheService(),
@@ -277,7 +281,13 @@ class PriceUpdateService {
         continue;
       }
 
-      final result = await _yahooService.fetchPrice(symbol);
+      var result = await _yahooService.fetchPrice(symbol);
+
+      // Fallback to Stooq if Yahoo fails
+      if (!result.success) {
+        final stooqResult = await _stooqService.fetchPrice(symbol);
+        if (stooqResult.success) result = stooqResult;
+      }
 
       if (result.success) {
         double price = result.price;
@@ -311,7 +321,7 @@ class PriceUpdateService {
         }
       }
 
-      // Throttle Yahoo Finance calls to avoid rate limiting
+      // Throttle calls to avoid rate limiting
       await Future<void>.delayed(const Duration(milliseconds: 300));
     }
 
@@ -377,7 +387,13 @@ class PriceUpdateService {
 
   Future<PriceResult> _refreshSingleStockBond(
       Asset asset, String symbol, String baseCurrency) async {
-    final result = await _yahooService.fetchPrice(symbol);
+    var result = await _yahooService.fetchPrice(symbol);
+
+    // Fallback to Stooq if Yahoo fails
+    if (!result.success) {
+      final stooqResult = await _stooqService.fetchPrice(symbol);
+      if (stooqResult.success) result = stooqResult;
+    }
 
     if (result.success) {
       double price = result.price;
