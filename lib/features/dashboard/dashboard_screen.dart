@@ -7,6 +7,7 @@ import '../../shared/widgets/portfolio_summary_card.dart';
 import '../../shared/widgets/asset_allocation_chart.dart';
 import '../../shared/widgets/top_performers_list.dart';
 import '../../shared/providers/portfolio_provider.dart';
+import '../../services/widget_update_service.dart';
 import '../assets/assets_screen.dart';
 import '../transactions/transactions_screen.dart';
 import '../settings/settings_screen.dart';
@@ -22,6 +23,25 @@ Future<void> _doRefreshPrices(WidgetRef ref, BuildContext context) async {
     // Refresh portfolio data
     ref.invalidate(allAssetsProvider);
     ref.invalidate(portfolioSummaryProvider);
+
+    // Update home screen widget with latest portfolio figures
+    try {
+      final repo = ref.read(assetRepositoryProvider);
+      final totalValue = repo.getTotalValue();
+      final totalInvested = repo.getTotalInvested();
+      final totalGainLoss = totalValue - totalInvested;
+      final gainLossPct =
+          totalInvested > 0 ? (totalGainLoss / totalInvested) * 100 : 0.0;
+      final baseCurrency = repo.getBaseCurrency();
+      await WidgetUpdateService.updatePortfolioWidget(
+        totalValue: totalValue,
+        totalGainLoss: totalGainLoss,
+        gainLossPct: gainLossPct,
+        baseCurrency: baseCurrency,
+      );
+    } catch (_) {
+      // Widget update is best-effort; never crash the main refresh flow
+    }
 
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
