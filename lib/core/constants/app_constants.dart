@@ -6,6 +6,7 @@ class AppConstants {
   static const String assetsBox = 'assets_box';
   static const String transactionsBox = 'transactions_box';
   static const String settingsBox = 'settings_box';
+  static const String priceCacheBox = 'price_cache_box';
 
   // Settings Keys
   static const String keyBiometricEnabled = 'biometric_enabled';
