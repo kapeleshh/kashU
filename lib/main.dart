@@ -6,7 +6,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 
+import 'core/config/app_config.dart';
 import 'core/theme/app_theme.dart';
 import 'core/constants/app_strings.dart';
 import 'core/constants/app_constants.dart';
@@ -57,15 +59,18 @@ void _setupErrorHandlers() {
   // Catch unhandled Flutter framework errors (rendering, layout, etc.)
   FlutterError.onError = (FlutterErrorDetails details) {
     FlutterError.presentError(details);
-    // TODO: Integrate a crash reporting service (e.g. Sentry):
-    //   Sentry.captureException(details.exception, stackTrace: details.stack);
+    if (AppConfig.isSentryEnabled) {
+      Sentry.captureException(details.exception, stackTrace: details.stack);
+    }
     debugPrint('[KashU] FlutterError: ${details.exception}');
   };
 
   // Catch unhandled async/isolate errors outside the Flutter framework
   PlatformDispatcher.instance.onError = (error, stack) {
     debugPrint('[KashU] Unhandled error: $error\n$stack');
-    // TODO: Sentry.captureException(error, stackTrace: stack);
+    if (AppConfig.isSentryEnabled) {
+      Sentry.captureException(error, stackTrace: stack);
+    }
     return false; // false = allow default crash behaviour on fatal errors
   };
 }
@@ -74,7 +79,7 @@ void _setupErrorHandlers() {
 // App entry point
 // ─────────────────────────────────────────────────────────────────────────────
 
-void main() async {
+Future<void> _bootstrap() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Set up global error handlers before anything else
@@ -127,6 +132,22 @@ void main() async {
       ),
     ),
   );
+}
+
+void main() async {
+  if (AppConfig.isSentryEnabled) {
+    await SentryFlutter.init(
+      (options) {
+        options.dsn = AppConfig.sentryDsn;
+        options.environment = AppConfig.environment;
+        options.tracesSampleRate = 0.2; // 20% of transactions for performance
+        options.attachScreenshot = true;
+      },
+      appRunner: _bootstrap,
+    );
+  } else {
+    await _bootstrap();
+  }
 }
 
 class KashUApp extends StatelessWidget {
