@@ -10,6 +10,7 @@ import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
 import '../../services/auth_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
+import '../rebalancing/rebalancing_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -106,6 +107,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               value: _appLockEnabled,
               activeThumbColor: AppColors.primary,
               onChanged: _toggleAppLock,
+            ),
+          ]),
+
+          const SizedBox(height: 24),
+
+          // Portfolio Tools Section
+          _buildSectionHeader(context, 'Portfolio Tools'),
+          const SizedBox(height: 8),
+          _buildSettingsCard([
+            _SettingsTile(
+              icon: Icons.balance_outlined,
+              title: 'Rebalancing Calculator',
+              subtitle:
+                  'Set target allocations and see what to buy or sell',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const RebalancingScreen()),
+              ),
             ),
           ]),
 

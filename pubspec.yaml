@@ -40,6 +40,9 @@ dependencies:
   # Networking (for price tracking)
   http: ^1.2.0
 
+  # Home screen widget (Android AppWidget + iOS WidgetKit bridge)
+  home_widget: ^0.6.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
