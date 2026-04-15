@@ -66,7 +66,7 @@ void main() {
 
     test('returns failure on network error', () async {
       when(() => mockClient.get(any(), headers: any(named: 'headers')))
-          .thenThrow(const http.ClientException('connection refused'));
+          .thenThrow(http.ClientException('connection refused'));
 
       final result = await service.fetchRates();
 
@@ -175,7 +175,7 @@ void main() {
     test('uses fallback rate when network fails', () async {
       final mockClient = MockHttpClient();
       when(() => mockClient.get(any(), headers: any(named: 'headers')))
-          .thenThrow(const http.ClientException('no internet'));
+          .thenThrow(http.ClientException('no internet'));
 
       final service = CurrencyConverterService(client: mockClient);
       final result = await service.convertFromUSD(100.0, 'INR');

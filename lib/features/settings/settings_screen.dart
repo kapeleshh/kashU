@@ -91,7 +91,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.15),
+                  color: AppColors.primary.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(Icons.lock_outline,
@@ -104,7 +104,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     TextStyle(color: AppColors.textTertiary, fontSize: 13),
               ),
               value: _appLockEnabled,
-              activeColor: AppColors.primary,
+              activeThumbColor: AppColors.primary,
               onChanged: _toggleAppLock,
             ),
           ]),
@@ -469,7 +469,7 @@ class _BaseCurrencyTile extends StatelessWidget {
         width: 40,
         height: 40,
         decoration: BoxDecoration(
-          color: AppColors.primary.withOpacity(0.15),
+          color: AppColors.primary.withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Icon(Icons.currency_exchange, color: AppColors.primary, size: 20),
@@ -570,7 +570,7 @@ class _SettingsTile extends StatelessWidget {
         width: 40,
         height: 40,
         decoration: BoxDecoration(
-          color: (iconColor ?? AppColors.primary).withOpacity(0.15),
+          color: (iconColor ?? AppColors.primary).withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Icon(

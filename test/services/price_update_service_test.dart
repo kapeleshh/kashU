@@ -74,6 +74,18 @@ ExchangeRateResult _fxSuccess({double inr = 83.5}) {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 void main() {
+  setUpAll(() {
+    // Mocktail requires fallback values for any custom type used with any()
+    registerFallbackValue(PriceResult(
+      symbol: '',
+      price: 0,
+      currency: '',
+      fetchedAt: DateTime(2024),
+      success: false,
+    ));
+    registerFallbackValue(<String>[]);
+  });
+
   late MockAssetRepository mockRepo;
   late MockYahooFinanceService mockYahoo;
   late MockCurrencyConverterService mockFx;

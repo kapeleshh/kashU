@@ -212,8 +212,8 @@ class _DashboardContent extends ConsumerWidget {
             SliverToBoxAdapter(
               child: Container(
                 color: lastResult.hasErrors
-                    ? AppColors.error.withOpacity(0.1)
-                    : AppColors.success.withOpacity(0.1),
+                    ? AppColors.error.withValues(alpha: 0.1)
+                    : AppColors.success.withValues(alpha: 0.1),
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                 child: Row(

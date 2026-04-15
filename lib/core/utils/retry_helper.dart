@@ -28,7 +28,7 @@ abstract final class RetryHelper {
     double backoffFactor = 2.0,
     bool Function(T)? isRetriable,
   }) async {
-    T? last;
+    late T last;
     Duration delay = initialDelay;
 
     for (int attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -49,6 +49,6 @@ abstract final class RetryHelper {
       );
     }
 
-    return last as T;
+    return last;
   }
 }

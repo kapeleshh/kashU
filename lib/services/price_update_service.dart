@@ -71,7 +71,7 @@ class PriceUpdateService {
         _coinGeckoFactory = coinGeckoFactory;
 
   CoinGeckoService _makeCoinGecko(String vsCurrency) {
-    if (_coinGeckoFactory != null) return _coinGeckoFactory!(vsCurrency);
+    if (_coinGeckoFactory != null) return _coinGeckoFactory(vsCurrency);
     return CoinGeckoService(vsCurrency: vsCurrency.toLowerCase());
   }
 
@@ -114,7 +114,7 @@ class PriceUpdateService {
       updated: cryptoStats.updated + goldStats.updated + stockStats.updated,
       skipped: skipped,
       failed: cryptoStats.failed + goldStats.failed + stockStats.failed,
-      errors: [
+      errors: <String>[
         ...cryptoStats.errors,
         ...goldStats.errors,
         ...stockStats.errors,
@@ -152,7 +152,7 @@ class PriceUpdateService {
     List<Asset> assets,
     String baseCurrency,
   ) async {
-    if (assets.isEmpty) return (updated: 0, failed: 0, errors: []);
+    if (assets.isEmpty) return (updated: 0, failed: 0, errors: <String>[]);
 
     final symbols = assets
         .map(_getSymbol)
@@ -196,7 +196,7 @@ class PriceUpdateService {
     String baseCurrency,
     ExchangeRateResult exchangeRates,
   ) async {
-    if (assets.isEmpty) return (updated: 0, failed: 0, errors: []);
+    if (assets.isEmpty) return (updated: 0, failed: 0, errors: <String>[]);
 
     final primaryCurrency = assets.first.currency.isNotEmpty
         ? assets.first.currency
