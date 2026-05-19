@@ -11,7 +11,6 @@ import '../../shared/widgets/crypto_search_field.dart';
 import '../../shared/widgets/fd_bond_input_field.dart';
 import '../../shared/widgets/mutual_fund_search_field.dart';
 import '../../shared/widgets/stock_search_field.dart';
-import '../../data/repositories/transaction_repository.dart';
 import '../../services/coingecko_service.dart';
 import '../../services/mutual_fund_service.dart';
 import '../../services/price_service.dart';
@@ -867,7 +866,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     );
 
     final assetRepo = ref.read(assetRepositoryProvider);
-    final txRepo = TransactionRepository();
+    final txRepo = ref.read(transactionRepositoryProvider);
 
     if (isEditing) {
       await assetRepo.updateAsset(asset);
@@ -908,7 +907,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
             onPressed: () async {
               final assetId = widget.existingAsset!.id;
               final assetRepo = ref.read(assetRepositoryProvider);
-              final txRepo = TransactionRepository();
+              final txRepo = ref.read(transactionRepositoryProvider);
               final navigator = Navigator.of(context);
               final messenger = ScaffoldMessenger.of(context);
 
