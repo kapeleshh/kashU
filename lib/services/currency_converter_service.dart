@@ -58,24 +58,36 @@ class CurrencyConverterService {
   ExchangeRateResult? _cachedRates;
   DateTime? _cacheTime;
 
+  /// Pending fetch future — callers joining while a fetch is in flight share
+  /// the same future instead of firing duplicate network requests.
+  Future<ExchangeRateResult>? _inflightFetch;
+
   /// Cache duration: 30 minutes
   static const _cacheDuration = Duration(minutes: 30);
 
   CurrencyConverterService({http.Client? client})
       : _client = client ?? http.Client();
 
+  bool _isCacheValid() =>
+      _cachedRates != null &&
+      _cacheTime != null &&
+      DateTime.now().difference(_cacheTime!) < _cacheDuration;
+
   /// Fetch latest exchange rates with base = USD.
   /// Returns cached result if fetched within the last 30 minutes.
-  /// Retries up to 3 times with exponential backoff on network failures.
+  /// Concurrent callers share the same in-flight request instead of
+  /// each firing a separate network call.
   Future<ExchangeRateResult> fetchRates({bool forceRefresh = false}) async {
-    // Return cached rates if still fresh
-    if (!forceRefresh &&
-        _cachedRates != null &&
-        _cacheTime != null &&
-        DateTime.now().difference(_cacheTime!) < _cacheDuration) {
-      return _cachedRates!;
-    }
+    if (!forceRefresh && _isCacheValid()) return _cachedRates!;
 
+    // Coalesce concurrent callers onto one in-flight request
+    if (_inflightFetch != null) return _inflightFetch!;
+
+    _inflightFetch = _doFetch().whenComplete(() => _inflightFetch = null);
+    return _inflightFetch!;
+  }
+
+  Future<ExchangeRateResult> _doFetch() async {
     final result = await RetryHelper.withRetry(
       maxAttempts: 3,
       initialDelay: const Duration(seconds: 1),

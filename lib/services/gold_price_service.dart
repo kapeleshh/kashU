@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'currency_converter_service.dart';
 import 'price_service.dart';
 import 'yahoo_finance_service.dart';
@@ -203,6 +205,9 @@ class GoldPriceService implements PriceService {
     );
   }
 
+  /// Overall cap on a single metal price fetch (COMEX + forex combined).
+  static const _fetchTimeout = Duration(seconds: 25);
+
   /// Fetch any metal price with full breakdown.
   ///
   /// [comexSymbol]    — COMEX symbol (GC=F for gold, SI=F for silver)
@@ -211,6 +216,22 @@ class GoldPriceService implements PriceService {
   Future<GoldPriceBreakdown?> fetchMetalPriceBreakdown({
     required String comexSymbol,
     String targetCurrency = 'INR',
+    GoldTaxConfig? taxConfig,
+  }) async {
+    try {
+      return await _fetchMetalInternal(
+        comexSymbol: comexSymbol,
+        targetCurrency: targetCurrency,
+        taxConfig: taxConfig,
+      ).timeout(_fetchTimeout);
+    } on TimeoutException {
+      return null;
+    }
+  }
+
+  Future<GoldPriceBreakdown?> _fetchMetalInternal({
+    required String comexSymbol,
+    required String targetCurrency,
     GoldTaxConfig? taxConfig,
   }) async {
     final effectiveTax = taxConfig ??
