@@ -422,7 +422,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                         return AppStrings.errorRequired;
                       }
                       final parsed = double.tryParse(value);
-                      if (parsed == null || parsed < 0) {
+                      if (parsed == null || parsed.isNaN || parsed <= 0) {
                         return AppStrings.errorInvalidNumber;
                       }
                       return null;
@@ -449,7 +449,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                 if (value == null || value.isEmpty) {
                   return AppStrings.errorRequired;
                 }
-                if (double.tryParse(value) == null) {
+                final parsed = double.tryParse(value);
+                if (parsed == null || parsed.isNaN || parsed < 0) {
                   return AppStrings.errorInvalidNumber;
                 }
                 return null;
@@ -832,7 +833,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     final picked = await showDatePicker(
       context: context,
       initialDate: _purchaseDate,
-      firstDate: DateTime(2000),
+      firstDate: DateTime(1990),
       lastDate: DateTime.now(),
     );
     if (picked != null) {

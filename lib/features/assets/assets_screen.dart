@@ -228,9 +228,21 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen> with SingleTickerPr
     );
   }
 
+  String _formatPriceAge(DateTime updatedAt) {
+    final diff = DateTime.now().difference(updatedAt);
+    if (diff.inMinutes < 1) return 'Just now';
+    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${(diff.inDays / 7).floor()}w ago';
+  }
+
   Widget _buildAssetCard(Asset asset) {
     final isProfit = asset.gainLossPercentage >= 0;
     final color = isProfit ? AppColors.success : AppColors.error;
+    final priceAge = asset.priceUpdatedAt != null
+        ? _formatPriceAge(asset.priceUpdatedAt!)
+        : null;
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4),
@@ -253,9 +265,23 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen> with SingleTickerPr
           asset.name,
           style: const TextStyle(fontWeight: FontWeight.w600),
         ),
-        subtitle: Text(
-          asset.symbol ?? '${CurrencyFormatter.formatQuantity(asset.quantity)} ${asset.type.unitLabel}'.trim(),
-          style: TextStyle(color: AppColors.textTertiary),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              asset.symbol ?? '${CurrencyFormatter.formatQuantity(asset.quantity)} ${asset.type.unitLabel}'.trim(),
+              style: TextStyle(color: AppColors.textTertiary),
+            ),
+            if (priceAge != null)
+              Text(
+                'Price: $priceAge',
+                style: TextStyle(
+                  color: AppColors.textTertiary,
+                  fontSize: 11,
+                ),
+              ),
+          ],
         ),
         trailing: Column(
           mainAxisAlignment: MainAxisAlignment.center,
