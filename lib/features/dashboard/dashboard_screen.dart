@@ -6,6 +6,7 @@ import '../../core/constants/app_strings.dart';
 import '../../shared/widgets/portfolio_summary_card.dart';
 import '../../shared/widgets/asset_allocation_chart.dart';
 import '../../shared/widgets/top_performers_list.dart';
+import '../../shared/widgets/app_logo.dart';
 import '../../shared/providers/portfolio_provider.dart';
 import '../assets/assets_screen.dart';
 import '../transactions/transactions_screen.dart';
@@ -160,24 +161,7 @@ class _DashboardContent extends ConsumerWidget {
             floating: true,
             title: Row(
               children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    gradient: AppColors.primaryGradient,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Center(
-                    child: Text(
-                      'K',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
+                const AppLogo(size: 36),
                 const SizedBox(width: 12),
                 const Text(
                   AppStrings.appName,
