@@ -129,11 +129,14 @@ class MutualFundService {
   /// Fetch and cache the full list of mutual fund schemes.
   /// Returns empty list on error.
   Future<List<MutualFundResult>> _getFundList() async {
-    if (_cachedFundList != null &&
-        _cacheTime != null &&
-        DateTime.now().difference(_cacheTime!) < _cacheDuration) {
-      return _cachedFundList!;
+    // Evict stale cache so the GC can reclaim the ~37k-entry list
+    if (_cacheTime != null &&
+        DateTime.now().difference(_cacheTime!) >= _cacheDuration) {
+      _cachedFundList = null;
+      _cacheTime = null;
     }
+
+    if (_cachedFundList != null) return _cachedFundList!;
 
     try {
       final response = await _client
