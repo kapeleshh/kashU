@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
+import '../../core/utils/import_validator.dart';
 import '../../services/auth_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
 import '../rebalancing/rebalancing_screen.dart';
@@ -270,7 +271,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       final txRepo = ref.read(transactionRepositoryProvider);
 
       final exportData = {
-        'version': '1.0',
+        'schemaVersion': ImportValidator.currentSchemaVersion,
         'exportedAt': DateTime.now().toIso8601String(),
         'assets': assetRepo.exportToJson(),
         'transactions': txRepo.exportToJson(),
@@ -339,19 +340,44 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               if (json.isEmpty) return;
 
               try {
-                final data = jsonDecode(json) as Map<String, dynamic>;
+                final decoded = jsonDecode(json);
+                if (decoded is! Map<String, dynamic>) {
+                  throw const FormatException(
+                      'Top-level JSON must be an object.');
+                }
+                final data = decoded;
+
+                // Schema validation before touching the database
+                final envelopeErr =
+                    ImportValidator.validateEnvelope(data);
+                if (envelopeErr != null) throw FormatException(envelopeErr);
+
+                final rawAssets =
+                    data['assets'] != null ? data['assets'] as List : [];
+                final rawTx = data['transactions'] != null
+                    ? data['transactions'] as List
+                    : [];
+
+                final assetErr =
+                    ImportValidator.validateAssets(rawAssets);
+                if (assetErr != null) throw FormatException(assetErr);
+
+                final txErr =
+                    ImportValidator.validateTransactions(rawTx);
+                if (txErr != null) throw FormatException(txErr);
+
+                // All validated — write to database
                 final assetRepo = ref.read(assetRepositoryProvider);
                 final txRepo = ref.read(transactionRepositoryProvider);
 
-                if (data['assets'] != null) {
+                if (rawAssets.isNotEmpty) {
                   await assetRepo.importFromJson(
-                    List<Map<String, dynamic>>.from(data['assets'] as List),
+                    rawAssets.cast<Map<String, dynamic>>(),
                   );
                 }
-                if (data['transactions'] != null) {
+                if (rawTx.isNotEmpty) {
                   await txRepo.importFromJson(
-                    List<Map<String, dynamic>>.from(
-                        data['transactions'] as List),
+                    rawTx.cast<Map<String, dynamic>>(),
                   );
                 }
 
@@ -361,13 +387,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 if (context.mounted) {
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Import successful!')),
+                    SnackBar(
+                      content: Text(
+                        'Imported ${rawAssets.length} assets and '
+                        '${rawTx.length} transactions.',
+                      ),
+                    ),
+                  );
+                }
+              } on FormatException catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Import failed: ${e.message}'),
+                      backgroundColor: AppColors.error,
+                    ),
                   );
                 }
               } catch (e) {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Import failed: invalid JSON - $e')),
+                    SnackBar(
+                      content: Text('Import failed: $e'),
+                      backgroundColor: AppColors.error,
+                    ),
                   );
                 }
               }
