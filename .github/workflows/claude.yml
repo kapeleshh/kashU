@@ -29,6 +29,25 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          
+      # KashU is a Flutter project — set up the SDK and generate the Hive/
+      # Riverpod *.g.dart code so `flutter build web` works (mirrors ci.yml).
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.41.6"
+          channel: "stable"
+          cache: true
+
+      - name: Install dependencies & generate code
+        run: |
+          flutter pub get
+          dart run build_runner build --delete-conflicting-outputs
+
+      # Install the Chromium browser that the Playwright MCP drives. Without
+      # this the MCP server starts but has no browser binary to launch.
+      - name: Install Playwright browser
+        run: npx -y playwright install --with-deps chromium
 
       - name: Run Claude Code
         id: claude
@@ -40,11 +59,15 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
-
-          # Optional: Add claude_args to customize behavior and configuration
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr *)'
+          # Custom instructions + Playwright MCP wiring.
+          #  --append-system-prompt : tells Claude to verify in a real browser.
+          #  --mcp-config           : registers the Playwright MCP server (compact
+          #                           JSON, no spaces, so it stays one arg token).
+          #  --allowed-tools        : grants permission to the Playwright MCP
+          #                           server (mcp__playwright) plus the file/shell
+          #                           tools Claude needs to apply and commit fixes.
+          claude_args: |
+            --append-system-prompt "Follow this recipe for every issue or PR. 1) REPRODUCE: build the Flutter web app (`flutter build web`), serve it (`python3 proxy_server.py` serves build/web on http://localhost:8080), then use the Playwright MCP to load the app and reproduce the reported behavior. If you cannot reproduce, say so explicitly and stop before changing code. 2) FIX: make the smallest change that addresses the root cause; respect the conventions in CLAUDE.md (run `dart run build_runner build` after editing any lib/data/models file). 3) TEST: add or update a test under test/ that fails before your fix and passes after, then run `flutter analyze --fatal-infos` and `flutter test`. 4) VERIFY: re-run the Playwright flow and confirm the browser shows the fixed behavior. 5) DELIVER: commit, push a branch, and open a PR whose description states what you reproduced, the root cause, the fix, and how you verified it. Never claim a fix works unless the browser or a test confirms it — if a step fails or is skipped, report that plainly."
+            --mcp-config {"mcpServers":{"playwright":{"command":"npx","args":["-y","@playwright/mcp@latest","--headless","--browser","chromium"]}}}
+            --allowed-tools "mcp__playwright,Bash,Edit,Write,Read,Glob,Grep"
 
