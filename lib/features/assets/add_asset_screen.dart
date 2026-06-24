@@ -11,7 +11,6 @@ import '../../shared/widgets/crypto_search_field.dart';
 import '../../shared/widgets/fd_bond_input_field.dart';
 import '../../shared/widgets/mutual_fund_search_field.dart';
 import '../../shared/widgets/stock_search_field.dart';
-import '../../data/repositories/transaction_repository.dart';
 import '../../services/coingecko_service.dart';
 import '../../services/mutual_fund_service.dart';
 import '../../services/price_service.dart';
@@ -422,7 +421,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                         return AppStrings.errorRequired;
                       }
                       final parsed = double.tryParse(value);
-                      if (parsed == null || parsed < 0) {
+                      if (parsed == null || parsed.isNaN || parsed <= 0) {
                         return AppStrings.errorInvalidNumber;
                       }
                       return null;
@@ -449,7 +448,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                 if (value == null || value.isEmpty) {
                   return AppStrings.errorRequired;
                 }
-                if (double.tryParse(value) == null) {
+                final parsed = double.tryParse(value);
+                if (parsed == null || parsed.isNaN || parsed < 0) {
                   return AppStrings.errorInvalidNumber;
                 }
                 return null;
@@ -832,7 +832,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     final picked = await showDatePicker(
       context: context,
       initialDate: _purchaseDate,
-      firstDate: DateTime(2000),
+      firstDate: DateTime(1990),
       lastDate: DateTime.now(),
     );
     if (picked != null) {
@@ -867,7 +867,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     );
 
     final assetRepo = ref.read(assetRepositoryProvider);
-    final txRepo = TransactionRepository();
+    final txRepo = ref.read(transactionRepositoryProvider);
 
     if (isEditing) {
       await assetRepo.updateAsset(asset);
@@ -908,7 +908,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
             onPressed: () async {
               final assetId = widget.existingAsset!.id;
               final assetRepo = ref.read(assetRepositoryProvider);
-              final txRepo = TransactionRepository();
+              final txRepo = ref.read(transactionRepositoryProvider);
               final navigator = Navigator.of(context);
               final messenger = ScaffoldMessenger.of(context);
 

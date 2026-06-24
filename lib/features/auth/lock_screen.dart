@@ -18,6 +18,7 @@ class LockScreen extends StatefulWidget {
 class _LockScreenState extends State<LockScreen> {
   final _authService = AuthService();
   bool _isAuthenticating = false;
+  bool _notEnrolled = false;
   String? _errorMessage;
 
   @override
@@ -52,10 +53,12 @@ class _LockScreenState extends State<LockScreen> {
         );
       case AuthResult.notEnrolled:
         setState(() {
-          _errorMessage =
-              'No biometrics or PIN set up on this device. '
-              'Please set up device security in Settings.';
           _isAuthenticating = false;
+          _notEnrolled = true;
+          _errorMessage =
+              'No biometrics or device PIN are set up. '
+              'Go to your device Settings to add a PIN or fingerprint, '
+              'or continue without lock protection.';
         });
       case AuthResult.cancelled:
         setState(() {
@@ -182,6 +185,19 @@ class _LockScreenState extends State<LockScreen> {
                       textAlign: TextAlign.center,
                     ),
                   ),
+                  if (_notEnrolled) ...[
+                    const SizedBox(height: 16),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pushReplacement(
+                        MaterialPageRoute(
+                            builder: (_) => const DashboardScreen()),
+                      ),
+                      child: const Text(
+                        'Continue without lock',
+                        style: TextStyle(fontSize: 14),
+                      ),
+                    ),
+                  ],
                 ],
               ],
             ),
