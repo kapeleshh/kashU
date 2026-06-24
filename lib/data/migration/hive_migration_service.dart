@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../../core/constants/app_constants.dart';
 
@@ -48,12 +49,18 @@ abstract final class HiveMigrationService {
 
     for (int v = storedVersion + 1; v <= _currentSchemaVersion; v++) {
       final migration = _migrations[v];
-      if (migration != null) {
+      if (migration == null) continue;
+      try {
         await migration(settings);
+      } catch (e, stack) {
+        debugPrint('[KashU] Migration v$v failed — will retry next launch: $e\n$stack');
+        // Stop here; do NOT advance the stored version so the migration retries.
+        return;
       }
+      // Persist progress after each step so a crash mid-sequence doesn't
+      // force a full re-run from the beginning.
+      await settings.put(AppConstants.keySchemaVersion, v);
     }
-
-    await settings.put(AppConstants.keySchemaVersion, _currentSchemaVersion);
   }
 
   // ─── Migration steps ───────────────────────────────────────────────────

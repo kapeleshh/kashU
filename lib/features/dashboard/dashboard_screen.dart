@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../core/constants/app_colors.dart';
+import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
 import '../../shared/widgets/portfolio_summary_card.dart';
 import '../../shared/widgets/asset_allocation_chart.dart';
 import '../../shared/widgets/top_performers_list.dart';
 import '../../shared/providers/portfolio_provider.dart';
+import '../../services/widget_update_service.dart';
 import '../assets/assets_screen.dart';
 import '../transactions/transactions_screen.dart';
 import '../settings/settings_screen.dart';
@@ -19,9 +22,34 @@ Future<void> _doRefreshPrices(WidgetRef ref, BuildContext context) async {
     final result = await service.refreshAllPrices();
     ref.read(lastRefreshResultProvider.notifier).state = result;
 
+    // Persist the refresh timestamp so isPriceStaleProvider works after restart
+    await Hive.box(AppConstants.settingsBox).put(
+      'lastPriceRefreshAt',
+      result.completedAt.toIso8601String(),
+    );
+
     // Refresh portfolio data
     ref.invalidate(allAssetsProvider);
     ref.invalidate(portfolioSummaryProvider);
+
+    // Update home screen widget with latest portfolio figures
+    try {
+      final repo = ref.read(assetRepositoryProvider);
+      final totalValue = repo.getTotalValue();
+      final totalInvested = repo.getTotalInvested();
+      final totalGainLoss = totalValue - totalInvested;
+      final gainLossPct =
+          totalInvested > 0 ? (totalGainLoss / totalInvested) * 100 : 0.0;
+      final baseCurrency = repo.getBaseCurrency();
+      await WidgetUpdateService.updatePortfolioWidget(
+        totalValue: totalValue,
+        totalGainLoss: totalGainLoss,
+        gainLossPct: gainLossPct,
+        baseCurrency: baseCurrency,
+      );
+    } catch (_) {
+      // Widget update is best-effort; never crash the main refresh flow
+    }
 
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -151,6 +179,7 @@ class _DashboardContent extends ConsumerWidget {
     final portfolioAsync = ref.watch(portfolioSummaryProvider);
     final isRefreshing = ref.watch(isRefreshingPricesProvider);
     final lastResult = ref.watch(lastRefreshResultProvider);
+    final isPriceStale = ref.watch(isPriceStaleProvider);
 
     return SafeArea(
       child: CustomScrollView(
@@ -206,6 +235,28 @@ class _DashboardContent extends ConsumerWidget {
                     ),
             ],
           ),
+
+          // Stale price warning (prices older than 4 h, no active refresh result)
+          if (isPriceStale && lastResult == null)
+            SliverToBoxAdapter(
+              child: Container(
+                color: AppColors.warning.withValues(alpha: 0.12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                child: Row(
+                  children: [
+                    Icon(Icons.access_time_outlined,
+                        size: 14, color: AppColors.warning),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Prices may be outdated — tap \u27f3 to refresh',
+                      style: TextStyle(
+                          fontSize: 12, color: AppColors.warning),
+                    ),
+                  ],
+                ),
+              ),
+            ),
 
           // Last updated banner
           if (lastResult != null)

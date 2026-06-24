@@ -78,20 +78,28 @@ class AssetRepository {
     return box.values.fold(0.0, (sum, asset) => sum + asset.totalInvested);
   }
 
-  /// Get asset allocation by type
+  /// Get asset allocation by type.
+  ///
+  /// Uses [currentValue] when available. Falls back to [totalInvested] when
+  /// all assets have currentPrice == 0 (e.g. before the first price refresh)
+  /// so the chart is never blank for a non-empty portfolio.
   Map<AssetType, double> getAssetAllocation() {
     final allocation = <AssetType, double>{};
     final totalValue = getTotalValue();
-    
-    if (totalValue == 0) return allocation;
+    final basis = totalValue > 0 ? totalValue : getTotalInvested();
+
+    if (basis == 0) return allocation;
 
     for (final type in AssetType.values) {
       final typeValue = box.values
           .where((asset) => asset.type == type)
-          .fold(0.0, (sum, asset) => sum + asset.currentValue);
-      
+          .fold(0.0, (sum, asset) {
+        final v = totalValue > 0 ? asset.currentValue : asset.totalInvested;
+        return sum + v;
+      });
+
       if (typeValue > 0) {
-        allocation[type] = (typeValue / totalValue) * 100;
+        allocation[type] = (typeValue / basis) * 100;
       }
     }
 
