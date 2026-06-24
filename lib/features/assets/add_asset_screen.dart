@@ -4,6 +4,8 @@ import 'package:uuid/uuid.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
+import '../../core/theme/app_decorations.dart';
+import '../../core/theme/app_theme.dart';
 import '../../data/models/asset.dart';
 import '../../data/models/asset_type.dart';
 import '../../shared/providers/portfolio_provider.dart';
@@ -124,12 +126,30 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(isEditing ? 'Edit Asset' : 'Add Asset'),
+        automaticallyImplyLeading: false,
+        titleSpacing: 16,
+        title: Row(
+          children: [
+            _SoftIconButton(
+              icon: Icons.arrow_back_ios_new_rounded,
+              onTap: () => Navigator.of(context).maybePop(),
+            ),
+            const SizedBox(width: 11),
+            Text(
+              isEditing ? 'Edit asset' : 'Add asset',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+          ],
+        ),
         actions: [
           if (isEditing)
-            IconButton(
-              icon: const Icon(Icons.delete_outline, color: AppColors.error),
-              onPressed: _showDeleteDialog,
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: _SoftIconButton(
+                icon: Icons.delete_outline_rounded,
+                iconColor: AppColors.error,
+                onTap: _showDeleteDialog,
+              ),
             ),
         ],
       ),
@@ -140,46 +160,17 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
           children: [
             // Asset Type Selection
             Text(
-              AppStrings.selectAssetType,
-              style: Theme.of(context).textTheme.titleSmall,
+              'What did you invest in?',
+              style: AppTheme.body(
+                size: 13,
+                weight: FontWeight.w700,
+                color: AppColors.textSecondaryOn(context),
+              ),
             ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              // Bond is temporarily hidden — code preserved for future use
-              children: AssetType.values.where((type) => type != AssetType.bond).map((type) {
-                final isSelected = _selectedType == type;
-                return ChoiceChip(
-                  avatar: Icon(
-                    type.icon,
-                    size: 18,
-                    color: isSelected ? Colors.white : type.color,
-                  ),
-                  label: Text(type.displayName),
-                  selected: isSelected,
-                  selectedColor: type.color,
-                  onSelected: (_) {
-                    setState(() {
-                      _selectedType = type;
-                      _goldFetchStatus = null;
-                      _stockFetchStatus = null;
-                      _selectedStock = null;
-                      // Reset stock search widget
-                      _stockSearchKey = UniqueKey();
-                    });
-                    if (type == AssetType.gold) {
-                      _symbolController.text = PriceSymbols.goldComex;
-                      _fetchGoldPrice();
-                    } else {
-                      if (_symbolController.text == PriceSymbols.goldComex) {
-                        _symbolController.clear();
-                      }
-                    }
-                  },
-                );
-              }).toList(),
-            ),
+            const SizedBox(height: 10),
+            // Soft 2-column grid of asset-type tiles.
+            // Bond is temporarily hidden — code preserved for future use.
+            _buildTypeGrid(),
 
             // Gold / Silver toggle (shown when Metals is selected)
             if (_selectedType == AssetType.gold && !isEditing) ...[
@@ -340,37 +331,46 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               // Show read-only symbol chip when stock is selected
               Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 decoration: BoxDecoration(
-                  color: AppColors.card,
-                  borderRadius: BorderRadius.circular(12),
+                  color: Theme.of(context).colorScheme.surface,
+                  borderRadius: BorderRadius.circular(AppRadii.small),
+                  boxShadow: AppShadows.soft(opacity: 0.12, y: 8, blur: 20),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.tag, color: AppColors.textTertiary, size: 18),
+                    Icon(Icons.tag_rounded,
+                        color: AppColors.textTertiaryOn(context), size: 18),
                     const SizedBox(width: 8),
                     Text(
                       'Symbol: ',
-                      style: TextStyle(color: AppColors.textSecondary),
+                      style: AppTheme.body(
+                        size: 13,
+                        color: AppColors.textSecondaryOn(context),
+                      ),
                     ),
                     Text(
                       _symbolController.text,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
+                      style: AppTheme.body(
+                        size: 13,
+                        weight: FontWeight.w800,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
                     ),
                     const Spacer(),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
+                          horizontal: 9, vertical: 4),
                       decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(6),
+                        color: AppColors.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(AppRadii.avatar),
                       ),
                       child: Text(
                         _selectedStock!.exchangeLabel,
-                        style: TextStyle(
+                        style: AppTheme.body(
+                          size: 11,
+                          weight: FontWeight.w800,
                           color: AppColors.primary,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ),
@@ -459,15 +459,48 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
             const SizedBox(height: 16),
 
             // Purchase Date
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text(AppStrings.purchaseDate),
-              subtitle: Text(
-                '${_purchaseDate.day}/${_purchaseDate.month}/${_purchaseDate.year}',
-                style: TextStyle(color: AppColors.textPrimary),
+            Material(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(AppRadii.small),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: _selectDate,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 14),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              AppStrings.purchaseDate,
+                              style: AppTheme.body(
+                                size: 12,
+                                color: AppColors.textSecondaryOn(context),
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              '${_purchaseDate.day}/${_purchaseDate.month}/${_purchaseDate.year}',
+                              style: AppTheme.body(
+                                size: 15,
+                                weight: FontWeight.w700,
+                                color:
+                                    Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.calendar_today_rounded,
+                          size: 18,
+                          color: AppColors.textSecondaryOn(context)),
+                    ],
+                  ),
+                ),
               ),
-              trailing: const Icon(Icons.calendar_today),
-              onTap: _selectDate,
             ),
 
             const SizedBox(height: 16),
@@ -520,15 +553,88 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
             const SizedBox(height: 32),
 
-            // Save Button
-            ElevatedButton(
-              onPressed: _saveAsset,
-              child: Text(isEditing ? AppStrings.update : AppStrings.save),
+            // Save Button — indigo→lavender gradient CTA
+            Container(
+              decoration: BoxDecoration(
+                gradient: AppColors.primaryGradient,
+                borderRadius: BorderRadius.circular(AppRadii.tile),
+                boxShadow: AppShadows.glow(AppColors.primary, opacity: 0.5),
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(AppRadii.tile),
+                  onTap: _saveAsset,
+                  child: SizedBox(
+                    height: 54,
+                    child: Center(
+                      child: Text(
+                        isEditing
+                            ? AppStrings.update
+                            : 'Add to portfolio ✨',
+                        style: AppTheme.heading(
+                          size: 16,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  /// Soft 2-column grid of asset-type tiles. Each tile is a soft card with a
+  /// gradient square icon + label; the selected tile gets a colored border and
+  /// a check badge.
+  Widget _buildTypeGrid() {
+    // Bond is temporarily hidden — code preserved for future use.
+    final types =
+        AssetType.values.where((type) => type != AssetType.bond).toList();
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      itemCount: types.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisSpacing: 9,
+        crossAxisSpacing: 9,
+        mainAxisExtent: 56,
+      ),
+      itemBuilder: (context, index) {
+        final type = types[index];
+        return _TypeTile(
+          type: type,
+          isSelected: _selectedType == type,
+          onTap: () => _onTypeSelected(type),
+        );
+      },
+    );
+  }
+
+  /// Handles asset-type selection (preserves the original chip onSelected logic).
+  void _onTypeSelected(AssetType type) {
+    setState(() {
+      _selectedType = type;
+      _goldFetchStatus = null;
+      _stockFetchStatus = null;
+      _selectedStock = null;
+      // Reset stock search widget
+      _stockSearchKey = UniqueKey();
+    });
+    if (type == AssetType.gold) {
+      _symbolController.text = PriceSymbols.goldComex;
+      _fetchGoldPrice();
+    } else {
+      if (_symbolController.text == PriceSymbols.goldComex) {
+        _symbolController.clear();
+      }
+    }
   }
 
   /// Called when user selects a stock from the search dropdown.
@@ -696,7 +802,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                 : supportsTracking
                     ? Icon(Icons.sync, color: AppColors.primary, size: 18)
                     : Icon(Icons.lock_outline,
-                        color: AppColors.textTertiary, size: 18),
+                        color: AppColors.textTertiaryOn(context), size: 18),
           ),
           textCapitalization: _selectedType == AssetType.crypto
               ? TextCapitalization.none
@@ -732,7 +838,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                     : '💡 Use Yahoo Finance symbol (e.g. RELIANCE.NS for NSE)',
             style: TextStyle(
               fontSize: 11,
-              color: AppColors.textTertiary,
+              color: AppColors.textTertiaryOn(context),
               fontStyle: FontStyle.italic,
             ),
           )
@@ -741,7 +847,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
             '⚠ Auto price tracking not available for ${_selectedType.displayName}',
             style: TextStyle(
               fontSize: 11,
-              color: AppColors.textTertiary,
+              color: AppColors.textTertiaryOn(context),
               fontStyle: FontStyle.italic,
             ),
           ),
@@ -934,6 +1040,134 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A soft circular/rounded icon button used in the app bar (back / delete).
+class _SoftIconButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  final Color? iconColor;
+
+  const _SoftIconButton({
+    required this.icon,
+    required this.onTap,
+    this.iconColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadii.avatar),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          width: 40,
+          height: 40,
+          child: Icon(
+            icon,
+            size: 18,
+            color: iconColor ?? Theme.of(context).colorScheme.onSurface,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A soft asset-type tile: gradient square icon + label, with a colored border
+/// and check badge when selected. Works in both light and dark mode.
+class _TypeTile extends StatelessWidget {
+  final AssetType type;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _TypeTile({
+    required this.type,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final surface = Theme.of(context).colorScheme.surface;
+    final tone = type.color;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(AppRadii.tile),
+        boxShadow:
+            isSelected ? null : AppShadows.soft(opacity: 0.12, y: 8, blur: 20),
+      ),
+      child: Material(
+        color: isSelected ? tone.withValues(alpha: 0.12) : surface,
+        borderRadius: BorderRadius.circular(AppRadii.tile),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 11),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(AppRadii.tile),
+                  border: Border.all(
+                    color: isSelected ? tone : Colors.transparent,
+                    width: 2,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        gradient: softAvatarGradient(tone),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(type.icon, size: 17, color: Colors.white),
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Text(
+                        type.displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.heading(
+                          size: 13,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (isSelected)
+                Positioned(
+                  top: -6,
+                  right: -6,
+                  child: Container(
+                    width: 21,
+                    height: 21,
+                    decoration: BoxDecoration(
+                      color: tone,
+                      shape: BoxShape.circle,
+                      boxShadow: AppShadows.glow(tone, opacity: 0.5),
+                    ),
+                    child: const Icon(Icons.check_rounded,
+                        size: 13, color: Colors.white),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
