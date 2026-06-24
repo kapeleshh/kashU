@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/theme/app_decorations.dart';
 import '../../services/fd_bond_calculator.dart';
 
 /// Deposit sub-type: Fixed Deposit or Recurring Deposit
@@ -336,8 +337,8 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
         // Input mode toggle
         Container(
           decoration: BoxDecoration(
-            color: AppColors.card,
-            borderRadius: BorderRadius.circular(10),
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(AppRadii.small),
           ),
           child: Row(
             children: [
@@ -521,14 +522,16 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
         decoration: BoxDecoration(
           color: isSelected ? color : Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppRadii.small),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(icon,
                 size: 14,
-                color: isSelected ? Colors.white : AppColors.textSecondary),
+                color: isSelected
+                    ? Colors.white
+                    : AppColors.textSecondaryOn(context)),
             const SizedBox(width: 4),
             Flexible(
               child: Text(
@@ -536,8 +539,9 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  color:
-                      isSelected ? Colors.white : AppColors.textSecondary,
+                  color: isSelected
+                      ? Colors.white
+                      : AppColors.textSecondaryOn(context),
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -568,7 +572,7 @@ class _DateTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         decoration: BoxDecoration(
-          border: Border.all(color: AppColors.divider),
+          border: Border.all(color: Theme.of(context).dividerColor),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Column(
@@ -577,7 +581,7 @@ class _DateTile extends StatelessWidget {
             Text(
               label,
               style: TextStyle(
-                color: AppColors.textSecondary,
+                color: AppColors.textSecondaryOn(context),
                 fontSize: 11,
               ),
             ),
@@ -637,7 +641,7 @@ class _CalculationCard extends StatelessWidget {
               Text(
                 result.isMatured ? 'Matured Value' : 'Current Value',
                 style: TextStyle(
-                  color: AppColors.textSecondary,
+                  color: AppColors.textSecondaryOn(context),
                   fontSize: 13,
                 ),
               ),
@@ -670,16 +674,19 @@ class _CalculationCard extends StatelessWidget {
           const SizedBox(height: 8),
 
           if (depositType == DepositType.recurring) ...[
-            _row('Total to Invest', '₹${_fmt(result.principal)}'),
-            _row('Interest Earned', '₹${_fmt(result.interestEarnedSoFar)}',
+            _row(context, 'Total to Invest', '₹${_fmt(result.principal)}'),
+            _row(context, 'Interest Earned',
+                '₹${_fmt(result.interestEarnedSoFar)}',
                 color: AppColors.success),
-            _row('Maturity Value', '₹${_fmt(result.maturityValue)}'),
+            _row(context, 'Maturity Value', '₹${_fmt(result.maturityValue)}'),
           ] else ...[
-            _row('Principal', '₹${_fmt(result.principal)}'),
-            _row('Interest Earned', '₹${_fmt(result.interestEarnedSoFar)}',
+            _row(context, 'Principal', '₹${_fmt(result.principal)}'),
+            _row(context, 'Interest Earned',
+                '₹${_fmt(result.interestEarnedSoFar)}',
                 color: AppColors.success),
-            _row('Maturity Value', '₹${_fmt(result.maturityValue)}'),
-            _row('Total Interest', '₹${_fmt(result.totalInterestAtMaturity)}'),
+            _row(context, 'Maturity Value', '₹${_fmt(result.maturityValue)}'),
+            _row(context, 'Total Interest',
+                '₹${_fmt(result.totalInterestAtMaturity)}'),
           ],
 
           const SizedBox(height: 10),
@@ -691,12 +698,12 @@ class _CalculationCard extends StatelessWidget {
                 Text(
                   '${result.daysElapsed} days elapsed',
                   style: TextStyle(
-                      color: AppColors.textTertiary, fontSize: 11),
+                      color: AppColors.textTertiaryOn(context), fontSize: 11),
                 ),
                 Text(
                   '${result.daysRemaining} days left',
                   style: TextStyle(
-                      color: AppColors.textTertiary, fontSize: 11),
+                      color: AppColors.textTertiaryOn(context), fontSize: 11),
                 ),
               ],
             ),
@@ -732,7 +739,8 @@ class _CalculationCard extends StatelessWidget {
     );
   }
 
-  Widget _row(String label, String value, {Color? color}) {
+  Widget _row(BuildContext context, String label, String value,
+      {Color? color}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -740,7 +748,7 @@ class _CalculationCard extends StatelessWidget {
         children: [
           Text(label,
               style: TextStyle(
-                  color: AppColors.textSecondary, fontSize: 12)),
+                  color: AppColors.textSecondaryOn(context), fontSize: 12)),
           Text(value,
               style: TextStyle(
                 fontSize: 12,

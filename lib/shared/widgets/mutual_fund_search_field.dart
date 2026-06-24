@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/theme/app_decorations.dart';
 import '../../services/mutual_fund_service.dart';
 
 /// Plan filter: Direct or Regular
@@ -153,7 +154,9 @@ class _MutualFundSearchFieldState extends State<MutualFundSearchField> {
               const SizedBox(width: 12),
               // Divider
               Container(
-                  width: 1, height: 20, color: AppColors.divider),
+                  width: 1,
+                  height: 20,
+                  color: Theme.of(context).dividerColor),
               const SizedBox(width: 12),
               // Option filters
               _buildOptionChip(MfOptionFilter.growth, 'Growth',
@@ -211,22 +214,17 @@ class _MutualFundSearchFieldState extends State<MutualFundSearchField> {
           Container(
             constraints: const BoxConstraints(maxHeight: 300),
             decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.15),
-                  blurRadius: 8,
-                  offset: const Offset(0, 4),
-                ),
-              ],
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(AppRadii.small),
+              boxShadow: AppShadows.soft(opacity: 0.18, y: 6, blur: 16),
             ),
             child: _isLoading && _results.isEmpty
-                ? const Padding(
-                    padding: EdgeInsets.all(16),
+                ? Padding(
+                    padding: const EdgeInsets.all(16),
                     child: Center(
                       child: Text('Searching...',
-                          style: TextStyle(color: Colors.grey)),
+                          style: TextStyle(
+                              color: AppColors.textSecondaryOn(context))),
                     ),
                   )
                 : _results.isEmpty
@@ -235,7 +233,7 @@ class _MutualFundSearchFieldState extends State<MutualFundSearchField> {
                         child: Text(
                           'No funds found. Try different keywords or change filters.',
                           style: TextStyle(
-                            color: AppColors.textSecondary,
+                            color: AppColors.textSecondaryOn(context),
                             fontSize: 13,
                           ),
                         ),
@@ -245,7 +243,7 @@ class _MutualFundSearchFieldState extends State<MutualFundSearchField> {
                         padding: const EdgeInsets.symmetric(vertical: 4),
                         itemCount: _results.length,
                         separatorBuilder: (context, index) =>
-                            Divider(color: AppColors.divider, height: 1),
+                            Divider(color: Theme.of(context).dividerColor, height: 1),
                         itemBuilder: (context, index) {
                           final result = _results[index];
                           return _MfResultTile(
@@ -297,7 +295,7 @@ class _MutualFundSearchFieldState extends State<MutualFundSearchField> {
                   child: Text(
                     'Change',
                     style: TextStyle(
-                      color: AppColors.textSecondary,
+                      color: AppColors.textSecondaryOn(context),
                       fontSize: 12,
                     ),
                   ),
@@ -421,7 +419,7 @@ class _MfResultTile extends StatelessWidget {
             Text(
               '#${result.schemeCode}',
               style: TextStyle(
-                color: AppColors.textTertiary,
+                color: AppColors.textTertiaryOn(context),
                 fontSize: 11,
               ),
             ),

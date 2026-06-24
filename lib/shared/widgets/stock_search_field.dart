@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/theme/app_decorations.dart';
 import '../../services/stock_search_service.dart';
 
 /// Exchange filter options for the stock search field.
@@ -283,23 +284,18 @@ class _StockSearchFieldState extends State<StockSearchField> {
           Container(
             constraints: const BoxConstraints(maxHeight: 280),
             decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.15),
-                  blurRadius: 8,
-                  offset: const Offset(0, 4),
-                ),
-              ],
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(AppRadii.small),
+              boxShadow: AppShadows.soft(opacity: 0.18, y: 6, blur: 16),
             ),
             child: _isSearching && _filteredResults.isEmpty
-                ? const Padding(
-                    padding: EdgeInsets.all(16),
+                ? Padding(
+                    padding: const EdgeInsets.all(16),
                     child: Center(
                       child: Text(
                         'Searching...',
-                        style: TextStyle(color: Colors.grey),
+                        style: TextStyle(
+                            color: AppColors.textSecondaryOn(context)),
                       ),
                     ),
                   )
@@ -311,7 +307,7 @@ class _StockSearchFieldState extends State<StockSearchField> {
                               ? 'No results found. Try a different name or symbol.'
                               : 'No ${_selectedExchange.label} results found. Try "All" or a different name.',
                           style: TextStyle(
-                            color: AppColors.textSecondary,
+                            color: AppColors.textSecondaryOn(context),
                             fontSize: 13,
                           ),
                         ),
@@ -321,7 +317,7 @@ class _StockSearchFieldState extends State<StockSearchField> {
                         padding: const EdgeInsets.symmetric(vertical: 4),
                         itemCount: _filteredResults.length,
                         separatorBuilder: (context, index) =>
-                            Divider(color: AppColors.divider, height: 1),
+                            Divider(color: Theme.of(context).dividerColor, height: 1),
                         itemBuilder: (context, index) {
                           final result = _filteredResults[index];
                           return _SearchResultTile(
@@ -374,7 +370,7 @@ class _StockSearchFieldState extends State<StockSearchField> {
                   child: Text(
                     'Change',
                     style: TextStyle(
-                      color: AppColors.textSecondary,
+                      color: AppColors.textSecondaryOn(context),
                       fontSize: 12,
                     ),
                   ),
@@ -453,7 +449,7 @@ class _SearchResultTile extends StatelessWidget {
                   Text(
                     result.name,
                     style: TextStyle(
-                      color: AppColors.textSecondary,
+                      color: AppColors.textSecondaryOn(context),
                       fontSize: 12,
                     ),
                     maxLines: 1,

@@ -4,6 +4,8 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/theme/app_decorations.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../data/models/asset_type.dart';
 import '../../shared/providers/portfolio_provider.dart';
@@ -115,133 +117,81 @@ class _RebalancingScreenState extends ConsumerState<RebalancingScreen> {
       appBar: AppBar(
         title: const Text('Rebalancing Calculator'),
         actions: [
-          if (!isValid)
+          if (totalTargetPct > 0)
             Padding(
               padding: const EdgeInsets.only(right: 12),
-              child: Center(
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppColors.error.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    '${totalTargetPct.toStringAsFixed(0)}%',
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.error,
-                        fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ),
-            ),
-          if (isValid && totalTargetPct > 0)
-            Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: Center(
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppColors.success.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    '${totalTargetPct.toStringAsFixed(0)}%',
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.success,
-                        fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ),
+              child: Center(child: _TotalChip(pct: totalTargetPct, isValid: isValid)),
             ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          _InfoCard(totalValue: totalValue, baseCurrency: baseCurrency),
-          const SizedBox(height: 20),
+      body: SafeArea(
+        top: false,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+          children: [
+            _InfoCard(totalValue: totalValue, baseCurrency: baseCurrency),
+            const SizedBox(height: 20),
 
-          if (assets.isEmpty)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 32),
-                child: Text(
-                  'Add assets to your portfolio first.',
-                  style: TextStyle(color: AppColors.textSecondary),
-                ),
-              ),
-            )
-          else ...[
-            Text(
-              'Target Allocation',
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    color: AppColors.textSecondary,
-                    fontWeight: FontWeight.w600,
-                  ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Set your desired % for each asset class. Total must equal 100%.',
-              style:
-                  TextStyle(fontSize: 12, color: AppColors.textTertiary),
-            ),
-            const SizedBox(height: 12),
-
-            // Target sliders
-            ...relevantTypes.map((t) => _TargetSlider(
-                  type: t,
-                  currentValue: typeValues[t] ?? 0,
-                  totalValue: totalValue,
-                  targetPct: _targets[t] ?? 0,
-                  baseCurrency: baseCurrency,
-                  onChanged: (v) async {
-                    setState(() => _targets[t] = v);
-                    await _saveTarget(t, v);
-                  },
-                )),
-
-            if (!isValid && totalTargetPct > 0) ...[
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.error.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  'Total is ${totalTargetPct.toStringAsFixed(1)}% — adjust sliders to reach 100%.',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: AppColors.error),
-                ),
-              ),
-            ],
-
-            // Show recommendations only when targets are valid and set
-            if (isValid && totalTargetPct > 0 && totalValue > 0) ...[
-              const SizedBox(height: 24),
-              Text(
-                'Rebalancing Actions',
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      color: AppColors.textSecondary,
-                      fontWeight: FontWeight.w600,
+            if (assets.isEmpty)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 32),
+                  child: Text(
+                    'Add assets to your portfolio first.',
+                    style: AppTheme.body(
+                      size: 13,
+                      color: AppColors.textSecondaryOn(context),
                     ),
+                  ),
+                ),
+              )
+            else ...[
+              const _SectionHeader(
+                title: 'Target Allocation',
+                subtitle:
+                    'Set your desired % for each asset class. Total must equal 100%.',
               ),
               const SizedBox(height: 12),
-              ...rows.map((row) => _ActionRow(
-                    row: row,
-                    baseCurrency: baseCurrency,
-                  )),
-            ],
 
-            const SizedBox(height: 24),
-            _Disclaimer(),
+              // Target sliders
+              ...relevantTypes.map((t) => _TargetSlider(
+                    type: t,
+                    currentValue: typeValues[t] ?? 0,
+                    totalValue: totalValue,
+                    targetPct: _targets[t] ?? 0,
+                    baseCurrency: baseCurrency,
+                    onChanged: (v) async {
+                      setState(() => _targets[t] = v);
+                      await _saveTarget(t, v);
+                    },
+                  )),
+
+              if (!isValid && totalTargetPct > 0) ...[
+                const SizedBox(height: 8),
+                _Banner(
+                  icon: Icons.error_outline_rounded,
+                  color: AppColors.lossOn(context),
+                  text:
+                      'Total is ${totalTargetPct.toStringAsFixed(1)}% — adjust sliders to reach 100%.',
+                ),
+              ],
+
+              // Show recommendations only when targets are valid and set
+              if (isValid && totalTargetPct > 0 && totalValue > 0) ...[
+                const SizedBox(height: 24),
+                const _SectionHeader(title: 'Rebalancing Actions'),
+                const SizedBox(height: 12),
+                ...rows.map((row) => _ActionRow(
+                      row: row,
+                      baseCurrency: baseCurrency,
+                    )),
+              ],
+
+              const SizedBox(height: 24),
+              const _Disclaimer(),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -250,6 +200,98 @@ class _RebalancingScreenState extends ConsumerState<RebalancingScreen> {
 // ─────────────────────────────────────────────────────────────────────────────
 // Widgets
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Small pill shown in the app bar with the running total of target %.
+class _TotalChip extends StatelessWidget {
+  final double pct;
+  final bool isValid;
+
+  const _TotalChip({required this.pct, required this.isValid});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isValid ? AppColors.gainOn(context) : AppColors.lossOn(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(AppRadii.pill),
+      ),
+      child: Text(
+        '${pct.toStringAsFixed(0)}%',
+        style: AppTheme.body(size: 12.5, weight: FontWeight.w800, color: color),
+      ),
+    );
+  }
+}
+
+/// Quicksand section header with an optional supporting line.
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  final String? subtitle;
+
+  const _SectionHeader({required this.title, this.subtitle});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 2),
+          child: Text(title, style: Theme.of(context).textTheme.titleLarge),
+        ),
+        if (subtitle != null) ...[
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.only(left: 2),
+            child: Text(
+              subtitle!,
+              style: AppTheme.body(
+                size: 12,
+                weight: FontWeight.w600,
+                color: AppColors.textTertiaryOn(context),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Soft inline banner (validation hint / warnings).
+class _Banner extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String text;
+
+  const _Banner({required this.icon, required this.color, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(AppRadii.tile),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style:
+                  AppTheme.body(size: 12, weight: FontWeight.w600, color: color),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _InfoCard extends StatelessWidget {
   final double totalValue;
@@ -262,32 +304,50 @@ class _InfoCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.primary.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+        gradient: AppColors.primaryGradient,
+        borderRadius: BorderRadius.circular(AppRadii.card),
+        boxShadow: AppShadows.glow(AppColors.primary, opacity: 0.45),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.balance_outlined, color: AppColors.primary, size: 20),
+          Container(
+            width: 38,
+            height: 38,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.22),
+              borderRadius: BorderRadius.circular(AppRadii.avatar),
+            ),
+            child: const Icon(Icons.balance_rounded, color: Colors.white, size: 20),
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Portfolio value: ${CurrencyFormatter.formatCurrency(totalValue, baseCurrency)}',
-                  style: TextStyle(
-                      color: AppColors.textPrimary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600),
+                  'Portfolio value',
+                  style: AppTheme.body(
+                    size: 11.5,
+                    weight: FontWeight.w700,
+                    color: Colors.white.withValues(alpha: 0.85),
+                  ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 2),
+                Text(
+                  CurrencyFormatter.formatCurrency(totalValue, baseCurrency),
+                  style: AppTheme.heading(size: 20, color: Colors.white),
+                ),
+                const SizedBox(height: 6),
                 Text(
                   'Set your ideal allocation below. The calculator will show '
                   'how much to buy or sell in each asset class.',
-                  style: TextStyle(
-                      color: AppColors.textSecondary, fontSize: 12),
+                  style: AppTheme.body(
+                    size: 12,
+                    weight: FontWeight.w500,
+                    color: Colors.white.withValues(alpha: 0.85),
+                  ),
                 ),
               ],
             ),
@@ -321,70 +381,76 @@ class _TargetSlider extends StatelessWidget {
         totalValue > 0 ? (currentValue / totalValue) * 100 : 0.0;
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: type.color.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(type.icon, color: type.color, size: 16),
+      padding: const EdgeInsets.only(bottom: 9),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 13, 14, 9),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(AppRadii.tile),
+          boxShadow: AppShadows.soft(opacity: 0.16, y: 10, blur: 24),
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    gradient: softAvatarGradient(type.color),
+                    borderRadius: BorderRadius.circular(AppRadii.avatar),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      type.displayName,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 13),
-                    ),
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        '${targetPct.toStringAsFixed(0)}%',
-                        style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                            color: AppColors.primary),
-                      ),
-                      Text(
-                        'now ${currentPct.toStringAsFixed(1)}%',
-                        style: TextStyle(
-                            fontSize: 11, color: AppColors.textTertiary),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  activeTrackColor: type.color,
-                  thumbColor: type.color,
-                  overlayColor: type.color.withValues(alpha: 0.12),
-                  inactiveTrackColor: type.color.withValues(alpha: 0.2),
-                  trackHeight: 3,
-                  thumbShape:
-                      const RoundSliderThumbShape(enabledThumbRadius: 8),
+                  child: Icon(type.icon, color: Colors.white, size: 18),
                 ),
-                child: Slider(
-                  value: targetPct,
-                  min: 0,
-                  max: 100,
-                  divisions: 100,
-                  onChanged: onChanged,
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Text(
+                    type.displayName,
+                    style: AppTheme.heading(
+                      size: 14,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
                 ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '${targetPct.toStringAsFixed(0)}%',
+                      style: AppTheme.heading(size: 16, color: type.color),
+                    ),
+                    Text(
+                      'now ${currentPct.toStringAsFixed(1)}%',
+                      style: AppTheme.body(
+                        size: 11,
+                        weight: FontWeight.w600,
+                        color: AppColors.textTertiaryOn(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                activeTrackColor: type.color,
+                thumbColor: type.color,
+                overlayColor: type.color.withValues(alpha: 0.12),
+                inactiveTrackColor: type.color.withValues(alpha: 0.2),
+                trackHeight: 4,
+                thumbShape:
+                    const RoundSliderThumbShape(enabledThumbRadius: 8),
               ),
-            ],
-          ),
+              child: Slider(
+                value: targetPct,
+                min: 0,
+                max: 100,
+                divisions: 100,
+                onChanged: onChanged,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -402,86 +468,99 @@ class _ActionRow extends StatelessWidget {
     final isBuy = row.delta > 0;
     final isBalanced = row.delta.abs() < 1;
     final actionColor = isBalanced
-        ? AppColors.textTertiary
+        ? AppColors.textTertiaryOn(context)
         : isBuy
-            ? AppColors.success
-            : AppColors.error;
+            ? AppColors.gainOn(context)
+            : AppColors.lossOn(context);
     final actionLabel = isBalanced
         ? 'Balanced'
         : isBuy
             ? 'Buy'
             : 'Sell';
     final actionIcon = isBalanced
-        ? Icons.check_circle_outline
+        ? Icons.check_circle_rounded
         : isBuy
-            ? Icons.arrow_upward
-            : Icons.arrow_downward;
+            ? Icons.arrow_upward_rounded
+            : Icons.arrow_downward_rounded;
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: row.type.color.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(row.type.icon, color: row.type.color, size: 16),
+      padding: const EdgeInsets.only(bottom: 9),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(AppRadii.tile),
+          boxShadow: AppShadows.soft(opacity: 0.16, y: 10, blur: 24),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                gradient: softAvatarGradient(row.type.color),
+                borderRadius: BorderRadius.circular(AppRadii.avatar),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      row.type.displayName,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 13),
+              child: Icon(row.type.icon, color: Colors.white, size: 18),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    row.type.displayName,
+                    style: AppTheme.heading(
+                      size: 14,
+                      color: Theme.of(context).colorScheme.onSurface,
                     ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    '${row.currentPct.toStringAsFixed(1)}% → ${row.targetPct.toStringAsFixed(0)}%  '
+                    '(${CurrencyFormatter.formatCurrency(row.currentValue, baseCurrency)} → '
+                    '${CurrencyFormatter.formatCurrency(row.targetValue, baseCurrency)})',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.body(
+                      size: 11,
+                      weight: FontWeight.w600,
+                      color: AppColors.textSecondaryOn(context),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Row(
+                  children: [
+                    Icon(actionIcon, size: 14, color: actionColor),
+                    const SizedBox(width: 4),
                     Text(
-                      '${row.currentPct.toStringAsFixed(1)}% → ${row.targetPct.toStringAsFixed(0)}%  '
-                      '(${CurrencyFormatter.formatCurrency(row.currentValue, baseCurrency)} → '
-                      '${CurrencyFormatter.formatCurrency(row.targetValue, baseCurrency)})',
-                      style: TextStyle(
-                          fontSize: 11, color: AppColors.textTertiary),
+                      actionLabel,
+                      style: AppTheme.body(
+                        size: 12,
+                        weight: FontWeight.w700,
+                        color: actionColor,
+                      ),
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(width: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Row(
-                    children: [
-                      Icon(actionIcon, size: 14, color: actionColor),
-                      const SizedBox(width: 4),
-                      Text(
-                        actionLabel,
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: actionColor,
-                            fontWeight: FontWeight.w600),
-                      ),
-                    ],
+                if (!isBalanced) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    CurrencyFormatter.formatCurrency(
+                        row.delta.abs(), baseCurrency),
+                    style: AppTheme.heading(size: 14, color: actionColor),
                   ),
-                  if (!isBalanced)
-                    Text(
-                      CurrencyFormatter.formatCurrency(row.delta.abs(), baseCurrency),
-                      style: TextStyle(
-                          fontSize: 13,
-                          color: actionColor,
-                          fontWeight: FontWeight.bold),
-                    ),
                 ],
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -489,19 +568,38 @@ class _ActionRow extends StatelessWidget {
 }
 
 class _Disclaimer extends StatelessWidget {
+  const _Disclaimer();
+
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(13),
       decoration: BoxDecoration(
-        color: AppColors.surfaceLight,
-        borderRadius: BorderRadius.circular(8),
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(AppRadii.tile),
       ),
-      child: Text(
-        '⚠ This calculator is for planning purposes only. It does not account '
-        'for taxes, exit loads, lock-in periods, or brokerage charges. '
-        'Consult a qualified financial advisor before rebalancing.',
-        style: TextStyle(color: AppColors.textTertiary, fontSize: 11),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.info_outline_rounded,
+            size: 16,
+            color: AppColors.textTertiaryOn(context),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'This calculator is for planning purposes only. It does not account '
+              'for taxes, exit loads, lock-in periods, or brokerage charges. '
+              'Consult a qualified financial advisor before rebalancing.',
+              style: AppTheme.body(
+                size: 11.5,
+                weight: FontWeight.w500,
+                color: AppColors.textTertiaryOn(context),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
