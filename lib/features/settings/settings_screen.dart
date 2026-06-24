@@ -8,6 +8,8 @@ import 'package:share_plus/share_plus.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
+import '../../core/theme/app_decorations.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/utils/import_validator.dart';
 import '../../services/auth_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
@@ -66,11 +68,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         title: const Text(AppStrings.settings),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
           // Preferences Section
           _buildSectionHeader(context, 'Preferences'),
-          const SizedBox(height: 8),
+          const SizedBox(height: 11),
           _buildSettingsCard([
             _BaseCurrencyTile(
               currentCurrency: baseCurrency,
@@ -83,40 +85,44 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ]),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: 22),
 
           // Security Section
           _buildSectionHeader(context, AppStrings.security),
-          const SizedBox(height: 8),
+          const SizedBox(height: 11),
           _buildSettingsCard([
             SwitchListTile(
-              secondary: Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
+              secondary: _tileIcon(Icons.lock_outline),
+              title: Text(
+                'Require Authentication',
+                style: AppTheme.body(
+                  size: 15,
+                  weight: FontWeight.w700,
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
-                child: Icon(Icons.lock_outline,
-                    color: AppColors.primary, size: 20),
               ),
-              title: const Text('Require Authentication'),
               subtitle: Text(
                 'Use biometrics or device PIN to unlock the app',
-                style:
-                    TextStyle(color: AppColors.textTertiary, fontSize: 13),
+                style: AppTheme.body(
+                  size: 12.5,
+                  weight: FontWeight.w500,
+                  color: AppColors.textTertiaryOn(context),
+                ),
               ),
               value: _appLockEnabled,
               activeThumbColor: AppColors.primary,
+              activeTrackColor: AppColors.primary.withValues(alpha: 0.4),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               onChanged: _toggleAppLock,
             ),
           ]),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: 22),
 
           // Portfolio Tools Section
           _buildSectionHeader(context, 'Portfolio Tools'),
-          const SizedBox(height: 8),
+          const SizedBox(height: 11),
           _buildSettingsCard([
             _SettingsTile(
               icon: Icons.balance_outlined,
@@ -131,11 +137,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ]),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: 22),
 
           // Data Management Section
           _buildSectionHeader(context, AppStrings.dataManagement),
-          const SizedBox(height: 8),
+          const SizedBox(height: 11),
           _buildSettingsCard([
             _SettingsTile(
               icon: Icons.receipt_long_outlined,
@@ -163,16 +169,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               icon: Icons.delete_outline,
               title: 'Clear All Data',
               subtitle: 'Delete all assets and transactions',
-              iconColor: AppColors.error,
+              iconColor: AppColors.lossOn(context),
+              destructive: true,
               onTap: () => _showClearDataDialog(context, ref),
             ),
           ]),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: 22),
 
           // About Section
           _buildSectionHeader(context, AppStrings.about),
-          const SizedBox(height: 8),
+          const SizedBox(height: 11),
           _buildSettingsCard([
             _SettingsTile(
               icon: Icons.info_outline,
@@ -189,36 +196,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: Column(
               children: [
                 Container(
-                  width: 60,
-                  height: 60,
+                  width: 64,
+                  height: 64,
                   decoration: BoxDecoration(
                     gradient: AppColors.primaryGradient,
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(AppRadii.tile),
+                    boxShadow: AppShadows.glow(AppColors.primary, opacity: 0.45),
                   ),
-                  child: const Center(
+                  child: Center(
                     child: Text(
                       'K',
-                      style: TextStyle(
+                      style: AppTheme.heading(
+                        size: 30,
+                        weight: FontWeight.w800,
                         color: Colors.white,
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
                       ),
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 Text(
                   AppStrings.appName,
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                  style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: 4),
                 Text(
                   AppStrings.appTagline,
-                  style: TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 14,
+                  style: AppTheme.body(
+                    size: 13.5,
+                    weight: FontWeight.w500,
+                    color: AppColors.textSecondaryOn(context),
                   ),
                 ),
               ],
@@ -231,36 +238,64 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildSectionHeader(BuildContext context, String title) {
-    return Text(
-      title,
-      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-            color: AppColors.textSecondary,
-            fontWeight: FontWeight.w600,
-          ),
+  /// Small tonal rounded container holding a leading icon.
+  Widget _tileIcon(IconData icon, {Color? color}) {
+    final tone = color ?? AppColors.primary;
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: tone.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(AppRadii.avatar),
+      ),
+      child: Icon(icon, color: tone, size: 20),
     );
   }
 
-  Widget _buildSettingsCard(List<Widget> children) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(16),
+  Widget _buildSectionHeader(BuildContext context, String title) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 2),
+      child: Text(
+        title,
+        style: Theme.of(context).textTheme.titleLarge,
       ),
-      child: Column(
-        children: children.asMap().entries.map((entry) {
-          final index = entry.key;
-          final child = entry.value;
-          if (index < children.length - 1) {
-            return Column(
-              children: [
-                child,
-                Divider(color: AppColors.divider, height: 1),
-              ],
-            );
-          }
-          return child;
-        }).toList(),
+    );
+  }
+
+  /// A soft rounded group/card. Uses a [Material] so the [ListTile] children
+  /// keep their ink + correct background in both light and dark themes.
+  Widget _buildSettingsCard(List<Widget> children) {
+    return Builder(
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(AppRadii.card),
+          boxShadow: AppShadows.soft(opacity: 0.16, y: 10, blur: 24),
+        ),
+        child: Material(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(AppRadii.card),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: children.asMap().entries.map((entry) {
+              final index = entry.key;
+              final child = entry.value;
+              if (index < children.length - 1) {
+                return Column(
+                  children: [
+                    child,
+                    Divider(
+                      color: Theme.of(context).dividerColor,
+                      height: 1,
+                      indent: 16,
+                      endIndent: 16,
+                    ),
+                  ],
+                );
+              }
+              return child;
+            }).toList(),
+          ),
+        ),
       ),
     );
   }
@@ -315,7 +350,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           children: [
             Text(
               'Paste your KashU backup JSON below:',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+              style: AppTheme.body(
+                size: 13,
+                weight: FontWeight.w500,
+                color: AppColors.textSecondaryOn(context),
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
@@ -454,7 +493,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             },
             child: Text(
               'Clear All',
-              style: TextStyle(color: AppColors.error),
+              style: TextStyle(color: AppColors.lossOn(context)),
             ),
           ),
         ],
@@ -469,19 +508,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         title: Row(
           children: [
             Container(
-              width: 40,
-              height: 40,
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
                 gradient: AppColors.primaryGradient,
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(AppRadii.avatar),
               ),
-              child: const Center(
+              child: Center(
                 child: Text(
                   'K',
-                  style: TextStyle(
+                  style: AppTheme.heading(
+                    size: 22,
+                    weight: FontWeight.w800,
                     color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
@@ -496,7 +535,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           children: [
             Text(
               AppStrings.appTagline,
-              style: TextStyle(color: AppColors.textSecondary),
+              style: AppTheme.body(
+                size: 14,
+                weight: FontWeight.w500,
+                color: AppColors.textSecondaryOn(context),
+              ),
             ),
             const SizedBox(height: 16),
             const Text('Version 1.0.0'),
@@ -508,9 +551,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               '• Multiple currencies support\n'
               '• Offline-first, privacy-focused\n'
               '• Export & backup your data',
-              style: TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 13,
+              style: AppTheme.body(
+                size: 13,
+                weight: FontWeight.w500,
+                color: AppColors.textSecondaryOn(context),
               ),
             ),
           ],
@@ -539,21 +583,34 @@ class _BaseCurrencyTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       leading: Container(
         width: 40,
         height: 40,
         decoration: BoxDecoration(
           color: AppColors.primary.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppRadii.avatar),
         ),
         child: Icon(Icons.currency_exchange, color: AppColors.primary, size: 20),
       ),
-      title: const Text('Base Currency'),
+      title: Text(
+        'Base Currency',
+        style: AppTheme.body(
+          size: 15,
+          weight: FontWeight.w700,
+          color: Theme.of(context).colorScheme.onSurface,
+        ),
+      ),
       subtitle: Text(
         '$currentCurrency (${AppConstants.currencies[currentCurrency] ?? currentCurrency})',
-        style: TextStyle(color: AppColors.textTertiary, fontSize: 13),
+        style: AppTheme.body(
+          size: 12.5,
+          weight: FontWeight.w500,
+          color: AppColors.textTertiaryOn(context),
+        ),
       ),
-      trailing: Icon(Icons.chevron_right, color: AppColors.textTertiary),
+      trailing: Icon(Icons.chevron_right,
+          color: AppColors.textTertiaryOn(context)),
       onTap: () => _showCurrencyPicker(context),
     );
   }
@@ -561,46 +618,66 @@ class _BaseCurrencyTile extends StatelessWidget {
   void _showCurrencyPicker(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(height: 16),
-          Text(
-            'Select Base Currency',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-          ),
-          const SizedBox(height: 8),
-          Flexible(
-            child: ListView(
-              shrinkWrap: true,
-              children: AppConstants.currencies.entries.map((entry) {
-                final isSelected = entry.key == currentCurrency;
-                return ListTile(
-                  leading: Text(
-                    entry.value,
-                    style: const TextStyle(fontSize: 22),
-                  ),
-                  title: Text(entry.key),
-                  subtitle: Text(_currencyName(entry.key)),
-                  trailing: isSelected
-                      ? Icon(Icons.check_circle, color: AppColors.primary)
-                      : null,
-                  selected: isSelected,
-                  onTap: () {
-                    onChanged(entry.key);
-                    Navigator.pop(context);
-                  },
-                );
-              }).toList(),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 14),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.textTertiaryOn(context).withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-        ],
+            const SizedBox(height: 16),
+            Text(
+              'Select Base Currency',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: AppConstants.currencies.entries.map((entry) {
+                  final isSelected = entry.key == currentCurrency;
+                  return ListTile(
+                    leading: Text(
+                      entry.value,
+                      style: const TextStyle(fontSize: 22),
+                    ),
+                    title: Text(
+                      entry.key,
+                      style: AppTheme.body(
+                        size: 15,
+                        weight: FontWeight.w700,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                    ),
+                    subtitle: Text(
+                      _currencyName(entry.key),
+                      style: AppTheme.body(
+                        size: 12.5,
+                        weight: FontWeight.w500,
+                        color: AppColors.textSecondaryOn(context),
+                      ),
+                    ),
+                    trailing: isSelected
+                        ? Icon(Icons.check_circle, color: AppColors.primary)
+                        : null,
+                    selected: isSelected,
+                    onTap: () {
+                      onChanged(entry.key);
+                      Navigator.pop(context);
+                    },
+                  );
+                }).toList(),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
       ),
     );
   }
@@ -628,6 +705,7 @@ class _SettingsTile extends StatelessWidget {
   final String subtitle;
   final VoidCallback onTap;
   final Color? iconColor;
+  final bool destructive;
 
   const _SettingsTile({
     required this.icon,
@@ -635,35 +713,50 @@ class _SettingsTile extends StatelessWidget {
     required this.subtitle,
     required this.onTap,
     this.iconColor,
+    this.destructive = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    final tone = iconColor ?? AppColors.primary;
+    final titleColor = destructive
+        ? AppColors.lossOn(context)
+        : Theme.of(context).colorScheme.onSurface;
+
     return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       leading: Container(
         width: 40,
         height: 40,
         decoration: BoxDecoration(
-          color: (iconColor ?? AppColors.primary).withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(10),
+          color: tone.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(AppRadii.avatar),
         ),
         child: Icon(
           icon,
-          color: iconColor ?? AppColors.primary,
+          color: tone,
           size: 20,
         ),
       ),
-      title: Text(title),
+      title: Text(
+        title,
+        style: AppTheme.body(
+          size: 15,
+          weight: FontWeight.w700,
+          color: titleColor,
+        ),
+      ),
       subtitle: Text(
         subtitle,
-        style: TextStyle(
-          color: AppColors.textTertiary,
-          fontSize: 13,
+        style: AppTheme.body(
+          size: 12.5,
+          weight: FontWeight.w500,
+          color: AppColors.textTertiaryOn(context),
         ),
       ),
       trailing: Icon(
         Icons.chevron_right,
-        color: AppColors.textTertiary,
+        color: AppColors.textTertiaryOn(context),
       ),
       onTap: onTap,
     );
