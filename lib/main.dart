@@ -242,7 +242,12 @@ class KashUApp extends StatelessWidget {
     return MaterialApp(
       title: AppStrings.appName,
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.darkTheme,
+      // C·Soft theme. Light is fully defined but the app stays dark until the
+      // remaining screens (assets/transactions/settings) are migrated; flip to
+      // ThemeMode.system once they support light surfaces.
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: ThemeMode.dark,
       home: home,
     );
   }

@@ -4,13 +4,16 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
-import '../../core/constants/app_strings.dart';
+import '../../core/theme/app_decorations.dart';
+import '../../core/theme/app_theme.dart';
 import '../../shared/widgets/portfolio_summary_card.dart';
 import '../../shared/widgets/asset_allocation_chart.dart';
 import '../../shared/widgets/top_performers_list.dart';
+import '../../shared/widgets/coin_mascot.dart';
 import '../../shared/providers/portfolio_provider.dart';
 import '../../services/widget_update_service.dart';
 import '../assets/assets_screen.dart';
+import '../assets/add_asset_screen.dart';
 import '../transactions/transactions_screen.dart';
 import '../settings/settings_screen.dart';
 
@@ -60,6 +63,7 @@ Future<void> _doRefreshPrices(WidgetRef ref, BuildContext context) async {
           action: result.hasErrors
               ? SnackBarAction(
                   label: 'Details',
+                  textColor: Colors.white,
                   onPressed: () => _showErrorDetails(context, result.errors),
                 )
               : null,
@@ -77,6 +81,13 @@ String _formatTime(DateTime dt) {
   if (diff.inSeconds < 60) return 'Just now';
   if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
   return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+}
+
+({String text, String emoji}) _greeting() {
+  final h = DateTime.now().hour;
+  if (h < 12) return (text: 'Good morning', emoji: '☀️');
+  if (h < 17) return (text: 'Good afternoon', emoji: '🌤️');
+  return (text: 'Good evening', emoji: '🌙');
 }
 
 void _showErrorDetails(BuildContext context, List<String> errors) {
@@ -116,60 +127,39 @@ class DashboardScreen extends ConsumerStatefulWidget {
 class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   int _currentIndex = 0;
 
-  final List<Widget> _screens = [
-    const _DashboardContent(),
-    const AssetsScreen(),
-    const TransactionsScreen(),
-    const SettingsScreen(),
+  final List<Widget> _screens = const [
+    _DashboardContent(),
+    AssetsScreen(),
+    TransactionsScreen(),
+    SettingsScreen(),
   ];
+
+  Future<void> _openAddAsset() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const AddAssetScreen()),
+    );
+    ref.invalidate(allAssetsProvider);
+    ref.invalidate(portfolioSummaryProvider);
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _screens,
-      ),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          border: Border(
-            top: BorderSide(
-              color: AppColors.divider,
-              width: 0.5,
-            ),
-          ),
-        ),
-        child: BottomNavigationBar(
-          currentIndex: _currentIndex,
-          onTap: (index) => setState(() => _currentIndex = index),
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.dashboard_outlined),
-              activeIcon: Icon(Icons.dashboard),
-              label: AppStrings.dashboard,
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.account_balance_wallet_outlined),
-              activeIcon: Icon(Icons.account_balance_wallet),
-              label: AppStrings.assets,
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.swap_horiz_outlined),
-              activeIcon: Icon(Icons.swap_horiz),
-              label: AppStrings.transactions,
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.settings_outlined),
-              activeIcon: Icon(Icons.settings),
-              label: AppStrings.settings,
-            ),
-          ],
-        ),
+      body: IndexedStack(index: _currentIndex, children: _screens),
+      // The dashboard owns the global "add" FAB; other tabs keep their own.
+      floatingActionButton:
+          _currentIndex == 0 ? _SoftFab(onTap: _openAddAsset) : null,
+      bottomNavigationBar: _SoftBottomNav(
+        currentIndex: _currentIndex,
+        onTap: (i) => setState(() => _currentIndex = i),
       ),
     );
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dashboard content
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _DashboardContent extends ConsumerWidget {
   const _DashboardContent();
@@ -180,194 +170,335 @@ class _DashboardContent extends ConsumerWidget {
     final isRefreshing = ref.watch(isRefreshingPricesProvider);
     final lastResult = ref.watch(lastRefreshResultProvider);
     final isPriceStale = ref.watch(isPriceStaleProvider);
+    final greeting = _greeting();
 
     return SafeArea(
-      child: CustomScrollView(
-        slivers: [
-          // App Bar
-          SliverAppBar(
-            floating: true,
-            title: Row(
+      bottom: false,
+      child: RefreshIndicator(
+        color: AppColors.primary,
+        onRefresh: () => _doRefreshPrices(ref, context),
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 130),
+          children: [
+            // Header
+            Row(
               children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    gradient: AppColors.primaryGradient,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Center(
-                    child: Text(
-                      'K',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                const Text(
-                  AppStrings.appName,
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-            actions: [
-              // Refresh Prices button
-              isRefreshing
-                  ? const Padding(
-                      padding: EdgeInsets.all(12),
-                      child: SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${greeting.text} ${greeting.emoji}',
+                        style: AppTheme.body(
+                          size: 12.5,
+                          weight: FontWeight.w700,
+                          color: AppColors.textSecondaryOn(context),
                         ),
                       ),
-                    )
-                  : IconButton(
-                      icon: const Icon(Icons.sync),
-                      tooltip: 'Refresh Prices',
-                      onPressed: () => _doRefreshPrices(ref, context),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Welcome back',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                    ],
+                  ),
+                ),
+                _RefreshButton(
+                  isRefreshing: isRefreshing,
+                  onTap: () => _doRefreshPrices(ref, context),
+                ),
+                const SizedBox(width: 10),
+                const CoinMascot(),
+              ],
+            ),
+
+            // Last refresh result, or a stale-price hint if we've never shown one.
+            if (lastResult != null) ...[
+              const SizedBox(height: 10),
+              _StatusPill(
+                icon: lastResult.hasErrors
+                    ? Icons.warning_amber_rounded
+                    : Icons.check_circle_rounded,
+                color: lastResult.hasErrors
+                    ? AppColors.error
+                    : AppColors.gainOn(context),
+                text: lastResult.summary,
+                trailing: _formatTime(lastResult.completedAt),
+                onTap: lastResult.hasErrors
+                    ? () => _showErrorDetails(context, lastResult.errors)
+                    : null,
+              ),
+            ] else if (isPriceStale) ...[
+              const SizedBox(height: 10),
+              _StatusPill(
+                icon: Icons.schedule_rounded,
+                color: AppColors.warning,
+                text: 'Prices may be out of date — pull to refresh',
+              ),
+            ],
+
+            const SizedBox(height: 16),
+
+            // Hero
+            portfolioAsync.when(
+              data: (summary) => PortfolioSummaryCard(summary: summary),
+              loading: () => const PortfolioSummaryCard.loading(),
+              error: (e, _) => PortfolioSummaryCard.error(e.toString()),
+            ),
+
+            const SizedBox(height: 18),
+
+            // Your mix
+            portfolioAsync.when(
+              data: (summary) => AssetAllocationChart(
+                allocation: summary.assetAllocation,
+                totalValue: summary.totalValue,
+                assetCount: summary.totalAssets,
+              ),
+              loading: () => const AssetAllocationChart.loading(),
+              error: (e, _) => const SizedBox.shrink(),
+            ),
+
+            const SizedBox(height: 20),
+
+            // On the move (gainers)
+            _SectionTitle('On the move'),
+            const SizedBox(height: 11),
+            portfolioAsync.when(
+              data: (summary) => summary.topGainers.isEmpty
+                  ? const SizedBox.shrink()
+                  : TopPerformersList(
+                      assets: summary.topGainers, isGainers: true),
+              loading: () => const TopPerformersList.loading(),
+              error: (e, _) => const SizedBox.shrink(),
+            ),
+
+            // Cooling off (losers) — only when there are any
+            portfolioAsync.maybeWhen(
+              data: (summary) => summary.topLosers.isEmpty
+                  ? const SizedBox.shrink()
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 20),
+                        _SectionTitle('Cooling off'),
+                        const SizedBox(height: 11),
+                        TopPerformersList(
+                            assets: summary.topLosers, isGainers: false),
+                      ],
                     ),
+              orElse: () => const SizedBox.shrink(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  final String text;
+  const _SectionTitle(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 2),
+      child: Text(text, style: Theme.of(context).textTheme.titleLarge),
+    );
+  }
+}
+
+class _RefreshButton extends StatelessWidget {
+  final bool isRefreshing;
+  final VoidCallback onTap;
+  const _RefreshButton({required this.isRefreshing, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadii.avatar),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: isRefreshing ? null : onTap,
+        child: SizedBox(
+          width: 40,
+          height: 40,
+          child: isRefreshing
+              ? const Padding(
+                  padding: EdgeInsets.all(11),
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2.2, color: AppColors.primary),
+                )
+              : Icon(Icons.refresh_rounded,
+                  size: 20, color: AppColors.textSecondaryOn(context)),
+        ),
+      ),
+    );
+  }
+}
+
+/// A soft status pill (last-refresh summary, or a stale-price hint).
+class _StatusPill extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String text;
+  final String? trailing;
+  final VoidCallback? onTap;
+
+  const _StatusPill({
+    required this.icon,
+    required this.color,
+    required this.text,
+    this.trailing,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(AppRadii.small),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style:
+                    AppTheme.body(size: 12, weight: FontWeight.w600, color: color),
+              ),
+            ),
+            if (trailing != null)
+              Text(
+                trailing!,
+                style: AppTheme.body(
+                  size: 11,
+                  color: AppColors.textTertiaryOn(context),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Floating bottom navigation + FAB
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _SoftBottomNav extends StatelessWidget {
+  final int currentIndex;
+  final ValueChanged<int> onTap;
+
+  const _SoftBottomNav({required this.currentIndex, required this.onTap});
+
+  static const _items = [
+    (icon: Icons.home_rounded, label: 'Home'),
+    (icon: Icons.account_balance_wallet_rounded, label: 'Assets'),
+    (icon: Icons.swap_horiz_rounded, label: 'Activity'),
+    (icon: Icons.person_rounded, label: 'Profile'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        child: Container(
+          height: 58,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(AppRadii.nav),
+            boxShadow: AppShadows.soft(opacity: 0.30, y: 12, blur: 26),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              for (var i = 0; i < _items.length; i++) _navItem(context, i),
             ],
           ),
+        ),
+      ),
+    );
+  }
 
-          // Stale price warning (prices older than 4 h, no active refresh result)
-          if (isPriceStale && lastResult == null)
-            SliverToBoxAdapter(
-              child: Container(
-                color: AppColors.warning.withValues(alpha: 0.12),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                child: Row(
-                  children: [
-                    Icon(Icons.access_time_outlined,
-                        size: 14, color: AppColors.warning),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Prices may be outdated — tap \u27f3 to refresh',
-                      style: TextStyle(
-                          fontSize: 12, color: AppColors.warning),
-                    ),
-                  ],
-                ),
+  Widget _navItem(BuildContext context, int i) {
+    final item = _items[i];
+    final selected = i == currentIndex;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => onTap(i),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+        padding:
+            EdgeInsets.symmetric(horizontal: selected ? 13 : 10, vertical: 8),
+        decoration: BoxDecoration(
+          gradient: selected ? AppColors.primaryGradient : null,
+          borderRadius: BorderRadius.circular(AppRadii.small),
+          boxShadow:
+              selected ? AppShadows.glow(AppColors.primary, opacity: 0.45) : null,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              item.icon,
+              size: selected ? 20 : 22,
+              color: selected ? Colors.white : AppColors.textTertiaryOn(context),
+            ),
+            if (selected) ...[
+              const SizedBox(width: 6),
+              Text(
+                item.label,
+                style: AppTheme.body(
+                    size: 12, weight: FontWeight.w800, color: Colors.white),
               ),
-            ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
 
-          // Last updated banner
-          if (lastResult != null)
-            SliverToBoxAdapter(
-              child: Container(
-                color: lastResult.hasErrors
-                    ? AppColors.error.withValues(alpha: 0.1)
-                    : AppColors.success.withValues(alpha: 0.1),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                child: Row(
-                  children: [
-                    Icon(
-                      lastResult.hasErrors
-                          ? Icons.warning_amber_outlined
-                          : Icons.check_circle_outline,
-                      size: 14,
-                      color: lastResult.hasErrors
-                          ? AppColors.error
-                          : AppColors.success,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      lastResult.summary,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: lastResult.hasErrors
-                            ? AppColors.error
-                            : AppColors.success,
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      _formatTime(lastResult.completedAt),
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: AppColors.textTertiary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+class _SoftFab extends StatelessWidget {
+  final VoidCallback onTap;
+  const _SoftFab({required this.onTap});
 
-          // Content
-          SliverPadding(
-            padding: const EdgeInsets.all(16),
-            sliver: SliverList(
-              delegate: SliverChildListDelegate([
-                // Portfolio Summary Card
-                portfolioAsync.when(
-                  data: (summary) => PortfolioSummaryCard(summary: summary),
-                  loading: () => const PortfolioSummaryCard.loading(),
-                  error: (e, _) => PortfolioSummaryCard.error(e.toString()),
-                ),
-
-                const SizedBox(height: 24),
-
-                // Asset Allocation Section
-                Text(
-                  AppStrings.assetAllocation,
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 12),
-                portfolioAsync.when(
-                  data: (summary) => AssetAllocationChart(
-                    allocation: summary.assetAllocation,
-                  ),
-                  loading: () => const AssetAllocationChart.loading(),
-                  error: (e, _) => const SizedBox.shrink(),
-                ),
-
-                const SizedBox(height: 24),
-
-                // Top Gainers
-                Text(
-                  AppStrings.topGainers,
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 12),
-                portfolioAsync.when(
-                  data: (summary) => TopPerformersList(
-                    assets: summary.topGainers,
-                    isGainers: true,
-                  ),
-                  loading: () => const TopPerformersList.loading(),
-                  error: (e, _) => const SizedBox.shrink(),
-                ),
-
-                const SizedBox(height: 24),
-
-                // Top Losers
-                Text(
-                  AppStrings.topLosers,
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 12),
-                portfolioAsync.when(
-                  data: (summary) => TopPerformersList(
-                    assets: summary.topLosers,
-                    isGainers: false,
-                  ),
-                  loading: () => const TopPerformersList.loading(),
-                  error: (e, _) => const SizedBox.shrink(),
-                ),
-
-                const SizedBox(height: 100),
-              ]),
-            ),
-          ),
-        ],
+  @override
+  Widget build(BuildContext context) {
+    // endFloat already clears the bottom nav; no extra lift needed.
+    return Container(
+      width: 56,
+      height: 56,
+      decoration: BoxDecoration(
+        gradient: AppColors.mintGradient,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: AppShadows.glow(const Color(0xFF10B981), opacity: 0.6),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: const Icon(Icons.add_rounded, color: Colors.white, size: 28),
+        ),
       ),
     );
   }
