@@ -6,12 +6,16 @@ import '../../core/utils/currency_formatter.dart';
 import '../../data/models/asset.dart';
 import '../../data/models/asset_type.dart';
 
-/// Soft rounded list of holdings (top gainers / losers), each a pastel card
-/// with a gradient avatar and a colour-coded change.
+/// "On the move" — a horizontal row of compact mover mini-cards matching the
+/// C·Soft dashboard: a small gradient icon tile, the holding name, and a
+/// colour-coded % change. (Full holding rows live on the Assets screen.)
 class TopPerformersList extends StatelessWidget {
   final List<Asset>? assets;
   final bool isGainers;
   final bool isLoading;
+
+  /// How many movers fit in the row before it gets too cramped.
+  static const _maxCards = 4;
 
   const TopPerformersList({
     super.key,
@@ -29,98 +33,68 @@ class TopPerformersList extends StatelessWidget {
     if (isLoading) return _buildLoading();
     if (assets == null || assets!.isEmpty) return _buildEmpty(context);
 
-    return Column(
-      children: [
-        for (var i = 0; i < assets!.length; i++) ...[
-          if (i > 0) const SizedBox(height: 9),
-          _tile(context, assets![i]),
+    final shown = assets!.take(_maxCards).toList();
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < shown.length; i++) ...[
+            if (i > 0) const SizedBox(width: 9),
+            Expanded(child: _miniCard(context, shown[i])),
+          ],
         ],
-      ],
+      ),
     );
   }
 
-  Widget _tile(BuildContext context, Asset asset) {
+  Widget _miniCard(BuildContext context, Asset asset) {
     final isProfit = asset.gainLossPercentage >= 0;
     final changeColor =
         isProfit ? AppColors.gainOn(context) : AppColors.lossOn(context);
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+      padding: const EdgeInsets.fromLTRB(11, 10, 11, 11),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(AppRadii.tile),
-        boxShadow: AppShadows.soft(opacity: 0.16, y: 10, blur: 24),
+        boxShadow: AppShadows.soft(opacity: 0.16, y: 10, blur: 22),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          _avatar(asset),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  asset.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTheme.heading(
-                    size: 14,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 1),
-                Text(
-                  _subtitle(asset),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTheme.body(
-                    size: 11,
-                    weight: FontWeight.w600,
-                    color: AppColors.textSecondaryOn(context),
-                  ),
-                ),
-              ],
+          Container(
+            width: 26,
+            height: 26,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              gradient: softAvatarGradient(asset.type.color),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Text(
+              _initials(asset),
+              style: AppTheme.heading(size: 11, color: Colors.white),
             ),
           ),
-          const SizedBox(width: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                CurrencyFormatter.formatCompactINR(asset.currentValue),
-                style: AppTheme.heading(
-                  size: 13.5,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                '${isProfit ? '▲' : '▼'} ${CurrencyFormatter.formatPercentage(asset.gainLossPercentage.abs(), showSign: false)}',
-                style: AppTheme.body(
-                  size: 11.5,
-                  weight: FontWeight.w800,
-                  color: changeColor,
-                ),
-              ),
-            ],
+          const SizedBox(height: 7),
+          Text(
+            asset.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTheme.body(
+              size: 11.5,
+              weight: FontWeight.w700,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '${isProfit ? '▲' : '▼'} ${CurrencyFormatter.formatPercentage(asset.gainLossPercentage.abs(), showSign: false)}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTheme.body(size: 11, weight: FontWeight.w800, color: changeColor),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _avatar(Asset asset) {
-    return Container(
-      width: 42,
-      height: 42,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        gradient: softAvatarGradient(asset.type.color),
-        borderRadius: BorderRadius.circular(AppRadii.avatar),
-      ),
-      child: Text(
-        _initials(asset),
-        style: AppTheme.heading(size: 14, color: Colors.white),
       ),
     );
   }
@@ -137,28 +111,22 @@ class TopPerformersList extends StatelessWidget {
         : letters.substring(0, 1).toUpperCase();
   }
 
-  String _subtitle(Asset asset) {
-    final unit = asset.type.unitLabel;
-    final qty = CurrencyFormatter.formatQuantity(asset.quantity);
-    final qtyPart = unit.isEmpty ? '' : '$qty $unit · ';
-    return '$qtyPart${asset.type.displayName}';
-  }
-
   Widget _buildLoading() {
-    return Column(
-      children: List.generate(
-        3,
-        (i) => Padding(
-          padding: EdgeInsets.only(top: i == 0 ? 0 : 9),
-          child: Container(
-            height: 64,
-            decoration: BoxDecoration(
-              color: AppColors.shimmerBase,
-              borderRadius: BorderRadius.circular(AppRadii.tile),
+    return Row(
+      children: [
+        for (var i = 0; i < 3; i++) ...[
+          if (i > 0) const SizedBox(width: 9),
+          Expanded(
+            child: Container(
+              height: 78,
+              decoration: BoxDecoration(
+                color: AppColors.shimmerBase,
+                borderRadius: BorderRadius.circular(AppRadii.tile),
+              ),
             ),
           ),
-        ),
-      ),
+        ],
+      ],
     );
   }
 
