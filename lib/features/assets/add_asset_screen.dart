@@ -1112,17 +1112,23 @@ class _TypeTile extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           child: Stack(
+            alignment: Alignment.centerLeft,
             clipBehavior: Clip.none,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 11),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(AppRadii.tile),
-                  border: Border.all(
-                    color: isSelected ? tone : Colors.transparent,
-                    width: 2,
+              // Border layer — fills the entire tile so it traces the card edge.
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(AppRadii.tile),
+                    border: Border.all(
+                      color: isSelected ? tone : Colors.transparent,
+                      width: 2,
+                    ),
                   ),
                 ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 11),
                 child: Row(
                   children: [
                     Container(
@@ -1151,18 +1157,21 @@ class _TypeTile extends StatelessWidget {
               ),
               if (isSelected)
                 Positioned(
-                  top: -6,
-                  right: -6,
-                  child: Container(
-                    width: 21,
-                    height: 21,
-                    decoration: BoxDecoration(
-                      color: tone,
-                      shape: BoxShape.circle,
-                      boxShadow: AppShadows.glow(tone, opacity: 0.5),
+                  top: 0,
+                  bottom: 0,
+                  right: 6,
+                  child: Center(
+                    child: Container(
+                      width: 21,
+                      height: 21,
+                      decoration: BoxDecoration(
+                        color: tone,
+                        shape: BoxShape.circle,
+                        boxShadow: AppShadows.glow(tone, opacity: 0.5),
+                      ),
+                      child: const Icon(Icons.check_rounded,
+                          size: 13, color: Colors.white),
                     ),
-                    child: const Icon(Icons.check_rounded,
-                        size: 13, color: Colors.white),
                   ),
                 ),
             ],
