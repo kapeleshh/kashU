@@ -323,6 +323,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         subject: 'KashU Portfolio Backup',
       );
 
+      // Record the export so the dashboard backup nudge stays quiet.
+      await Hive.box(AppConstants.settingsBox).put(
+        AppConstants.keyLastExportAt,
+        DateTime.now().toIso8601String(),
+      );
+      ref.invalidate(isBackupOverdueProvider);
+
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text(AppStrings.exportSuccess)),
