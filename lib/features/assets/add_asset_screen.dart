@@ -972,14 +972,12 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       priceUpdatedAt: now,
     );
 
-    final assetRepo = ref.read(assetRepositoryProvider);
-    final txRepo = ref.read(transactionRepositoryProvider);
-
     if (isEditing) {
-      await assetRepo.updateAsset(asset);
+      await ref.read(assetRepositoryProvider).updateAsset(asset);
     } else {
-      await assetRepo.addAsset(asset);
-      await txRepo.logBuyTransaction(asset);
+      await ref
+          .read(portfolioWriteServiceProvider)
+          .addAssetWithBuyTransaction(asset);
     }
 
     ref.invalidate(allAssetsProvider);
@@ -1013,13 +1011,12 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
           TextButton(
             onPressed: () async {
               final assetId = widget.existingAsset!.id;
-              final assetRepo = ref.read(assetRepositoryProvider);
-              final txRepo = ref.read(transactionRepositoryProvider);
               final navigator = Navigator.of(context);
               final messenger = ScaffoldMessenger.of(context);
 
-              await assetRepo.deleteAsset(assetId);
-              await txRepo.deleteTransactionsForAsset(assetId);
+              await ref
+                  .read(portfolioWriteServiceProvider)
+                  .deleteAssetWithTransactions(assetId);
 
               ref.invalidate(allAssetsProvider);
               ref.invalidate(portfolioSummaryProvider);
