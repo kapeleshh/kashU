@@ -5,6 +5,7 @@ import '../../data/models/asset.dart';
 import '../../data/models/portfolio_summary.dart';
 import '../../data/repositories/asset_repository.dart';
 import '../../data/repositories/transaction_repository.dart';
+import '../../services/auth_service.dart';
 import '../../services/currency_converter_service.dart';
 import '../../services/gold_price_service.dart';
 import '../../services/price_update_service.dart';
@@ -18,6 +19,19 @@ final assetRepositoryProvider = Provider<AssetRepository>((ref) {
 final transactionRepositoryProvider = Provider<TransactionRepository>((ref) {
   return TransactionRepository();
 });
+
+/// Provider for AuthService (biometric / device-credential auth)
+final authServiceProvider = Provider<AuthService>((ref) {
+  return AuthService();
+});
+
+/// Whether the app is currently locked behind biometric/PIN authentication.
+///
+/// Seeded at startup (true when app lock is enabled) via a ProviderScope
+/// override in main.dart, set true again by the resume re-lock in KashUApp,
+/// and cleared by LockScreen on successful authentication. The lock renders
+/// as an overlay above the whole app — no navigation involved.
+final appLockedProvider = StateProvider<bool>((ref) => false);
 
 /// Provider for base currency (persisted in settings)
 final baseCurrencyProvider = StateProvider<String>((ref) {
