@@ -2,6 +2,7 @@ import '../data/models/asset.dart';
 import '../data/models/asset_type.dart';
 import '../data/repositories/asset_repository.dart';
 import 'coingecko_service.dart';
+import 'cryptocompare_service.dart';
 import 'currency_converter_service.dart';
 import 'gold_price_service.dart';
 import 'price_cache_service.dart';
@@ -60,6 +61,8 @@ class PriceUpdateService {
   final GoldPriceService _goldPriceService;
   final PriceCacheService _priceCache;
   final CoinGeckoService Function(String vsCurrency)? _coinGeckoFactory;
+  final CryptoCompareService Function(String vsCurrency)?
+      _cryptoFallbackFactory;
 
   PriceUpdateService({
     required AssetRepository assetRepository,
@@ -69,17 +72,42 @@ class PriceUpdateService {
     GoldPriceService? goldPriceService,
     PriceCacheService? priceCache,
     CoinGeckoService Function(String vsCurrency)? coinGeckoFactory,
+    CryptoCompareService Function(String vsCurrency)? cryptoFallbackFactory,
   })  : _assetRepository = assetRepository,
         _yahooService = yahooService ?? YahooFinanceService(),
         _stooqService = stooqService ?? StooqService(),
         _currencyConverter = currencyConverter ?? CurrencyConverterService(),
         _goldPriceService = goldPriceService ?? GoldPriceService(),
         _priceCache = priceCache ?? PriceCacheService(),
-        _coinGeckoFactory = coinGeckoFactory;
+        _coinGeckoFactory = coinGeckoFactory,
+        _cryptoFallbackFactory = cryptoFallbackFactory;
+
+  /// Equity-style sources tried in order (stocks, mutual funds, bonds).
+  late final List<PriceService> _equitySources = [
+    _yahooService,
+    _stooqService,
+  ];
 
   CoinGeckoService _makeCoinGecko(String vsCurrency) {
     if (_coinGeckoFactory != null) return _coinGeckoFactory(vsCurrency);
     return CoinGeckoService(vsCurrency: vsCurrency.toLowerCase());
+  }
+
+  CryptoCompareService _makeCryptoFallback(String vsCurrency) {
+    if (_cryptoFallbackFactory != null) {
+      return _cryptoFallbackFactory(vsCurrency);
+    }
+    return CryptoCompareService(vsCurrency: vsCurrency.toLowerCase());
+  }
+
+  /// Try each equity source in order until one returns a success.
+  Future<PriceResult> _fetchEquityPrice(String symbol) async {
+    PriceResult? last;
+    for (final source in _equitySources) {
+      last = await source.fetchPrice(symbol);
+      if (last.success) return last;
+    }
+    return last ?? PriceResult.failure(symbol, 'No price sources configured');
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -166,6 +194,28 @@ class PriceUpdateService {
 
     final cryptoService = _makeCoinGecko(baseCurrency);
     final results = await cryptoService.fetchMultiplePrices(symbols);
+
+    // Secondary provider: retry only the symbols CoinGecko failed, in one
+    // batched CryptoCompare call, before touching the cache.
+    final failedSymbols = <String>[
+      for (int i = 0; i < results.length; i++)
+        if (!results[i].success && i < symbols.length) symbols[i],
+    ];
+    if (failedSymbols.isNotEmpty) {
+      final fallbackService = _makeCryptoFallback(baseCurrency);
+      final fallbackResults =
+          await fallbackService.fetchMultiplePrices(failedSymbols);
+      final bySymbol = {
+        for (final r in fallbackResults)
+          if (r.success) r.symbol: r,
+      };
+      for (int i = 0; i < results.length; i++) {
+        if (!results[i].success && i < symbols.length) {
+          final recovered = bySymbol[symbols[i]];
+          if (recovered != null) results[i] = recovered;
+        }
+      }
+    }
 
     int updated = 0;
     int failed = 0;
@@ -283,13 +333,7 @@ class PriceUpdateService {
         continue;
       }
 
-      var result = await _yahooService.fetchPrice(symbol);
-
-      // Fallback to Stooq if Yahoo fails
-      if (!result.success) {
-        final stooqResult = await _stooqService.fetchPrice(symbol);
-        if (stooqResult.success) result = stooqResult;
-      }
+      final result = await _fetchEquityPrice(symbol);
 
       if (result.success) {
         double price = result.price;
@@ -340,7 +384,14 @@ class PriceUpdateService {
     final targetCurrency =
         asset.currency.isNotEmpty ? asset.currency : baseCurrency;
     final cryptoService = _makeCoinGecko(targetCurrency);
-    final result = await cryptoService.fetchPrice(symbol);
+    var result = await cryptoService.fetchPrice(symbol);
+
+    // Secondary provider before falling back to the cache
+    if (!result.success) {
+      final fallbackResult =
+          await _makeCryptoFallback(targetCurrency).fetchPrice(symbol);
+      if (fallbackResult.success) result = fallbackResult;
+    }
 
     if (result.success) {
       await _priceCache.cachePrice(result);
@@ -392,13 +443,7 @@ class PriceUpdateService {
 
   Future<PriceResult> _refreshSingleStockBond(
       Asset asset, String symbol, String baseCurrency) async {
-    var result = await _yahooService.fetchPrice(symbol);
-
-    // Fallback to Stooq if Yahoo fails
-    if (!result.success) {
-      final stooqResult = await _stooqService.fetchPrice(symbol);
-      if (stooqResult.success) result = stooqResult;
-    }
+    final result = await _fetchEquityPrice(symbol);
 
     if (result.success) {
       double price = result.price;

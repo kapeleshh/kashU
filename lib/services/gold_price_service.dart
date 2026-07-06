@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'currency_converter_service.dart';
 import 'price_service.dart';
+import 'stooq_service.dart';
 import 'yahoo_finance_service.dart';
 import '../data/models/asset_type.dart';
 
@@ -147,12 +148,15 @@ class GoldTaxConfig {
 /// is often unavailable or returns stale data.
 class GoldPriceService implements PriceService {
   final YahooFinanceService _yahooService;
+  final StooqService _stooqService;
   final CurrencyConverterService _currencyConverter;
 
   GoldPriceService({
     YahooFinanceService? yahooService,
+    StooqService? stooqService,
     CurrencyConverterService? currencyConverter,
   })  : _yahooService = yahooService ?? YahooFinanceService(),
+        _stooqService = stooqService ?? StooqService(),
         _currencyConverter = currencyConverter ?? CurrencyConverterService();
 
   @override
@@ -237,7 +241,13 @@ class GoldPriceService implements PriceService {
     final effectiveTax = taxConfig ??
         (targetCurrency == 'INR' ? GoldTaxConfig.india : GoldTaxConfig.none);
 
-    final comexResult = await _yahooService.fetchPrice(comexSymbol);
+    var comexResult = await _yahooService.fetchPrice(comexSymbol);
+    // Stooq quotes the same COMEX futures (GC=F → gc.f) in USD, so the
+    // oz→gram→forex→tax pipeline below works unchanged on the fallback.
+    if (!comexResult.success) {
+      final stooqResult = await _stooqService.fetchPrice(comexSymbol);
+      if (stooqResult.success) comexResult = stooqResult;
+    }
     if (!comexResult.success) return null;
 
     final usdPerTroyOz = comexResult.price;
