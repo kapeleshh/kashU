@@ -9,6 +9,11 @@ class PriceResult {
   final bool success;
   final String? error;
 
+  /// True when this result was served from the cache past its normal TTL
+  /// (offline fallback). [fetchedAt] then reflects when the price was
+  /// actually fetched, not when it was served.
+  final bool isStale;
+
   const PriceResult({
     required this.symbol,
     required this.price,
@@ -16,6 +21,7 @@ class PriceResult {
     required this.fetchedAt,
     required this.success,
     this.error,
+    this.isStale = false,
   });
 
   /// Create a failed result

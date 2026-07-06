@@ -84,6 +84,7 @@ void main() {
       success: false,
     ));
     registerFallbackValue(<String>[]);
+    registerFallbackValue(DateTime(2024));
   });
 
   late MockAssetRepository mockRepo;
@@ -176,16 +177,26 @@ void main() {
           .thenAnswer((_) async =>
               PriceResult.failure('RELIANCE.NS', 'timeout'));
       // Cache has a valid price
-      when(() => mockCache.getCachedResult('RELIANCE.NS'))
-          .thenReturn(_success('RELIANCE.NS', 2800.0));
-      when(() => mockRepo.updateAssetPrice('s1', 2800.0))
-          .thenAnswer((_) async {});
+      final cachedAt = DateTime.now().subtract(const Duration(hours: 2));
+      when(() => mockCache.getCachedResult('RELIANCE.NS')).thenReturn(
+          PriceResult(
+              symbol: 'RELIANCE.NS',
+              price: 2800.0,
+              currency: 'INR',
+              fetchedAt: cachedAt,
+              success: true,
+              isStale: true));
+      when(() => mockRepo.updateAssetPrice('s1', 2800.0,
+          asOf: any(named: 'asOf'))).thenAnswer((_) async {});
 
       final result = await service.refreshAllPrices();
 
       expect(result.updated, 1);
       expect(result.failed, 0);
-      verify(() => mockRepo.updateAssetPrice('s1', 2800.0)).called(1);
+      // The fallback must carry the cached fetch time, not "now" — stale
+      // data must not be stamped fresh.
+      verify(() => mockRepo.updateAssetPrice('s1', 2800.0, asOf: cachedAt))
+          .called(1);
     });
 
     test('skips non-trackable asset types (e.g. cash)', () async {
@@ -258,13 +269,14 @@ void main() {
               ]);
       when(() => mockCache.getCachedResult('bitcoin'))
           .thenReturn(_success('bitcoin', 5750000.0));
-      when(() => mockRepo.updateAssetPrice('cr1', 5750000.0))
-          .thenAnswer((_) async {});
+      when(() => mockRepo.updateAssetPrice('cr1', 5750000.0,
+          asOf: any(named: 'asOf'))).thenAnswer((_) async {});
 
       final result = await service.refreshAllPrices();
 
       expect(result.updated, 1);
-      verify(() => mockRepo.updateAssetPrice('cr1', 5750000.0)).called(1);
+      verify(() => mockRepo.updateAssetPrice('cr1', 5750000.0,
+          asOf: any(named: 'asOf'))).called(1);
     });
   });
 
@@ -311,13 +323,14 @@ void main() {
           .thenAnswer((_) async => null);
       when(() => mockCache.getCachedResult(PriceSymbols.goldComex))
           .thenReturn(_success(PriceSymbols.goldComex, 6500.0));
-      when(() => mockRepo.updateAssetPrice('g1', 6500.0))
-          .thenAnswer((_) async {});
+      when(() => mockRepo.updateAssetPrice('g1', 6500.0,
+          asOf: any(named: 'asOf'))).thenAnswer((_) async {});
 
       final result = await service.refreshAllPrices();
 
       expect(result.updated, 1);
-      verify(() => mockRepo.updateAssetPrice('g1', 6500.0)).called(1);
+      verify(() => mockRepo.updateAssetPrice('g1', 6500.0,
+          asOf: any(named: 'asOf'))).called(1);
     });
   });
 
@@ -376,8 +389,8 @@ void main() {
               PriceResult.failure('FAIL.NS', 'not found'));
       when(() => mockCache.getCachedResult('FAIL.NS'))
           .thenReturn(_success('FAIL.NS', 3900.0));
-      when(() => mockRepo.updateAssetPrice('s1', 3900.0))
-          .thenAnswer((_) async {});
+      when(() => mockRepo.updateAssetPrice('s1', 3900.0,
+          asOf: any(named: 'asOf'))).thenAnswer((_) async {});
 
       final result = await service.refreshSinglePrice(asset);
 
