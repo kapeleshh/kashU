@@ -17,6 +17,7 @@ class AppConstants {
   static const String keyOnboardingComplete = 'onboarding_complete';
   static const String keyAppLockEnabled = 'app_lock_enabled';
   static const String keySchemaVersion = 'schema_version';
+  static const String keyCrashReportingEnabled = 'crash_reporting_enabled';
 
   // Animation Durations
   static const Duration animationFast = Duration(milliseconds: 200);

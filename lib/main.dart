@@ -9,6 +9,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 
 import 'core/config/app_config.dart';
+import 'core/config/crash_reporting_consent.dart';
 import 'core/theme/app_theme.dart';
 import 'core/constants/app_strings.dart';
 import 'core/constants/app_constants.dart';
@@ -79,7 +80,14 @@ void _setupErrorHandlers() {
 // App entry point
 // ─────────────────────────────────────────────────────────────────────────────
 
-Future<void> _bootstrap() async {
+/// Phase 1 of startup: everything needed to read user settings — and nothing
+/// more. Runs before Sentry so the crash-reporting consent flag can be read
+/// from the (encrypted) settings box before any SDK is initialised.
+///
+/// Returns the cipher for [_bootstrap] to open the remaining boxes with, or
+/// null if the settings box could not be opened (the error screen is already
+/// shown in that case).
+Future<HiveAesCipher?> _preBootstrap() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Set up global error handlers before anything else
@@ -107,7 +115,20 @@ Future<void> _bootstrap() async {
   // touches disk unprotected (it lives in the platform keychain/keystore).
   final cipher = await _loadOrCreateCipher();
 
-  // Open Hive boxes with encryption.
+  try {
+    await Hive.openBox(AppConstants.settingsBox, encryptionCipher: cipher);
+  } catch (e, stack) {
+    debugPrint('[KashU] Failed to open settings box: $e\n$stack');
+    runApp(_DatabaseErrorApp(error: e.toString()));
+    return null;
+  }
+
+  return cipher;
+}
+
+/// Phase 2 of startup: open the data boxes, migrate, and run the app.
+Future<void> _bootstrap(HiveAesCipher cipher) async {
+  // Open the remaining Hive boxes with encryption.
   // If any box fails (corrupted file, storage full) show a recovery screen
   // instead of crashing with an unintelligible HiveError.
   try {
@@ -115,7 +136,6 @@ Future<void> _bootstrap() async {
         encryptionCipher: cipher);
     await Hive.openBox<Transaction>(AppConstants.transactionsBox,
         encryptionCipher: cipher);
-    await Hive.openBox(AppConstants.settingsBox, encryptionCipher: cipher);
     await Hive.openBox(AppConstants.priceCacheBox, encryptionCipher: cipher);
   } catch (e, stack) {
     debugPrint('[KashU] Failed to open Hive boxes: $e\n$stack');
@@ -146,19 +166,45 @@ Future<void> _bootstrap() async {
   );
 }
 
+bool _readCrashReportingConsent() {
+  final settings = Hive.box(AppConstants.settingsBox);
+  return crashReportingConsentGiven(
+      settings.get(AppConstants.keyCrashReportingEnabled));
+}
+
 void main() async {
-  if (AppConfig.isSentryEnabled) {
+  final cipher = await _preBootstrap();
+  if (cipher == null) return; // settings box unopenable — error screen shown
+
+  // Sentry runs only when a DSN was baked in at build time AND the user
+  // opted in via Settings. Consent is read from the encrypted settings box,
+  // which is why Sentry initialises after _preBootstrap.
+  if (AppConfig.isSentryEnabled && _readCrashReportingConsent()) {
     await SentryFlutter.init(
       (options) {
         options.dsn = AppConfig.sentryDsn;
         options.environment = AppConfig.environment;
         options.tracesSampleRate = 0.2; // 20% of transactions for performance
-        options.attachScreenshot = true;
+        // Privacy hardening: screenshots would leak portfolio balances, and
+        // http breadcrumbs carry request URLs whose query strings contain
+        // asset symbols — i.e. the user's holdings.
+        options.attachScreenshot = false;
+        options.sendDefaultPii = false;
+        options.beforeBreadcrumb = (breadcrumb, hint) {
+          if (breadcrumb?.type == 'http') return null;
+          return breadcrumb;
+        };
+        // Honour the toggle being switched off mid-session: consent is
+        // re-checked per event, so nothing is sent after the flip even
+        // though the SDK stays initialised until restart.
+        options.beforeSend = (event, hint) {
+          return _readCrashReportingConsent() ? event : null;
+        };
       },
-      appRunner: _bootstrap,
+      appRunner: () => _bootstrap(cipher),
     );
   } else {
-    await _bootstrap();
+    await _bootstrap(cipher);
   }
 }
 
