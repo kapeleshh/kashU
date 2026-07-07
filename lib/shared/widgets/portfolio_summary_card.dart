@@ -75,14 +75,13 @@ class PortfolioSummaryCard extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               _pill(
-                '${isProfit ? '+' : '-'}${CurrencyFormatter.formatPercentage(data.totalGainLossPercentage.abs(), showSign: false)} all-time',
+                '${isProfit ? '+' : '-'}${CurrencyFormatter.formatPercentage(data.totalGainLossPercentage.abs(), showSign: false)} '
+                '(${CurrencyFormatter.formatCompactINR(data.totalGainLoss.abs())}) all-time',
               ),
               if (!data.isEmpty) ...[
                 const SizedBox(height: 9),
                 Text(
-                  'Invested ${CurrencyFormatter.formatCompactINR(data.totalInvested)} · '
-                  '${isProfit ? 'up' : 'down'} ${CurrencyFormatter.formatCompactINR(data.totalGainLoss.abs())}'
-                  '${isProfit ? ' 🎉' : ''}',
+                  'Invested ${CurrencyFormatter.formatCompactINR(data.totalInvested)}',
                   style: AppTheme.body(
                     size: 11,
                     weight: FontWeight.w600,

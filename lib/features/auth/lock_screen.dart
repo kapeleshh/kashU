@@ -123,17 +123,6 @@ class _LockScreenState extends ConsumerState<LockScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 8),
-
-                Text(
-                  'Unlock to continue',
-                  style: AppTheme.body(
-                    size: 15,
-                    weight: FontWeight.w500,
-                    color: AppColors.textSecondaryOn(context),
-                  ),
-                ),
-
                 const SizedBox(height: 48),
 
                 if (_isAuthenticating)

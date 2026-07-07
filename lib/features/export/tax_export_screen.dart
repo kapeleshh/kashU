@@ -5,6 +5,7 @@ import '../../core/theme/app_decorations.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/export_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
+import '../../shared/widgets/soft_disclaimer.dart';
 
 class TaxExportScreen extends ConsumerStatefulWidget {
   const TaxExportScreen({super.key});
@@ -71,7 +72,7 @@ class _TaxExportScreenState extends ConsumerState<TaxExportScreen> {
                     _ExportTile(
                       icon: Icons.table_chart_outlined,
                       tone: AppColors.stockColor,
-                      title: 'Holdings CSV',
+                      title: 'Holdings',
                       subtitle:
                           'All current holdings with cost basis and P&L',
                       onTap: () => _export(_exportHoldings),
@@ -79,7 +80,7 @@ class _TaxExportScreenState extends ConsumerState<TaxExportScreen> {
                     _ExportTile(
                       icon: Icons.receipt_long_outlined,
                       tone: AppColors.bondColor,
-                      title: 'Transactions CSV',
+                      title: 'Transactions',
                       subtitle:
                           'Full transaction history — buy, sell, dividends',
                       onTap: () => _export(_exportTransactions),
@@ -94,22 +95,17 @@ class _TaxExportScreenState extends ConsumerState<TaxExportScreen> {
                     _ExportTile(
                       icon: Icons.picture_as_pdf_outlined,
                       tone: AppColors.cryptoColor,
-                      title: 'Capital Gains Report (PDF)',
+                      title: 'Capital gains report',
                       subtitle:
-                          'Holdings, capital gains summary (STCG/LTCG), and full transaction log. Share with your CA.',
-                      onTap: () => _export(_exportPdf),
-                    ),
-                    _ExportTile(
-                      icon: Icons.preview_outlined,
-                      tone: AppColors.fdColor,
-                      title: 'Preview PDF',
-                      subtitle: 'Preview the report before exporting',
+                          'STCG (< 1 year) and LTCG (≥ 1 year) with holdings and transaction log — opens a preview to share or print.',
                       onTap: () => _export(_previewPdf),
                     ),
                   ],
                 ),
                 const SizedBox(height: 28),
-                const _Disclaimer(),
+                const SoftDisclaimer(
+                  'Reports are based on your entered data, for information only — verify with a CA before filing.',
+                ),
               ],
             ),
     );
@@ -144,16 +140,6 @@ class _TaxExportScreenState extends ConsumerState<TaxExportScreen> {
     final transactions = txRepo.getAllTransactions();
     final assetNames = {for (final a in assets) a.id: a.name};
     await ExportService.exportTransactionsCsv(transactions, assetNames);
-  }
-
-  Future<void> _exportPdf() async {
-    final assets = ref.read(allAssetsProvider);
-    final txRepo = ref.read(transactionRepositoryProvider);
-    final transactions = txRepo.getAllTransactions();
-    final assetNames = {for (final a in assets) a.id: a.name};
-    final baseCurrency = ref.read(baseCurrencyProvider);
-    await ExportService.exportCapitalGainsPdf(
-        assets, transactions, assetNames, baseCurrency);
   }
 
   Future<void> _previewPdf() async {
@@ -210,9 +196,7 @@ class _InfoCard extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           Text(
-            'Generate CSV or PDF reports of your portfolio for tax filing. '
-            'The capital gains report calculates STCG (< 1 year) and '
-            'LTCG (≥ 1 year) based on your transaction history.',
+            'CSV and PDF reports of your portfolio, ready for tax filing.',
             style: AppTheme.body(
               size: 13,
               weight: FontWeight.w500,
@@ -334,41 +318,6 @@ class _ExportTile extends StatelessWidget {
         color: AppColors.textTertiaryOn(context),
       ),
       onTap: onTap,
-    );
-  }
-}
-
-class _Disclaimer extends StatelessWidget {
-  const _Disclaimer();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.warning.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(AppRadii.tile),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.warning_amber_rounded,
-              color: AppColors.warning, size: 18),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'Disclaimer: Reports are based on manually entered data and are '
-              'for informational purposes only. Verify figures with your broker '
-              'statements. Consult a qualified CA before filing taxes.',
-              style: AppTheme.body(
-                size: 11.5,
-                weight: FontWeight.w500,
-                color: AppColors.textSecondaryOn(context),
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

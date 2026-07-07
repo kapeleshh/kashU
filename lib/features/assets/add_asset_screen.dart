@@ -48,25 +48,25 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
   // Gold/Silver live price fetch state
   bool _isFetchingGoldPrice = false;
-  String? _goldFetchStatus;
+  _FetchStatus? _goldFetchStatus;
 
   // Stock search state
   Key _stockSearchKey = UniqueKey(); // reset widget when type changes
   bool _isFetchingStockPrice = false;
-  String? _stockFetchStatus;
+  _FetchStatus? _stockFetchStatus;
   StockSearchResult? _selectedStock;
 
   // Mutual fund search state
   final Key _mfSearchKey = UniqueKey();
   bool _isFetchingMfNav = false;
-  String? _mfFetchStatus;
-  // ignore: unused_field
+  _FetchStatus? _mfFetchStatus;
   MutualFundResult? _selectedMf;
 
   // Crypto search state
   final Key _cryptoSearchKey = UniqueKey();
   bool _isFetchingCryptoPrice = false;
-  String? _cryptoFetchStatus;
+  _FetchStatus? _cryptoFetchStatus;
+  CryptoSearchResult? _selectedCrypto;
 
   // FD/Bond calculator state (stored for potential future use e.g. maturity date in notes)
   // ignore: unused_field
@@ -87,6 +87,13 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
   /// Whether this type uses the crypto search
   bool get _usesCryptoSearch => _selectedType == AssetType.crypto;
+
+  /// Whether the symbol was confirmed via a search selection
+  /// (stock, mutual fund, or crypto) — shows the read-only symbol chip.
+  bool get _hasSearchSelection =>
+      (_usesStockSearch && _selectedStock != null) ||
+      (_usesMfSearch && _selectedMf != null) ||
+      (_usesCryptoSearch && _selectedCrypto != null);
 
   @override
   void initState() {
@@ -177,9 +184,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               const SizedBox(height: 12),
               Row(
                 children: [
-                  _metalChip('🟡 Gold', false, const Color(0xFFFFD700)),
+                  _metalChip('Gold', false, const Color(0xFFFFD700)),
                   const SizedBox(width: 8),
-                  _metalChip('⚪ Silver', true, const Color(0xFF9E9E9E)),
+                  _metalChip('Silver', true, const Color(0xFF9E9E9E)),
                 ],
               ),
             ],
@@ -194,24 +201,14 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               ),
               const SizedBox(height: 8),
               if (_isFetchingMfNav)
-                Text(
-                  '⏳ Fetching latest NAV...',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: AppColors.primary,
-                    fontStyle: FontStyle.italic,
-                  ),
+                const _FetchStatusLine(
+                  text: 'Fetching latest NAV...',
+                  state: _FetchState.pending,
                 )
               else if (_mfFetchStatus != null)
-                Text(
-                  _mfFetchStatus!,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: _mfFetchStatus!.startsWith('✅')
-                        ? AppColors.success
-                        : AppColors.error,
-                    fontStyle: FontStyle.italic,
-                  ),
+                _FetchStatusLine(
+                  text: _mfFetchStatus!.text,
+                  state: _mfFetchStatus!.state,
                 ),
               const SizedBox(height: 16),
             ],
@@ -224,24 +221,14 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               ),
               const SizedBox(height: 8),
               if (_isFetchingCryptoPrice)
-                Text(
-                  '⏳ Fetching live price...',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: AppColors.primary,
-                    fontStyle: FontStyle.italic,
-                  ),
+                const _FetchStatusLine(
+                  text: 'Fetching live price...',
+                  state: _FetchState.pending,
                 )
               else if (_cryptoFetchStatus != null)
-                Text(
-                  _cryptoFetchStatus!,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: _cryptoFetchStatus!.startsWith('✅')
-                        ? AppColors.success
-                        : AppColors.error,
-                    fontStyle: FontStyle.italic,
-                  ),
+                _FetchStatusLine(
+                  text: _cryptoFetchStatus!.text,
+                  state: _cryptoFetchStatus!.state,
                 ),
               const SizedBox(height: 16),
             ],
@@ -278,24 +265,14 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               ),
               const SizedBox(height: 8),
               if (_isFetchingStockPrice)
-                Text(
-                  '⏳ Fetching live price...',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: AppColors.primary,
-                    fontStyle: FontStyle.italic,
-                  ),
+                const _FetchStatusLine(
+                  text: 'Fetching live price...',
+                  state: _FetchState.pending,
                 )
               else if (_stockFetchStatus != null)
-                Text(
-                  _stockFetchStatus!,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: _stockFetchStatus!.startsWith('✅')
-                        ? AppColors.success
-                        : AppColors.error,
-                    fontStyle: FontStyle.italic,
-                  ),
+                _FetchStatusLine(
+                  text: _stockFetchStatus!.text,
+                  state: _stockFetchStatus!.state,
                 ),
               const SizedBox(height: 16),
             ],
@@ -323,12 +300,10 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
             const SizedBox(height: 16),
 
-            // Symbol field — hidden for deposits (no symbol needed) and stock search
-            if (!_usesStockSearch && !_usesFdBondCalculator || isEditing) ...[
-              _buildSymbolField(),
-              const SizedBox(height: 16),
-            ] else if (_selectedStock != null) ...[
-              // Show read-only symbol chip when stock is selected
+            // Symbol field — hidden for deposits (no symbol needed).
+            // A search selection (stock / mutual fund / crypto) shows a
+            // read-only symbol chip instead of the editable field.
+            if (!isEditing && _hasSearchSelection) ...[
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -357,26 +332,33 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                         color: Theme.of(context).colorScheme.onSurface,
                       ),
                     ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 9, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(AppRadii.avatar),
-                      ),
-                      child: Text(
-                        _selectedStock!.exchangeLabel,
-                        style: AppTheme.body(
-                          size: 11,
-                          weight: FontWeight.w800,
-                          color: AppColors.primary,
+                    if (_selectedStock != null) ...[
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 9, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.12),
+                          borderRadius:
+                              BorderRadius.circular(AppRadii.avatar),
+                        ),
+                        child: Text(
+                          _selectedStock!.exchangeLabel,
+                          style: AppTheme.body(
+                            size: 11,
+                            weight: FontWeight.w800,
+                            color: AppColors.primary,
+                          ),
                         ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
+              const SizedBox(height: 16),
+            ] else if (!_usesStockSearch && !_usesFdBondCalculator ||
+                isEditing) ...[
+              _buildSymbolField(),
               const SizedBox(height: 16),
             ],
 
@@ -571,7 +553,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                       child: Text(
                         isEditing
                             ? AppStrings.update
-                            : 'Add to portfolio ✨',
+                            : 'Add to portfolio',
                         style: AppTheme.heading(
                           size: 16,
                           color: Colors.white,
@@ -624,6 +606,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       _goldFetchStatus = null;
       _stockFetchStatus = null;
       _selectedStock = null;
+      _selectedMf = null;
+      _selectedCrypto = null;
       // Reset stock search widget
       _stockSearchKey = UniqueKey();
     });
@@ -660,21 +644,28 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
           _isFetchingStockPrice = false;
           _currentPriceController.text =
               priceResult.price.toStringAsFixed(2);
-          _stockFetchStatus =
-              '✅ Live price: ${priceResult.currency} ${priceResult.price.toStringAsFixed(2)}';
+          _stockFetchStatus = _FetchStatus(
+            'Live price: ${priceResult.currency} ${priceResult.price.toStringAsFixed(2)}',
+            _FetchState.success,
+          );
         });
       } else {
         setState(() {
           _isFetchingStockPrice = false;
-          _stockFetchStatus =
-              '⚠ Could not fetch price. Enter manually.';
+          _stockFetchStatus = const _FetchStatus(
+            'Could not fetch price — enter it manually.',
+            _FetchState.failure,
+          );
         });
       }
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _isFetchingStockPrice = false;
-        _stockFetchStatus = '⚠ Could not fetch price. Enter manually.';
+        _stockFetchStatus = const _FetchStatus(
+          'Could not fetch price — enter it manually.',
+          _FetchState.failure,
+        );
       });
     }
   }
@@ -702,20 +693,28 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
           _isFetchingMfNav = false;
           _currentPriceController.text =
               mf.nav!.toStringAsFixed(4);
-          _mfFetchStatus =
-              '✅ Latest NAV: ₹${mf.nav!.toStringAsFixed(4)} (${mf.navDate ?? ''})';
+          _mfFetchStatus = _FetchStatus(
+            'Latest NAV: ₹${mf.nav!.toStringAsFixed(4)} (${mf.navDate ?? ''})',
+            _FetchState.success,
+          );
         });
       } else {
         setState(() {
           _isFetchingMfNav = false;
-          _mfFetchStatus = '⚠ Could not fetch NAV. Enter manually.';
+          _mfFetchStatus = const _FetchStatus(
+            'Could not fetch NAV — enter it manually.',
+            _FetchState.failure,
+          );
         });
       }
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _isFetchingMfNav = false;
-        _mfFetchStatus = '⚠ Could not fetch NAV. Enter manually.';
+        _mfFetchStatus = const _FetchStatus(
+          'Could not fetch NAV — enter it manually.',
+          _FetchState.failure,
+        );
       });
     }
   }
@@ -724,6 +723,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   /// Auto-fills name, symbol (CoinGecko ID), and fetches live price in INR.
   Future<void> _onCryptoSelected(CryptoSearchResult result) async {
     setState(() {
+      _selectedCrypto = result;
       _nameController.text = result.name;
       _symbolController.text = result.id; // CoinGecko ID (e.g. "bitcoin")
       _cryptoFetchStatus = null;
@@ -742,20 +742,28 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
           _isFetchingCryptoPrice = false;
           _currentPriceController.text =
               priceResult.price.toStringAsFixed(2);
-          _cryptoFetchStatus =
-              '✅ Live price: ₹${priceResult.price.toStringAsFixed(2)} (${result.symbol})';
+          _cryptoFetchStatus = _FetchStatus(
+            'Live price: ₹${priceResult.price.toStringAsFixed(2)} (${result.symbol})',
+            _FetchState.success,
+          );
         });
       } else {
         setState(() {
           _isFetchingCryptoPrice = false;
-          _cryptoFetchStatus = '⚠ Could not fetch price. Enter manually.';
+          _cryptoFetchStatus = const _FetchStatus(
+            'Could not fetch price — enter it manually.',
+            _FetchState.failure,
+          );
         });
       }
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _isFetchingCryptoPrice = false;
-        _cryptoFetchStatus = '⚠ Could not fetch price. Enter manually.';
+        _cryptoFetchStatus = const _FetchStatus(
+          'Could not fetch price — enter it manually.',
+          _FetchState.failure,
+        );
       });
     }
   }
@@ -810,41 +818,31 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
         ),
         const SizedBox(height: 4),
         if (_isFetchingGoldPrice)
-          Text(
-            '⏳ Fetching live gold price...',
-            style: TextStyle(
-              fontSize: 11,
-              color: AppColors.primary,
-              fontStyle: FontStyle.italic,
-            ),
+          const _FetchStatusLine(
+            text: 'Fetching live gold price...',
+            state: _FetchState.pending,
           )
         else if (_goldFetchStatus != null)
-          Text(
-            _goldFetchStatus!,
-            style: TextStyle(
-              fontSize: 11,
-              color: _goldFetchStatus!.startsWith('✅')
-                  ? AppColors.success
-                  : AppColors.error,
-              fontStyle: FontStyle.italic,
-            ),
+          _FetchStatusLine(
+            text: _goldFetchStatus!.text,
+            state: _goldFetchStatus!.state,
           )
-        else if (supportsTracking)
+        else if (supportsTracking &&
+            _selectedType != AssetType.crypto &&
+            _selectedType != AssetType.mutualFund)
           Text(
-            _selectedType == AssetType.crypto
-                ? '💡 Use CoinGecko ID (e.g. bitcoin, ethereum)'
-                : _selectedType == AssetType.gold
-                    ? '💡 Live gold price will be fetched automatically'
-                    : '💡 Use Yahoo Finance symbol (e.g. RELIANCE.NS for NSE)',
+            _selectedType == AssetType.gold
+                ? 'Live gold price will be fetched automatically'
+                : 'Use Yahoo Finance symbol (e.g. RELIANCE.NS for NSE)',
             style: TextStyle(
               fontSize: 11,
               color: AppColors.textTertiaryOn(context),
               fontStyle: FontStyle.italic,
             ),
           )
-        else
+        else if (!supportsTracking)
           Text(
-            '⚠ Auto price tracking not available for ${_selectedType.displayName}',
+            'Auto price tracking not available for ${_selectedType.displayName}',
             style: TextStyle(
               fontSize: 11,
               color: AppColors.textTertiaryOn(context),
@@ -911,8 +909,10 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       if (breakdown == null) {
         setState(() {
           _isFetchingGoldPrice = false;
-          _goldFetchStatus =
-              '❌ Could not fetch price. Check internet connection.';
+          _goldFetchStatus = const _FetchStatus(
+            'Could not fetch price — check your internet connection.',
+            _FetchState.failure,
+          );
         });
         return;
       }
@@ -922,15 +922,20 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       setState(() {
         _isFetchingGoldPrice = false;
         _currentPriceController.text = price.toStringAsFixed(2);
-        _goldFetchStatus =
-            '✅ Live $metalName price: ₹${price.toStringAsFixed(2)}/gram';
+        _goldFetchStatus = _FetchStatus(
+          'Live $metalName price: ₹${price.toStringAsFixed(2)}/gram',
+          _FetchState.success,
+        );
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _isFetchingGoldPrice = false;
         // Never surface the raw exception to the user.
-        _goldFetchStatus = '⚠ Could not fetch price. Enter manually.';
+        _goldFetchStatus = const _FetchStatus(
+          'Could not fetch price — enter it manually.',
+          _FetchState.failure,
+        );
       });
     }
   }
@@ -1039,6 +1044,43 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// The lifecycle of a price/NAV fetch shown under a search field.
+enum _FetchState { pending, success, failure }
+
+/// A fetch outcome message plus its state (used to pick the text color).
+class _FetchStatus {
+  final String text;
+  final _FetchState state;
+
+  const _FetchStatus(this.text, this.state);
+}
+
+/// A single small status line shown under search/symbol fields while a
+/// price/NAV fetch is pending, succeeded, or failed.
+class _FetchStatusLine extends StatelessWidget {
+  final String text;
+  final _FetchState state;
+
+  const _FetchStatusLine({required this.text, required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final Color color;
+    switch (state) {
+      case _FetchState.pending:
+        color = AppColors.textSecondaryOn(context);
+      case _FetchState.success:
+        color = AppColors.gainOn(context);
+      case _FetchState.failure:
+        color = AppColors.error;
+    }
+    return Text(
+      text,
+      style: AppTheme.body(size: 11, color: color),
     );
   }
 }

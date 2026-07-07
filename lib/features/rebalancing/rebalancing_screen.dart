@@ -9,6 +9,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../data/models/asset_type.dart';
 import '../../shared/providers/portfolio_provider.dart';
+import '../../shared/widgets/soft_disclaimer.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Data model
@@ -171,8 +172,7 @@ class _RebalancingScreenState extends ConsumerState<RebalancingScreen> {
                 _Banner(
                   icon: Icons.error_outline_rounded,
                   color: AppColors.lossOn(context),
-                  text:
-                      'Total is ${totalTargetPct.toStringAsFixed(1)}% — adjust sliders to reach 100%.',
+                  text: 'Adjust sliders to reach 100%',
                 ),
               ],
 
@@ -188,7 +188,9 @@ class _RebalancingScreenState extends ConsumerState<RebalancingScreen> {
               ],
 
               const SizedBox(height: 24),
-              const _Disclaimer(),
+              const SoftDisclaimer(
+                'For planning only — consult a financial advisor before acting.',
+              ),
             ],
           ],
         ),
@@ -339,16 +341,6 @@ class _InfoCard extends StatelessWidget {
                   CurrencyFormatter.formatCurrency(totalValue, baseCurrency),
                   style: AppTheme.heading(size: 20, color: Colors.white),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  'Set your ideal allocation below. The calculator will show '
-                  'how much to buy or sell in each asset class.',
-                  style: AppTheme.body(
-                    size: 12,
-                    weight: FontWeight.w500,
-                    color: Colors.white.withValues(alpha: 0.85),
-                  ),
-                ),
               ],
             ),
           ),
@@ -474,14 +466,8 @@ class _ActionRow extends StatelessWidget {
             : AppColors.lossOn(context);
     final actionLabel = isBalanced
         ? 'Balanced'
-        : isBuy
-            ? 'Buy'
-            : 'Sell';
-    final actionIcon = isBalanced
-        ? Icons.check_circle_rounded
-        : isBuy
-            ? Icons.arrow_upward_rounded
-            : Icons.arrow_downward_rounded;
+        : '${isBuy ? 'Buy' : 'Sell'} '
+            '${CurrencyFormatter.formatCurrency(row.delta.abs(), baseCurrency)}';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 9),
@@ -518,10 +504,9 @@ class _ActionRow extends StatelessWidget {
                   ),
                   const SizedBox(height: 1),
                   Text(
-                    '${row.currentPct.toStringAsFixed(1)}% → ${row.targetPct.toStringAsFixed(0)}%  '
-                    '(${CurrencyFormatter.formatCurrency(row.currentValue, baseCurrency)} → '
-                    '${CurrencyFormatter.formatCurrency(row.targetValue, baseCurrency)})',
-                    maxLines: 2,
+                    '${CurrencyFormatter.formatCurrency(row.currentValue, baseCurrency)} → '
+                    '${CurrencyFormatter.formatCurrency(row.targetValue, baseCurrency)}',
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: AppTheme.body(
                       size: 11,
@@ -533,73 +518,12 @@ class _ActionRow extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Row(
-                  children: [
-                    Icon(actionIcon, size: 14, color: actionColor),
-                    const SizedBox(width: 4),
-                    Text(
-                      actionLabel,
-                      style: AppTheme.body(
-                        size: 12,
-                        weight: FontWeight.w700,
-                        color: actionColor,
-                      ),
-                    ),
-                  ],
-                ),
-                if (!isBalanced) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    CurrencyFormatter.formatCurrency(
-                        row.delta.abs(), baseCurrency),
-                    style: AppTheme.heading(size: 14, color: actionColor),
-                  ),
-                ],
-              ],
+            Text(
+              actionLabel,
+              style: AppTheme.heading(size: 14, color: actionColor),
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _Disclaimer extends StatelessWidget {
-  const _Disclaimer();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(13),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(AppRadii.tile),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            Icons.info_outline_rounded,
-            size: 16,
-            color: AppColors.textTertiaryOn(context),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              'This calculator is for planning purposes only. It does not account '
-              'for taxes, exit loads, lock-in periods, or brokerage charges. '
-              'Consult a qualified financial advisor before rebalancing.',
-              style: AppTheme.body(
-                size: 11.5,
-                weight: FontWeight.w500,
-                color: AppColors.textTertiaryOn(context),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

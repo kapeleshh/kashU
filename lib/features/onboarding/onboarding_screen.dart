@@ -220,7 +220,7 @@ class _WelcomePage extends StatelessWidget {
           ),
           const SizedBox(height: 22),
           Text(
-            'Track all your investments — stocks, mutual funds, gold, crypto and more — in one clean dashboard.',
+            'All your investments, one calm dashboard.',
             style: AppTheme.body(
               size: 15,
               weight: FontWeight.w500,
@@ -281,19 +281,19 @@ class _FeaturesPage extends StatelessWidget {
       Icons.show_chart,
       AppColors.stockColor,
       'Stocks & Mutual Funds',
-      'NSE, BSE, NASDAQ — live prices via Yahoo Finance',
+      'Live prices for NSE, BSE and NASDAQ',
     ),
     (
       Icons.diamond,
       AppColors.goldColor,
       'Gold & Silver',
-      'COMEX prices with Indian import duty + GST applied',
+      'Live gold and silver rates in INR',
     ),
     (
       Icons.currency_bitcoin,
       AppColors.cryptoColor,
       'Cryptocurrency',
-      '10,000+ coins via CoinGecko, no API key needed',
+      '10,000+ coins with live prices',
     ),
     (
       Icons.savings,
@@ -400,16 +400,6 @@ class _PrivacyPage extends StatelessWidget {
               weight: FontWeight.w700,
               color: Theme.of(context).colorScheme.onSurface,
             ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 14),
-          Text(
-            'KashU is 100% offline-first. Your portfolio data never leaves your phone.',
-            style: AppTheme.body(
-              size: 15,
-              weight: FontWeight.w500,
-              color: AppColors.textSecondaryOn(context),
-            ).copyWith(height: 1.6),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 30),
