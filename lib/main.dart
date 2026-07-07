@@ -357,7 +357,12 @@ class _KashUAppState extends ConsumerState<KashUApp>
       builder: (context, child) => Stack(
         children: [
           if (child != null) child,
-          if (locked) const LockScreen(),
+          // The lock gets its own ScaffoldMessenger: the app's root
+          // messenger presents snackbars on every Scaffold it manages, so
+          // without this a snackbar completing after a re-lock (e.g. a price
+          // refresh result naming failed symbols — the user's holdings)
+          // would paint on top of the lock screen.
+          if (locked) const ScaffoldMessenger(child: LockScreen()),
         ],
       ),
     );

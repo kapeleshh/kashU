@@ -1,6 +1,6 @@
 import 'dart:io';
-import 'dart:ui';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
@@ -11,6 +11,7 @@ import 'package:kashu/data/models/asset_type.dart';
 import 'package:kashu/data/models/transaction.dart';
 import 'package:kashu/data/models/transaction_type.dart';
 import 'package:kashu/features/auth/lock_screen.dart';
+import 'package:kashu/features/dashboard/dashboard_screen.dart';
 import 'package:kashu/main.dart';
 import 'package:kashu/services/auth_service.dart';
 import 'package:kashu/shared/providers/portfolio_provider.dart';
@@ -160,5 +161,40 @@ void main() {
       (tester) async {
     await pumpApp(tester, authResult: AuthResult.cancelled, startLocked: true);
     expect(find.byType(LockScreen), findsOneWidget);
+  });
+
+  testWidgets('app snackbars cannot paint above the lock overlay',
+      (tester) async {
+    await pumpApp(tester); // unlocked, dashboard mounted
+
+    await backgroundAndResume(tester);
+    await pumpFrames(tester);
+    expect(find.byType(LockScreen), findsOneWidget);
+
+    // Simulate an async flow (e.g. a price refresh) completing after the
+    // re-lock: the dashboard stays mounted beneath the overlay and reports
+    // its result through the root ScaffoldMessenger — exactly what
+    // dashboard_screen.dart does. The root messenger presents on every
+    // Scaffold it manages, so without the lock's own ScaffoldMessenger the
+    // snackbar (which can name failed symbols — the user's holdings) would
+    // attach to the lock screen's Scaffold and render above the lock.
+    final dashboardContext = tester.element(find.byType(DashboardScreen));
+    ScaffoldMessenger.of(dashboardContext).showSnackBar(
+      const SnackBar(
+        content: Text('2 updated, RELIANCE.NS failed'),
+        duration: Duration(milliseconds: 200),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(
+      find.descendant(
+          of: find.byType(LockScreen), matching: find.byType(SnackBar)),
+      findsNothing,
+    );
+
+    // Let the snackbar expire so no timers outlive the test.
+    await tester.pump(const Duration(seconds: 1));
+    await pumpFrames(tester);
   });
 }
