@@ -1,24 +1,26 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_strings.dart';
 import '../../core/theme/app_decorations.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/auth_service.dart';
-import '../dashboard/dashboard_screen.dart';
+import '../../shared/providers/portfolio_provider.dart';
 
-/// Full-screen lock screen shown at app startup when authentication is enabled.
+/// Full-screen lock shown while [appLockedProvider] is true — rendered as an
+/// overlay above the app (see KashUApp's MaterialApp.builder), so unlocking
+/// is a state change, not a navigation.
 ///
 /// Uses [AuthService] which delegates to the device's built-in auth
 /// (biometrics or device PIN) — no in-app PIN setup required.
-class LockScreen extends StatefulWidget {
+class LockScreen extends ConsumerStatefulWidget {
   const LockScreen({super.key});
 
   @override
-  State<LockScreen> createState() => _LockScreenState();
+  ConsumerState<LockScreen> createState() => _LockScreenState();
 }
 
-class _LockScreenState extends State<LockScreen> {
-  final _authService = AuthService();
+class _LockScreenState extends ConsumerState<LockScreen> {
   bool _isAuthenticating = false;
   bool _notEnrolled = false;
   String? _errorMessage;
@@ -26,8 +28,14 @@ class _LockScreenState extends State<LockScreen> {
   @override
   void initState() {
     super.initState();
-    // Trigger auth prompt automatically on first open
+    // Trigger the auth prompt automatically when the lock appears. This only
+    // runs on mount — the overlay stays mounted while locked, so a resume
+    // can never fire a second prompt on top of an active one.
     WidgetsBinding.instance.addPostFrameCallback((_) => _authenticate());
+  }
+
+  void _unlock() {
+    ref.read(appLockedProvider.notifier).state = false;
   }
 
   Future<void> _authenticate() async {
@@ -37,22 +45,18 @@ class _LockScreenState extends State<LockScreen> {
       _errorMessage = null;
     });
 
-    final result = await _authService.authenticate(
-      reason: 'Authenticate to open ${AppStrings.appName}',
-    );
+    final result = await ref.read(authServiceProvider).authenticate(
+          reason: 'Authenticate to open ${AppStrings.appName}',
+        );
 
     if (!mounted) return;
 
     switch (result) {
       case AuthResult.success:
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const DashboardScreen()),
-        );
+        _unlock();
       case AuthResult.notAvailable:
         // Device doesn't support auth — let them in anyway
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const DashboardScreen()),
-        );
+        _unlock();
       case AuthResult.notEnrolled:
         setState(() {
           _isAuthenticating = false;
@@ -162,10 +166,7 @@ class _LockScreenState extends State<LockScreen> {
                   if (_notEnrolled) ...[
                     const SizedBox(height: 16),
                     TextButton(
-                      onPressed: () => Navigator.of(context).pushReplacement(
-                        MaterialPageRoute(
-                            builder: (_) => const DashboardScreen()),
-                      ),
+                      onPressed: _unlock,
                       child: const Text('Continue without lock'),
                     ),
                   ],

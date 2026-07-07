@@ -22,6 +22,7 @@ import 'data/models/transaction.dart';
 import 'features/auth/lock_screen.dart';
 import 'features/dashboard/dashboard_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
+import 'shared/providers/portfolio_provider.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hive encryption setup
@@ -163,10 +164,12 @@ Future<void> _bootstrap(HiveAesCipher cipher) async {
 
   runApp(
     ProviderScope(
-      child: KashUApp(
-        showOnboarding: !onboardingComplete,
-        showLock: appLockEnabled,
-      ),
+      overrides: [
+        // Start locked when app lock is enabled. Never lock over onboarding.
+        appLockedProvider
+            .overrideWith((ref) => appLockEnabled && onboardingComplete),
+      ],
+      child: KashUApp(showOnboarding: !onboardingComplete),
     ),
   );
 }
@@ -268,27 +271,77 @@ class _DatabaseErrorApp extends StatelessWidget {
   }
 }
 
-class KashUApp extends StatelessWidget {
+class KashUApp extends ConsumerStatefulWidget {
   final bool showOnboarding;
-  final bool showLock;
+
+  /// How long the app may stay in the background before it re-locks.
+  /// Short pauses (notification shade, quick app switch) don't re-lock.
+  final Duration relockGracePeriod;
 
   const KashUApp({
     super.key,
     required this.showOnboarding,
-    required this.showLock,
+    this.relockGracePeriod = const Duration(seconds: 30),
   });
 
   @override
-  Widget build(BuildContext context) {
-    // Priority: onboarding > lock screen > dashboard
-    Widget home;
-    if (showOnboarding) {
-      home = const OnboardingScreen();
-    } else if (showLock) {
-      home = const LockScreen();
-    } else {
-      home = const DashboardScreen();
+  ConsumerState<KashUApp> createState() => _KashUAppState();
+}
+
+class _KashUAppState extends ConsumerState<KashUApp>
+    with WidgetsBindingObserver {
+  DateTime? _pausedAt;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Only paused/resumed matter. `inactive` and `hidden` are deliberately
+    // ignored — biometric sheets, permission dialogs, and the app switcher
+    // all fire `inactive`, and re-locking on those would cause biometric
+    // re-prompt storms.
+    if (state == AppLifecycleState.paused) {
+      _pausedAt = DateTime.now();
+    } else if (state == AppLifecycleState.resumed) {
+      _maybeRelock();
     }
+  }
+
+  void _maybeRelock() {
+    final pausedAt = _pausedAt;
+    _pausedAt = null;
+    if (pausedAt == null) return;
+
+    // Read the flags live so toggling app lock off works without a restart,
+    // and onboarding is never covered by the lock.
+    final settings = Hive.box(AppConstants.settingsBox);
+    final lockEnabled = settings.get(AppConstants.keyAppLockEnabled,
+        defaultValue: false) as bool;
+    final onboardingComplete = settings.get(AppConstants.keyOnboardingComplete,
+        defaultValue: false) as bool;
+    if (!lockEnabled || !onboardingComplete) return;
+
+    if (DateTime.now().difference(pausedAt) >= widget.relockGracePeriod) {
+      ref.read(appLockedProvider.notifier).state = true;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final locked = ref.watch(appLockedProvider);
+    final home = widget.showOnboarding
+        ? const OnboardingScreen()
+        : const DashboardScreen();
 
     return MaterialApp(
       title: AppStrings.appName,
@@ -298,6 +351,20 @@ class KashUApp extends StatelessWidget {
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system,
       home: home,
+      // The lock is an overlay above the whole app rather than a route:
+      // navigation state survives lock/unlock, and there is no way to
+      // navigate around the lock.
+      builder: (context, child) => Stack(
+        children: [
+          if (child != null) child,
+          // The lock gets its own ScaffoldMessenger: the app's root
+          // messenger presents snackbars on every Scaffold it manages, so
+          // without this a snackbar completing after a re-lock (e.g. a price
+          // refresh result naming failed symbols — the user's holdings)
+          // would paint on top of the lock screen.
+          if (locked) const ScaffoldMessenger(child: LockScreen()),
+        ],
+      ),
     );
   }
 }
