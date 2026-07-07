@@ -450,6 +450,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   await assetRepo.importFromJson(
                     rawAssets.cast<Map<String, dynamic>>(),
                   );
+                  // A restored asset id must invalidate any pending-delete
+                  // tombstone for it — the import expresses the opposite
+                  // intent, and a stale tombstone would silently delete the
+                  // freshly imported asset at the next launch.
+                  await ref.read(portfolioWriteServiceProvider)
+                      .removeTombstonesFor(rawAssets
+                          .cast<Map<String, dynamic>>()
+                          .map((a) => a['id'])
+                          .whereType<String>());
                 }
                 if (rawTx.isNotEmpty) {
                   await txRepo.importFromJson(
@@ -513,10 +522,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           TextButton(
             onPressed: () async {
-              final assetRepo = ref.read(assetRepositoryProvider);
-              final txRepo = ref.read(transactionRepositoryProvider);
-              await assetRepo.clearAll();
-              await txRepo.clearAll();
+              // One logical write: pending-clear marker + both boxes +
+              // tombstones, completed at startup if interrupted.
+              await ref.read(portfolioWriteServiceProvider).clearAllData();
 
               ref.invalidate(portfolioSummaryProvider);
               ref.invalidate(allAssetsProvider);

@@ -163,9 +163,32 @@ void main() {
       verify(() => assetRepo.deleteAsset('a1')).called(1);
       expect(pendingDeletes(), ['a1']);
     });
+
+    test(
+        'removes the tombstone and rethrows when the asset delete itself '
+        'fails — a visible failed delete, not a deferred surprise one',
+        () async {
+      final assetRepo = MockAssetRepository();
+      final txRepo = MockTransactionRepository();
+      final service = PortfolioWriteService(
+        assetRepository: assetRepo,
+        transactionRepository: txRepo,
+        settingsBox: settings,
+      );
+
+      when(() => assetRepo.deleteAsset('a1')).thenThrow(HiveError('locked'));
+
+      await expectLater(
+        () => service.deleteAssetWithTransactions('a1'),
+        throwsA(isA<HiveError>()),
+      );
+
+      verifyNever(() => txRepo.deleteTransactionsForAsset(any()));
+      expect(pendingDeletes(), isEmpty);
+    });
   });
 
-  group('completeInterruptedDeletes', () {
+  group('completeInterruptedWrites', () {
     late AssetRepository assetRepo;
     late TransactionRepository txRepo;
     late PortfolioWriteService service;
@@ -187,7 +210,7 @@ void main() {
       await txRepo.addTransaction(makeTransaction(id: 't1', assetId: 'gone'));
       await txRepo.addTransaction(makeTransaction(id: 't2', assetId: 'gone'));
 
-      final removed = await service.completeInterruptedDeletes();
+      final removed = await service.completeInterruptedWrites();
 
       expect(removed, 2);
       expect(txRepo.getAllTransactions(), isEmpty);
@@ -200,7 +223,7 @@ void main() {
       await assetRepo.addAsset(makeAsset(id: 'a1'));
       await txRepo.addTransaction(makeTransaction(id: 't1', assetId: 'a1'));
 
-      await service.completeInterruptedDeletes();
+      await service.completeInterruptedWrites();
 
       expect(assetRepo.getAssetById('a1'), isNull);
       expect(txRepo.getAllTransactions(), isEmpty);
@@ -217,7 +240,7 @@ void main() {
       await txRepo.addTransaction(
           makeTransaction(id: 'imported', assetId: 'not-in-backup'));
 
-      final removed = await service.completeInterruptedDeletes();
+      final removed = await service.completeInterruptedWrites();
 
       expect(removed, 0);
       expect(txRepo.getAllTransactions(), hasLength(2));
@@ -227,7 +250,7 @@ void main() {
       await assetRepo.addAsset(makeAsset(id: 'live'));
       await txRepo.addTransaction(makeTransaction(id: 't1', assetId: 'live'));
 
-      expect(await service.completeInterruptedDeletes(), 0);
+      expect(await service.completeInterruptedWrites(), 0);
       expect(txRepo.getAllTransactions(), hasLength(1));
     });
 
@@ -248,11 +271,88 @@ void main() {
       expect(txRepo.getAllTransactions(), hasLength(1)); // orphan left
 
       // Launch 2: startup completion finishes the job.
-      final removed = await service.completeInterruptedDeletes();
+      final removed = await service.completeInterruptedWrites();
 
       expect(removed, 1);
       expect(txRepo.getAllTransactions(), isEmpty);
       expect(pendingDeletes(), isEmpty);
+    });
+
+    test('handles a pending list that round-trips as List<dynamic>',
+        () async {
+      // After a real restart Hive returns List<dynamic>; non-string junk
+      // from a corrupted value must be ignored, not thrown on.
+      await settings.put(
+          AppConstants.keyPendingAssetDeletes, <dynamic>['gone', 42, null]);
+      await txRepo.addTransaction(makeTransaction(id: 't1', assetId: 'gone'));
+
+      final removed = await service.completeInterruptedWrites();
+
+      expect(removed, 1);
+      expect(txRepo.getAllTransactions(), isEmpty);
+      expect(pendingDeletes(), isEmpty);
+    });
+
+    test('an import that restores a tombstoned asset id wins over the '
+        'tombstone', () async {
+      // Interrupted delete left a tombstone for a1...
+      await settings.put(AppConstants.keyPendingAssetDeletes, ['a1']);
+      // ...then the user restored a backup containing a1 (the import flow
+      // calls removeTombstonesFor with the imported asset ids).
+      await assetRepo.addAsset(makeAsset(id: 'a1'));
+      await txRepo.addTransaction(makeTransaction(id: 't1', assetId: 'a1'));
+      await service.removeTombstonesFor(['a1', 'other']);
+
+      final removed = await service.completeInterruptedWrites();
+
+      expect(removed, 0);
+      expect(assetRepo.getAssetById('a1'), isNotNull);
+      expect(txRepo.getAllTransactions(), hasLength(1));
+      expect(pendingDeletes(), isEmpty);
+    });
+  });
+
+  group('clearAllData', () {
+    late AssetRepository assetRepo;
+    late TransactionRepository txRepo;
+    late PortfolioWriteService service;
+
+    setUp(() {
+      assetRepo = AssetRepository();
+      txRepo = TransactionRepository();
+      service = PortfolioWriteService(
+        assetRepository: assetRepo,
+        transactionRepository: txRepo,
+        settingsBox: settings,
+      );
+    });
+
+    test('clears both boxes, all tombstones, and the pending-clear flag',
+        () async {
+      await assetRepo.addAsset(makeAsset(id: 'a1'));
+      await txRepo.addTransaction(makeTransaction(id: 't1', assetId: 'a1'));
+      await settings.put(AppConstants.keyPendingAssetDeletes, ['stale']);
+
+      await service.clearAllData();
+
+      expect(assetRepo.getAllAssets(), isEmpty);
+      expect(txRepo.getAllTransactions(), isEmpty);
+      expect(pendingDeletes(), isEmpty);
+      expect(settings.get(AppConstants.keyPendingClearAll), isFalse);
+    });
+
+    test('an interrupted clear-all is finished at the next launch', () async {
+      // Crash happened after the flag was set but before the boxes were
+      // fully cleared: assets box already empty, transactions left behind.
+      await settings.put(AppConstants.keyPendingClearAll, true);
+      await txRepo.addTransaction(makeTransaction(id: 't1', assetId: 'a1'));
+      await txRepo.addTransaction(makeTransaction(id: 't2', assetId: 'a2'));
+
+      final removed = await service.completeInterruptedWrites();
+
+      expect(removed, 2);
+      expect(txRepo.getAllTransactions(), isEmpty);
+      expect(settings.get(AppConstants.keyPendingClearAll), isFalse);
     });
   });
 }

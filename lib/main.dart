@@ -162,13 +162,13 @@ Future<void> _bootstrap(HiveAesCipher cipher) async {
     return;
   }
 
-  // Finish asset deletes that were interrupted mid-write (tombstoned by
-  // PortfolioWriteService). Best-effort: it retries on the next launch, so
-  // a failure here must never block startup.
+  // Finish deletes / clear-alls that were interrupted mid-write (marked in
+  // the settings box by PortfolioWriteService). Best-effort: it retries on
+  // the next launch, so a failure here must never block startup.
   try {
-    await PortfolioWriteService().completeInterruptedDeletes();
+    await PortfolioWriteService().completeInterruptedWrites();
   } catch (e, stack) {
-    debugPrint('[KashU] Interrupted-delete cleanup failed: $e\n$stack');
+    debugPrint('[KashU] Interrupted-write cleanup failed: $e\n$stack');
     if (AppConfig.isSentryEnabled) {
       await Sentry.captureException(e, stackTrace: stack);
     }

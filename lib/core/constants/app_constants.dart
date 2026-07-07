@@ -24,6 +24,10 @@ class AppConstants {
   /// after both halves succeed, finished at startup if interrupted.
   static const String keyPendingAssetDeletes = 'pending_asset_deletes';
 
+  /// True while a Clear All Data is in flight (set before the first box is
+  /// cleared, removed after the last) — finished at startup if interrupted.
+  static const String keyPendingClearAll = 'pending_clear_all';
+
   /// Version of the backup/export JSON file format. Independent of the Hive
   /// on-disk schema version tracked by HiveMigrationService — bump this only
   /// when the structure of exported JSON changes.

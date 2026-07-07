@@ -10,10 +10,11 @@ import 'transaction_repository.dart';
 ///
 /// Hive has no cross-box transactions, so a crash between the two halves of
 /// a combined write can leave the boxes inconsistent. This service keeps them
-/// consistent with compensation (for adds) and delete tombstones that
-/// [completeInterruptedDeletes] finishes on the next launch (for deletes).
+/// consistent with compensation (for adds) and pending-write markers that
+/// [completeInterruptedWrites] finishes on the next launch (for deletes and
+/// Clear All Data).
 ///
-/// Only tombstoned deletes are ever cleaned up. Transactions whose asset is
+/// Only marked writes are ever cleaned up. Transactions whose asset is
 /// missing for any *other* reason — the pre-tombstone delete path kept them,
 /// and imported backups may legitimately contain them — are real user history
 /// (they feed the Activity screen and the tax exports) and are never touched.
@@ -73,12 +74,21 @@ class PortfolioWriteService {
   ///
   /// The asset id is tombstoned in the settings box before anything is
   /// deleted, and the tombstone is cleared only once both halves succeeded.
-  /// A crash or failure at any point in between is finished by
-  /// [completeInterruptedDeletes] on the next launch, so the user's delete
-  /// neither leaks half-deleted history nor silently reverts.
+  /// A failure in between is finished by [completeInterruptedWrites] on the
+  /// next launch, so the user's delete neither leaks half-deleted history
+  /// nor silently reverts.
+  ///
+  /// If the asset delete itself throws, nothing has been deleted yet — the
+  /// tombstone is removed again and the error rethrown, so the caller sees
+  /// a failed delete instead of the app completing it unannounced later.
   Future<void> deleteAssetWithTransactions(String assetId) async {
     await _addPendingDelete(assetId);
-    await _assetRepository.deleteAsset(assetId);
+    try {
+      await _assetRepository.deleteAsset(assetId);
+    } catch (_) {
+      await _removePendingDelete(assetId);
+      rethrow;
+    }
     try {
       await _transactionRepository.deleteTransactionsForAsset(assetId);
       await _removePendingDelete(assetId);
@@ -88,16 +98,57 @@ class PortfolioWriteService {
     }
   }
 
-  /// Finish asset deletes that were interrupted mid-write.
+  /// Drop any delete tombstones for [assetIds].
   ///
-  /// Runs once per launch (after migrations). Only asset ids tombstoned by
-  /// [deleteAssetWithTransactions] are processed: their remaining
-  /// transactions — and the asset itself, if the interruption happened
-  /// before it was removed — are deleted, then the tombstone is cleared.
-  /// Each tombstone is cleared as soon as its cleanup succeeds, so a crash
-  /// mid-loop never redoes finished work. Returns the number of
+  /// Call after a successful import: a backup that recreates a tombstoned
+  /// asset id expresses the opposite intent to the interrupted delete and
+  /// must win — otherwise the next launch would silently delete the freshly
+  /// restored asset and its history.
+  Future<void> removeTombstonesFor(Iterable<String> assetIds) async {
+    final ids = assetIds.toSet();
+    final pending = _pendingDeletes();
+    final remaining = pending.where((id) => !ids.contains(id)).toList();
+    if (remaining.length != pending.length) {
+      await _settings.put(AppConstants.keyPendingAssetDeletes, remaining);
+    }
+  }
+
+  /// Clear both boxes as one logical write (Settings → Clear All Data).
+  ///
+  /// Protected like single deletes: a pending-clear flag is set before the
+  /// first clear and removed after the last, so a crash in between is
+  /// finished by [completeInterruptedWrites] instead of leaving ghost
+  /// history that the tax export would keep including. Transactions are
+  /// cleared before assets so even an unmarked partial failure leaves an
+  /// empty history, not an orphaned one. All delete tombstones are dropped
+  /// too — after a full clear there is nothing left for them to clean up.
+  Future<void> clearAllData() async {
+    await _settings.put(AppConstants.keyPendingClearAll, true);
+    await _transactionRepository.clearAll();
+    await _assetRepository.clearAll();
+    await _settings.put(AppConstants.keyPendingAssetDeletes, <String>[]);
+    await _settings.put(AppConstants.keyPendingClearAll, false);
+  }
+
+  /// Finish combined writes that were interrupted mid-way.
+  ///
+  /// Runs once per launch (after migrations). An interrupted Clear All Data
+  /// is finished first — it supersedes individual tombstones. Then each
+  /// asset id tombstoned by [deleteAssetWithTransactions] is processed: its
+  /// remaining transactions — and the asset itself, if the interruption
+  /// happened before it was removed — are deleted, then the tombstone is
+  /// cleared. Tombstones are cleared one by one as their cleanup succeeds,
+  /// so a crash mid-loop never redoes finished work. Returns the number of
   /// transactions removed.
-  Future<int> completeInterruptedDeletes() async {
+  Future<int> completeInterruptedWrites() async {
+    if (_settings.get(AppConstants.keyPendingClearAll) == true) {
+      final removed = _transactionRepository.totalTransactions;
+      await clearAllData();
+      debugPrint('[KashU] Completed an interrupted Clear All Data '
+          '($removed transaction(s) removed)');
+      return removed;
+    }
+
     final pending = _pendingDeletes();
     if (pending.isEmpty) return 0;
 
