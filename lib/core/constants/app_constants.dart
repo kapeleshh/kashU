@@ -21,6 +21,15 @@ class AppConstants {
   static const String keyLastExportAt = 'last_export_at';
   static const String keyBackupNudgeDismissedAt = 'backup_nudge_dismissed_at';
 
+  /// Asset ids whose delete started but has not been confirmed complete —
+  /// written by PortfolioWriteService before it touches either box, cleared
+  /// after both halves succeed, finished at startup if interrupted.
+  static const String keyPendingAssetDeletes = 'pending_asset_deletes';
+
+  /// True while a Clear All Data is in flight (set before the first box is
+  /// cleared, removed after the last) — finished at startup if interrupted.
+  static const String keyPendingClearAll = 'pending_clear_all';
+
   /// Version of the backup/export JSON file format. Independent of the Hive
   /// on-disk schema version tracked by HiveMigrationService — bump this only
   /// when the structure of exported JSON changes.
