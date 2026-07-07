@@ -48,7 +48,10 @@ typedef _RefreshStats = ({int updated, int failed, List<String> errors});
 ///
 /// Cache strategy:
 ///   On success, prices are stored in [PriceCacheService].
-///   On failure, the last known cached price (≤ 30 min) is used as a fallback.
+///   On failure, the last known cached price is used as a fallback — served
+///   up to 7 days old (flagged stale past 30 min), then treated as missing.
+///   Fallback prices keep their original fetch time on the asset so stale
+///   data is never stamped as fresh.
 class PriceUpdateService {
   final AssetRepository _assetRepository;
   final YahooFinanceService _yahooService;
@@ -158,11 +161,8 @@ class PriceUpdateService {
   ) async {
     if (assets.isEmpty) return (updated: 0, failed: 0, errors: <String>[]);
 
-    final symbols = assets
-        .map(_getSymbol)
-        .where((s) => s != null)
-        .cast<String>()
-        .toList();
+    final symbols =
+        assets.map(_getSymbol).where((s) => s != null).cast<String>().toList();
 
     final cryptoService = _makeCoinGecko(baseCurrency);
     final results = await cryptoService.fetchMultiplePrices(symbols);
@@ -181,9 +181,11 @@ class PriceUpdateService {
         await _assetRepository.updateAssetPrice(asset.id, result.price);
         updated++;
       } else {
-        final cached = _priceCache.getCachedResult(_getSymbol(asset) ?? asset.name);
+        final cached =
+            _priceCache.getCachedResult(_getSymbol(asset) ?? asset.name);
         if (cached.success) {
-          await _assetRepository.updateAssetPrice(asset.id, cached.price);
+          await _assetRepository.updateAssetPrice(asset.id, cached.price,
+              asOf: cached.fetchedAt);
           updated++;
         } else {
           failed++;
@@ -202,9 +204,8 @@ class PriceUpdateService {
   ) async {
     if (assets.isEmpty) return (updated: 0, failed: 0, errors: <String>[]);
 
-    final primaryCurrency = assets.first.currency.isNotEmpty
-        ? assets.first.currency
-        : baseCurrency;
+    final primaryCurrency =
+        assets.first.currency.isNotEmpty ? assets.first.currency : baseCurrency;
 
     final breakdown = await _goldPriceService.fetchGoldPriceBreakdown(
       targetCurrency: primaryCurrency,
@@ -218,7 +219,8 @@ class PriceUpdateService {
       for (final asset in assets) {
         final cached = _priceCache.getCachedResult(PriceSymbols.goldComex);
         if (cached.success) {
-          await _assetRepository.updateAssetPrice(asset.id, cached.price);
+          await _assetRepository.updateAssetPrice(asset.id, cached.price,
+              asOf: cached.fetchedAt);
           updated++;
         } else {
           failed++;
@@ -313,7 +315,8 @@ class PriceUpdateService {
       } else {
         final cached = _priceCache.getCachedResult(symbol);
         if (cached.success) {
-          await _assetRepository.updateAssetPrice(asset.id, cached.price);
+          await _assetRepository.updateAssetPrice(asset.id, cached.price,
+              asOf: cached.fetchedAt);
           updated++;
         } else {
           failed++;
@@ -347,7 +350,8 @@ class PriceUpdateService {
 
     final cached = _priceCache.getCachedResult(symbol);
     if (cached.success) {
-      await _assetRepository.updateAssetPrice(asset.id, cached.price);
+      await _assetRepository.updateAssetPrice(asset.id, cached.price,
+          asOf: cached.fetchedAt);
     }
     return cached.success ? cached : result;
   }
@@ -364,7 +368,8 @@ class PriceUpdateService {
     if (breakdown == null) {
       final cached = _priceCache.getCachedResult(PriceSymbols.goldComex);
       if (cached.success) {
-        await _assetRepository.updateAssetPrice(asset.id, cached.price);
+        await _assetRepository.updateAssetPrice(asset.id, cached.price,
+            asOf: cached.fetchedAt);
         return cached;
       }
       return PriceResult.failure(
@@ -421,7 +426,8 @@ class PriceUpdateService {
 
     final cached = _priceCache.getCachedResult(symbol);
     if (cached.success) {
-      await _assetRepository.updateAssetPrice(asset.id, cached.price);
+      await _assetRepository.updateAssetPrice(asset.id, cached.price,
+          asOf: cached.fetchedAt);
       return cached;
     }
     return result;

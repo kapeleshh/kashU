@@ -54,15 +54,20 @@ class AssetRepository {
     await box.delete(id);
   }
 
-  /// Update asset price
-  Future<void> updateAssetPrice(String id, double newPrice) async {
+  /// Update asset price.
+  ///
+  /// [asOf] is when the price was actually fetched — pass it when applying
+  /// a cached fallback so `priceUpdatedAt` reflects the real price age
+  /// instead of stamping stale data as fresh. Defaults to now.
+  Future<void> updateAssetPrice(String id, double newPrice,
+      {DateTime? asOf}) async {
     final asset = getAssetById(id);
     if (asset != null) {
       // Create updated copy and put back into box (more reliable on web/IndexedDB)
       final updated = asset.copyWith(
         currentPrice: newPrice,
         updatedAt: DateTime.now(),
-        priceUpdatedAt: DateTime.now(),
+        priceUpdatedAt: asOf ?? DateTime.now(),
       );
       await box.put(id, updated);
     }
