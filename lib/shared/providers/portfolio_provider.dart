@@ -4,6 +4,7 @@ import '../../core/constants/app_constants.dart';
 import '../../data/models/asset.dart';
 import '../../data/models/portfolio_summary.dart';
 import '../../data/repositories/asset_repository.dart';
+import '../../data/repositories/portfolio_write_service.dart';
 import '../../data/repositories/transaction_repository.dart';
 import '../../services/currency_converter_service.dart';
 import '../../services/gold_price_service.dart';
@@ -17,6 +18,14 @@ final assetRepositoryProvider = Provider<AssetRepository>((ref) {
 /// Provider for TransactionRepository
 final transactionRepositoryProvider = Provider<TransactionRepository>((ref) {
   return TransactionRepository();
+});
+
+/// Provider for PortfolioWriteService — combined asset+transaction writes
+final portfolioWriteServiceProvider = Provider<PortfolioWriteService>((ref) {
+  return PortfolioWriteService(
+    assetRepository: ref.watch(assetRepositoryProvider),
+    transactionRepository: ref.watch(transactionRepositoryProvider),
+  );
 });
 
 /// Provider for base currency (persisted in settings)
