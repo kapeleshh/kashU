@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/config/crash_reporting_consent.dart';
 import '../../core/constants/app_strings.dart';
 import '../../core/theme/app_decorations.dart';
 import '../../core/theme/app_theme.dart';
@@ -25,12 +26,22 @@ class SettingsScreen extends ConsumerStatefulWidget {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _appLockEnabled = false;
+  bool _crashReportingEnabled = false;
 
   @override
   void initState() {
     super.initState();
-    _appLockEnabled = Hive.box(AppConstants.settingsBox)
-        .get(AppConstants.keyAppLockEnabled, defaultValue: false) as bool;
+    final settings = Hive.box(AppConstants.settingsBox);
+    _appLockEnabled = settings.get(AppConstants.keyAppLockEnabled,
+        defaultValue: false) as bool;
+    _crashReportingEnabled = crashReportingConsentGiven(
+        settings.get(AppConstants.keyCrashReportingEnabled));
+  }
+
+  Future<void> _toggleCrashReporting(bool value) async {
+    await Hive.box(AppConstants.settingsBox)
+        .put(AppConstants.keyCrashReportingEnabled, value);
+    if (mounted) setState(() => _crashReportingEnabled = value);
   }
 
   Future<void> _toggleAppLock(bool value) async {
@@ -115,6 +126,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               onChanged: _toggleAppLock,
+            ),
+            SwitchListTile(
+              secondary: _tileIcon(Icons.bug_report_outlined),
+              title: Text(
+                'Help improve KashU',
+                style: AppTheme.body(
+                  size: 15,
+                  weight: FontWeight.w700,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+              subtitle: Text(
+                'Send anonymous crash reports — off by default, '
+                'takes effect on restart',
+                style: AppTheme.body(
+                  size: 12.5,
+                  weight: FontWeight.w500,
+                  color: AppColors.textTertiaryOn(context),
+                ),
+              ),
+              value: _crashReportingEnabled,
+              activeThumbColor: AppColors.primary,
+              activeTrackColor: AppColors.primary.withValues(alpha: 0.4),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              onChanged: _toggleCrashReporting,
             ),
           ]),
 
