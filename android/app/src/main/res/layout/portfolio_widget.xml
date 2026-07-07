@@ -60,4 +60,14 @@
             android:textColor="#4CAF50" />
     </LinearLayout>
 
+    <!-- Last updated time, written by PortfolioWidgetProvider on each update -->
+    <TextView
+        android:id="@+id/widget_updated_at"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Updated —"
+        android:textSize="9sp"
+        android:textColor="#888888"
+        android:layout_marginTop="4dp" />
+
 </LinearLayout>

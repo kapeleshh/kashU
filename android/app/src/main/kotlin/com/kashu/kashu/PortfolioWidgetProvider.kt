@@ -65,7 +65,7 @@ class PortfolioWidgetProvider : AppWidgetProvider() {
 
             val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
 
-            val views = RemoteViews(context.packageName, R.layout.portfolio_widget_layout)
+            val views = RemoteViews(context.packageName, R.layout.portfolio_widget)
             views.setTextViewText(R.id.widget_portfolio_value, value)
             views.setTextViewText(R.id.widget_gain_loss, "$gainPrefix$gain")
             views.setTextColor(R.id.widget_gain_loss, gainColor)
