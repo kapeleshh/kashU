@@ -6,8 +6,8 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../data/models/portfolio_summary.dart';
 
-/// The "Total worth" hero — an indigo→lavender gradient card with the live
-/// portfolio value, today's move and the all-time return as soft pills.
+/// The "Total worth" hero — an indigo→lavender gradient card with the
+/// portfolio value and the all-time return as a soft pill.
 class PortfolioSummaryCard extends StatelessWidget {
   final PortfolioSummary? summary;
   final bool isLoading;
@@ -36,7 +36,6 @@ class PortfolioSummaryCard extends StatelessWidget {
 
     final data = summary ?? PortfolioSummary.empty();
     final isProfit = data.totalGainLoss >= 0;
-    final todayUp = data.todaysChange >= 0;
 
     return Container(
       padding: const EdgeInsets.all(18),
@@ -61,19 +60,13 @@ class PortfolioSummaryCard extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Text(
-                    AppStrings.totalPortfolioValue,
-                    style: AppTheme.body(
-                      size: 12,
-                      weight: FontWeight.w700,
-                      color: Colors.white.withValues(alpha: 0.85),
-                    ),
-                  ),
-                  const SizedBox(width: 7),
-                  const _LiveDot(),
-                ],
+              Text(
+                AppStrings.totalPortfolioValue,
+                style: AppTheme.body(
+                  size: 12,
+                  weight: FontWeight.w700,
+                  color: Colors.white.withValues(alpha: 0.85),
+                ),
               ),
               const SizedBox(height: 4),
               Text(
@@ -81,17 +74,8 @@ class PortfolioSummaryCard extends StatelessWidget {
                 style: AppTheme.heading(size: 33, color: Colors.white),
               ),
               const SizedBox(height: 12),
-              Wrap(
-                spacing: 7,
-                runSpacing: 7,
-                children: [
-                  _pill(
-                    '${todayUp ? '▲' : '▼'} ${CurrencyFormatter.formatINR(data.todaysChange.abs())} today',
-                  ),
-                  _pill(
-                    '${isProfit ? '+' : '-'}${CurrencyFormatter.formatPercentage(data.totalGainLossPercentage.abs(), showSign: false)} all-time',
-                  ),
-                ],
+              _pill(
+                '${isProfit ? '+' : '-'}${CurrencyFormatter.formatPercentage(data.totalGainLossPercentage.abs(), showSign: false)} all-time',
               ),
               if (!data.isEmpty) ...[
                 const SizedBox(height: 9),
@@ -222,46 +206,6 @@ class PortfolioSummaryCard extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// Small pulsing "live" indicator dot.
-class _LiveDot extends StatefulWidget {
-  const _LiveDot();
-
-  @override
-  State<_LiveDot> createState() => _LiveDotState();
-}
-
-class _LiveDotState extends State<_LiveDot>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1600),
-  )..repeat(reverse: true);
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: Tween(begin: 1.0, end: 0.35).animate(_c),
-      child: ScaleTransition(
-        scale: Tween(begin: 1.0, end: 0.65).animate(_c),
-        child: Container(
-          width: 7,
-          height: 7,
-          decoration: const BoxDecoration(
-            color: Color(0xFFD7FBE8),
-            shape: BoxShape.circle,
-          ),
-        ),
       ),
     );
   }

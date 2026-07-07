@@ -929,7 +929,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       if (!mounted) return;
       setState(() {
         _isFetchingGoldPrice = false;
-        _goldFetchStatus = '❌ Error: $e';
+        // Never surface the raw exception to the user.
+        _goldFetchStatus = '⚠ Could not fetch price. Enter manually.';
       });
     }
   }

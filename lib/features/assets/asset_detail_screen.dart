@@ -1,8 +1,7 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
 import '../../core/theme/app_decorations.dart';
 import '../../core/theme/app_theme.dart';
@@ -271,40 +270,54 @@ class _Header extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        // Live pill.
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: surface,
-            borderRadius: BorderRadius.circular(AppRadii.pill),
-            boxShadow: AppShadows.soft(opacity: 0.12, y: 6, blur: 14),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const _LiveDot(),
-              const SizedBox(width: 5),
-              Text(
-                'live',
-                style: AppTheme.body(
-                  size: 11,
-                  weight: FontWeight.w800,
-                  color: AppColors.gainOn(context),
-                ),
+        // Price freshness — the real fact from priceUpdatedAt (prices only
+        // change on manual refresh, so no "live" indicator).
+        if (_priceAge(asset) != null)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: surface,
+              borderRadius: BorderRadius.circular(AppRadii.pill),
+              boxShadow: AppShadows.soft(opacity: 0.12, y: 6, blur: 14),
+            ),
+            child: Text(
+              'Updated ${_priceAge(asset)}',
+              style: AppTheme.body(
+                size: 11,
+                weight: FontWeight.w700,
+                color: AppColors.textSecondaryOn(context),
               ),
-            ],
+            ),
           ),
-        ),
       ],
     );
   }
+}
+
+/// Relative age of the asset's last price update, or null when never fetched.
+/// Mirrors the wording used on the assets list tiles.
+String? _priceAge(Asset asset) {
+  if (asset.priceUpdatedAt == null) return null;
+  final diff = DateTime.now().difference(asset.priceUpdatedAt!);
+  if (diff.inMinutes < 1) return 'just now';
+  if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+  if (diff.inHours < 24) return '${diff.inHours}h ago';
+  if (diff.inDays < 7) return '${diff.inDays}d ago';
+  return '${(diff.inDays / 7).floor()}w ago';
+}
+
+/// Singular unit for the manual price label ('gram', 'coin', 'unit').
+String _priceUnit(AssetType type) {
+  final label = type.unitLabel; // 'units', 'grams', 'coins', or ''
+  if (label.isEmpty) return 'unit';
+  return label.endsWith('s') ? label.substring(0, label.length - 1) : label;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Value card
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _ValueCard extends StatefulWidget {
+class _ValueCard extends StatelessWidget {
   final Asset asset;
   final bool isProfit;
   final Color gainColor;
@@ -316,19 +329,7 @@ class _ValueCard extends StatefulWidget {
   });
 
   @override
-  State<_ValueCard> createState() => _ValueCardState();
-}
-
-class _ValueCardState extends State<_ValueCard> {
-  // Range selector is presentational — there is no historical price series on
-  // the Asset model, so the sparkline is a soft decorative trend.
-  static const _ranges = ['1M', '6M', '1Y', 'ALL'];
-  int _selectedRange = 0;
-
-  @override
   Widget build(BuildContext context) {
-    final asset = widget.asset;
-    final gainColor = widget.gainColor;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -366,7 +367,7 @@ class _ValueCardState extends State<_ValueCard> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 5),
                 child: Text(
-                  '${widget.isProfit ? '▲' : '▼'} ${CurrencyFormatter.formatPercentage(asset.gainLossPercentage.abs(), showSign: false)}',
+                  '${isProfit ? '▲' : '▼'} ${CurrencyFormatter.formatPercentage(asset.gainLossPercentage.abs(), showSign: false)}',
                   style: AppTheme.body(
                     size: 13,
                     weight: FontWeight.w800,
@@ -378,144 +379,18 @@ class _ValueCardState extends State<_ValueCard> {
           ),
           const SizedBox(height: 1),
           Text(
-            '${widget.isProfit ? '+' : '-'}${CurrencyFormatter.formatINR(asset.gainLoss.abs())} since you bought'
-            '${widget.isProfit ? ' ✨' : ''}',
+            '${isProfit ? '+' : '-'}${CurrencyFormatter.formatINR(asset.gainLoss.abs())} since you bought'
+            '${isProfit ? ' ✨' : ''}',
             style: AppTheme.body(
               size: 12,
               weight: FontWeight.w600,
               color: AppColors.textSecondaryOn(context),
             ),
           ),
-          const SizedBox(height: 11),
-          // Soft decorative sparkline tinted gain/loss-aware.
-          SizedBox(
-            height: 72,
-            width: double.infinity,
-            child: CustomPaint(
-              painter: _SparklinePainter(
-                color: gainColor,
-                up: widget.isProfit,
-                seed: asset.id.hashCode ^ _selectedRange,
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          // Range selector — active = gradient pill.
-          Row(
-            children: [
-              for (var i = 0; i < _ranges.length; i++) ...[
-                if (i > 0) const SizedBox(width: 6),
-                Expanded(child: _rangePill(i)),
-              ],
-            ],
-          ),
         ],
       ),
     );
   }
-
-  Widget _rangePill(int i) {
-    final selected = i == _selectedRange;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => setState(() => _selectedRange = i),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          gradient: selected ? AppColors.primaryGradient : null,
-          borderRadius: BorderRadius.circular(13),
-          boxShadow:
-              selected ? AppShadows.glow(AppColors.primary, opacity: 0.4) : null,
-        ),
-        child: Text(
-          _ranges[i],
-          style: AppTheme.body(
-            size: 11,
-            weight: FontWeight.w800,
-            color: selected
-                ? Colors.white
-                : AppColors.textSecondaryOn(context),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Soft area sparkline. Decorative: there is no per-asset price history to plot,
-/// so this renders a gentle deterministic trend (up for gains, down for losses).
-class _SparklinePainter extends CustomPainter {
-  final Color color;
-  final bool up;
-  final int seed;
-
-  _SparklinePainter({required this.color, required this.up, required this.seed});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rng = math.Random(seed);
-    const points = 13;
-    final ys = <double>[];
-    for (var i = 0; i < points; i++) {
-      final t = i / (points - 1);
-      // Base trend line plus small jitter.
-      final trend = up ? (1 - t) : t; // high y = lower on screen
-      final jitter = (rng.nextDouble() - 0.5) * 0.22;
-      final v = (trend * 0.7 + 0.15 + jitter).clamp(0.05, 0.95);
-      ys.add(v * size.height);
-    }
-
-    final path = Path();
-    final fill = Path();
-    for (var i = 0; i < points; i++) {
-      final x = size.width * (i / (points - 1));
-      final y = ys[i];
-      if (i == 0) {
-        path.moveTo(x, y);
-        fill.moveTo(x, size.height);
-        fill.lineTo(x, y);
-      } else {
-        path.lineTo(x, y);
-        fill.lineTo(x, y);
-      }
-    }
-    fill.lineTo(size.width, size.height);
-    fill.close();
-
-    final fillPaint = Paint()
-      ..shader = LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [
-          color.withValues(alpha: 0.28),
-          color.withValues(alpha: 0.0),
-        ],
-      ).createShader(Offset.zero & size);
-    canvas.drawPath(fill, fillPaint);
-
-    final linePaint = Paint()
-      ..color = color
-      ..strokeWidth = 3
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    canvas.drawPath(path, linePaint);
-
-    // End dot.
-    final dotPaint = Paint()..color = color;
-    canvas.drawCircle(
-      Offset(size.width, ys.last),
-      4.5,
-      dotPaint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _SparklinePainter old) =>
-      old.color != color || old.up != up || old.seed != seed;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -737,46 +612,6 @@ class _SoftButton extends StatelessWidget {
   }
 }
 
-/// Small pulsing "live" indicator dot.
-class _LiveDot extends StatefulWidget {
-  const _LiveDot();
-
-  @override
-  State<_LiveDot> createState() => _LiveDotState();
-}
-
-class _LiveDotState extends State<_LiveDot>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1600),
-  )..repeat(reverse: true);
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: Tween(begin: 1.0, end: 0.35).animate(_c),
-      child: ScaleTransition(
-        scale: Tween(begin: 1.0, end: 0.65).animate(_c),
-        child: Container(
-          width: 7,
-          height: 7,
-          decoration: BoxDecoration(
-            color: AppColors.gainOn(context),
-            shape: BoxShape.circle,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Update price (gold live fetch + manual) — restyled, behaviour preserved
 // ─────────────────────────────────────────────────────────────────────────────
@@ -850,9 +685,10 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
                   Expanded(
                     child: TextField(
                       controller: _priceController,
-                      decoration: const InputDecoration(
-                        labelText: 'Price per gram',
-                        prefixText: '₹ ',
+                      decoration: InputDecoration(
+                        labelText: 'Price per ${_priceUnit(widget.asset.type)}',
+                        prefixText:
+                            '${AppConstants.currencies[widget.asset.currency] ?? widget.asset.currency} ',
                       ),
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
