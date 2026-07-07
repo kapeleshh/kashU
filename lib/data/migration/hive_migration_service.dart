@@ -5,6 +5,11 @@ import '../../../core/constants/app_constants.dart';
 /// Current schema version. Increment this when adding new Hive fields or
 /// changing existing model structure. Each increment must have a corresponding
 /// migration step in [_migrations].
+///
+/// This is the *Hive on-disk* schema version. It is independent of the
+/// backup/export JSON format version (`AppConstants.backupFormatVersion`,
+/// enforced by ImportValidator) — the two just happen to be numbered
+/// similarly and evolve on their own schedules.
 const int _currentSchemaVersion = 1;
 
 /// A single migration step: transforms box data from one version to the next.
