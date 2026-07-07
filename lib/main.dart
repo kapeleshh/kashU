@@ -14,6 +14,7 @@ import 'core/theme/app_theme.dart';
 import 'core/constants/app_strings.dart';
 import 'core/constants/app_constants.dart';
 import 'data/migration/hive_migration_service.dart';
+import 'data/repositories/portfolio_write_service.dart';
 import 'data/models/asset_type.dart';
 import 'data/models/transaction_type.dart';
 import 'data/models/asset.dart';
@@ -149,6 +150,10 @@ Future<void> _bootstrap(HiveAesCipher cipher) async {
 
   // Run any pending schema migrations
   await HiveMigrationService.runMigrations();
+
+  // Clean up transactions orphaned by interrupted deletes. Runs every
+  // launch (unlike migrations, which run once per schema version).
+  await PortfolioWriteService().sweepOrphanedTransactions();
 
   // Read startup flags from settings (after boxes are open)
   final settings = Hive.box(AppConstants.settingsBox);

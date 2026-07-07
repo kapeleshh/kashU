@@ -4,6 +4,7 @@ import '../../core/constants/app_constants.dart';
 import '../../data/models/asset.dart';
 import '../../data/models/portfolio_summary.dart';
 import '../../data/repositories/asset_repository.dart';
+import '../../data/repositories/portfolio_write_service.dart';
 import '../../data/repositories/transaction_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/currency_converter_service.dart';
@@ -32,6 +33,14 @@ final authServiceProvider = Provider<AuthService>((ref) {
 /// and cleared by LockScreen on successful authentication. The lock renders
 /// as an overlay above the whole app — no navigation involved.
 final appLockedProvider = StateProvider<bool>((ref) => false);
+
+/// Provider for PortfolioWriteService — combined asset+transaction writes
+final portfolioWriteServiceProvider = Provider<PortfolioWriteService>((ref) {
+  return PortfolioWriteService(
+    assetRepository: ref.watch(assetRepositoryProvider),
+    transactionRepository: ref.watch(transactionRepositoryProvider),
+  );
+});
 
 /// Provider for base currency (persisted in settings)
 final baseCurrencyProvider = StateProvider<String>((ref) {

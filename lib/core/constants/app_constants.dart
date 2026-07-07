@@ -19,6 +19,11 @@ class AppConstants {
   static const String keySchemaVersion = 'schema_version';
   static const String keyCrashReportingEnabled = 'crash_reporting_enabled';
 
+  /// Version of the backup/export JSON file format. Independent of the Hive
+  /// on-disk schema version tracked by HiveMigrationService — bump this only
+  /// when the structure of exported JSON changes.
+  static const int backupFormatVersion = 2;
+
   // Animation Durations
   static const Duration animationFast = Duration(milliseconds: 200);
   static const Duration animationNormal = Duration(milliseconds: 300);

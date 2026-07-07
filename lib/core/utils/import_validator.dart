@@ -1,10 +1,16 @@
+import '../constants/app_constants.dart';
+
 /// Validates KashU backup JSON before it is written to the database.
 ///
 /// Returns null on success, or a human-readable error message on failure.
 /// Call this before passing data to [AssetRepository.importFromJson] or
 /// [TransactionRepository.importFromJson].
+///
+/// The version checked here is the backup *file format* version
+/// ([AppConstants.backupFormatVersion]) — not the Hive on-disk schema
+/// version managed by HiveMigrationService. The two evolve independently.
 class ImportValidator {
-  static const int _currentSchemaVersion = 2;
+  static const int _currentSchemaVersion = AppConstants.backupFormatVersion;
   static const List<int> _supportedVersions = [1, 2];
 
   /// Validate the top-level backup envelope.

@@ -3,10 +3,13 @@ import 'package:mocktail/mocktail.dart';
 import 'package:kashu/services/currency_converter_service.dart';
 import 'package:kashu/services/gold_price_service.dart';
 import 'package:kashu/services/price_service.dart';
+import 'package:kashu/services/stooq_service.dart';
 import 'package:kashu/services/yahoo_finance_service.dart';
 import 'package:kashu/data/models/asset_type.dart';
 
 class MockYahooFinanceService extends Mock implements YahooFinanceService {}
+
+class MockStooqService extends Mock implements StooqService {}
 
 class MockCurrencyConverterService extends Mock
     implements CurrencyConverterService {}
@@ -35,14 +38,23 @@ ExchangeRateResult _fxSuccess(Map<String, double> rates) {
 
 void main() {
   late MockYahooFinanceService mockYahoo;
+  late MockStooqService mockStooq;
   late MockCurrencyConverterService mockFx;
   late GoldPriceService service;
 
   setUp(() {
     mockYahoo = MockYahooFinanceService();
+    mockStooq = MockStooqService();
     mockFx = MockCurrencyConverterService();
+
+    // Default: Stooq fallback fails too (individual tests override)
+    when(() => mockStooq.fetchPrice(any())).thenAnswer(
+        (inv) async => PriceResult.failure(
+            inv.positionalArguments.first as String, 'stooq unavailable'));
+
     service = GoldPriceService(
       yahooService: mockYahoo,
+      stooqService: mockStooq,
       currencyConverter: mockFx,
     );
   });
@@ -117,7 +129,8 @@ void main() {
       expect(breakdown.finalPerGram, closeTo(breakdown.basePerGram, 0.01));
     });
 
-    test('returns null when Yahoo Finance fails', () async {
+    test('returns null when both Yahoo and the Stooq fallback fail',
+        () async {
       when(() => mockYahoo.fetchPrice(any()))
           .thenAnswer((_) async =>
               PriceResult.failure('GC=F', 'Yahoo unavailable'));
@@ -125,6 +138,31 @@ void main() {
       final breakdown = await service.fetchGoldPriceBreakdown();
 
       expect(breakdown, isNull);
+      verify(() => mockStooq.fetchPrice(PriceSymbols.goldComex)).called(1);
+    });
+
+    test('falls back to Stooq when Yahoo fails — same tax pipeline',
+        () async {
+      when(() => mockYahoo.fetchPrice(any()))
+          .thenAnswer((_) async =>
+              PriceResult.failure('GC=F', 'Yahoo unavailable'));
+      when(() => mockStooq.fetchPrice(PriceSymbols.goldComex))
+          .thenAnswer((_) async => _yahooSuccess('GC=F', usdPerTroyOz));
+      when(() => mockFx.fetchRates())
+          .thenAnswer((_) async => _fxSuccess({'INR': inrPerUsd}));
+
+      final breakdown = await service.fetchGoldPriceBreakdown(
+        targetCurrency: 'INR',
+      );
+
+      // The Stooq quote feeds the identical oz→gram→forex→tax math,
+      // including Indian duties for INR.
+      expect(breakdown, isNotNull);
+      expect(breakdown!.usdPerTroyOz, usdPerTroyOz);
+      final expectedBase = (usdPerTroyOz / 31.1035) * inrPerUsd;
+      expect(breakdown.basePerGram, closeTo(expectedBase, 0.01));
+      expect(breakdown.finalPerGram,
+          closeTo(expectedBase * (1 + 0.05 + 0.01) * (1 + 0.03), 0.01));
     });
 
     test('uses live forex rate when available', () async {

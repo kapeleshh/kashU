@@ -30,17 +30,26 @@ class CachedPriceEntry {
       };
 }
 
-/// Hive-backed persistent price cache with a 30-minute TTL.
+/// Hive-backed persistent price cache.
 ///
 /// Purpose:
 /// - Stores the last successfully fetched price for every symbol.
 /// - Used as a fallback when an API call fails (rate limit, offline, timeout).
 /// - Prevents redundant network calls within the TTL window on app restart.
 ///
+/// Freshness has two tiers: entries younger than [defaultTtl] (30 min) are
+/// fresh; older entries are still served as a fallback — flagged stale via
+/// [PriceResult.isStale] — up to [maxStaleAge] (7 days), after which they
+/// are treated as missing. Unbounded stale prices in a finance app are worse
+/// than an honest failure.
+///
 /// Each entry is stored as a JSON-encoded string keyed by symbol so it
 /// works cleanly with a plain (untyped) Hive box.
 class PriceCacheService {
   static const Duration defaultTtl = Duration(minutes: 30);
+
+  /// Hard cap on how old a cached price may be and still be served.
+  static const Duration maxStaleAge = Duration(days: 7);
 
   Box get _box => Hive.box(AppConstants.priceCacheBox);
 
@@ -76,11 +85,22 @@ class PriceCacheService {
   }
 
   /// Build a [PriceResult] from the cached entry for [symbol].
-  /// Returns a failure result if no entry exists.
-  PriceResult getCachedResult(String symbol) {
+  ///
+  /// Returns a failure result if no entry exists or the entry is older than
+  /// [maxAge]. Entries older than [defaultTtl] but within [maxAge] are
+  /// served with [PriceResult.isStale] set, and keep their original
+  /// [PriceResult.fetchedAt] so callers can surface the real price age.
+  PriceResult getCachedResult(String symbol, {Duration maxAge = maxStaleAge}) {
     final entry = getEntry(symbol);
     if (entry == null) {
       return PriceResult.failure(symbol, 'No cached price for $symbol');
+    }
+    final age = DateTime.now().difference(entry.fetchedAt);
+    if (age > maxAge) {
+      return PriceResult.failure(
+        symbol,
+        'Cached price for $symbol is older than ${maxAge.inDays} day(s)',
+      );
     }
     return PriceResult(
       symbol: symbol,
@@ -88,6 +108,7 @@ class PriceCacheService {
       currency: entry.currency,
       fetchedAt: entry.fetchedAt,
       success: true,
+      isStale: age > defaultTtl,
     );
   }
 

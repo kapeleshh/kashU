@@ -179,7 +179,9 @@ class AssetDetailScreen extends ConsumerWidget {
             onPressed: () async {
               final navigator = Navigator.of(context);
               Navigator.pop(dialogContext);
-              await ref.read(assetRepositoryProvider).deleteAsset(asset.id);
+              await ref
+                  .read(portfolioWriteServiceProvider)
+                  .deleteAssetWithTransactions(asset.id);
               ref.invalidate(allAssetsProvider);
               ref.invalidate(portfolioSummaryProvider);
               navigator.pop();
