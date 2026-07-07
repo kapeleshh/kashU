@@ -147,12 +147,32 @@ Future<void> _bootstrap(HiveAesCipher cipher) async {
     return;
   }
 
-  // Run any pending schema migrations
-  await HiveMigrationService.runMigrations();
+  // Run any pending schema migrations. The service retries failed steps by
+  // itself, but if the machinery throws (e.g. disk full while persisting
+  // progress) show the recovery screen — under the Sentry appRunner an
+  // uncaught throw here would otherwise leave a permanently blank app.
+  try {
+    await HiveMigrationService.runMigrations();
+  } catch (e, stack) {
+    debugPrint('[KashU] Migration run failed: $e\n$stack');
+    if (AppConfig.isSentryEnabled) {
+      await Sentry.captureException(e, stackTrace: stack);
+    }
+    runApp(_DatabaseErrorApp(error: e.toString()));
+    return;
+  }
 
-  // Clean up transactions orphaned by interrupted deletes. Runs every
-  // launch (unlike migrations, which run once per schema version).
-  await PortfolioWriteService().sweepOrphanedTransactions();
+  // Finish asset deletes that were interrupted mid-write (tombstoned by
+  // PortfolioWriteService). Best-effort: it retries on the next launch, so
+  // a failure here must never block startup.
+  try {
+    await PortfolioWriteService().completeInterruptedDeletes();
+  } catch (e, stack) {
+    debugPrint('[KashU] Interrupted-delete cleanup failed: $e\n$stack');
+    if (AppConfig.isSentryEnabled) {
+      await Sentry.captureException(e, stackTrace: stack);
+    }
+  }
 
   // Read startup flags from settings (after boxes are open)
   final settings = Hive.box(AppConstants.settingsBox);

@@ -70,17 +70,6 @@ class TransactionRepository {
     await box.deleteAll(keys);
   }
 
-  /// Delete every transaction whose asset id is NOT in [liveAssetIds].
-  /// Returns the number of transactions removed.
-  Future<int> deleteTransactionsNotIn(Set<String> liveAssetIds) async {
-    final keys = box.values
-        .where((t) => !liveAssetIds.contains(t.assetId))
-        .map((t) => t.id)
-        .toList();
-    await box.deleteAll(keys);
-    return keys.length;
-  }
-
   /// Get total transaction count
   int get totalTransactions => box.length;
 

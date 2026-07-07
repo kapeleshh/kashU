@@ -19,6 +19,11 @@ class AppConstants {
   static const String keySchemaVersion = 'schema_version';
   static const String keyCrashReportingEnabled = 'crash_reporting_enabled';
 
+  /// Asset ids whose delete started but has not been confirmed complete —
+  /// written by PortfolioWriteService before it touches either box, cleared
+  /// after both halves succeed, finished at startup if interrupted.
+  static const String keyPendingAssetDeletes = 'pending_asset_deletes';
+
   /// Version of the backup/export JSON file format. Independent of the Hive
   /// on-disk schema version tracked by HiveMigrationService — bump this only
   /// when the structure of exported JSON changes.
