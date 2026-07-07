@@ -170,6 +170,7 @@ class _DashboardContent extends ConsumerWidget {
     final isRefreshing = ref.watch(isRefreshingPricesProvider);
     final lastResult = ref.watch(lastRefreshResultProvider);
     final isPriceStale = ref.watch(isPriceStaleProvider);
+    final isBackupOverdue = ref.watch(isBackupOverdueProvider);
     final greeting = _greeting();
 
     return SafeArea(
@@ -236,6 +237,12 @@ class _DashboardContent extends ConsumerWidget {
                 color: AppColors.warning,
                 text: 'Prices may be out of date — pull to refresh',
               ),
+            ],
+
+            // Backup nudge — the data only exists on this device.
+            if (isBackupOverdue) ...[
+              const SizedBox(height: 10),
+              const _BackupNudgePill(),
             ],
 
             const SizedBox(height: 16),
@@ -336,6 +343,60 @@ class _RefreshButton extends StatelessWidget {
                 )
               : Icon(Icons.refresh_rounded,
                   size: 20, color: AppColors.textSecondaryOn(context)),
+        ),
+      ),
+    );
+  }
+}
+
+/// Dismissible nudge shown when the portfolio hasn't been backed up for a
+/// while (or ever). Tapping it opens Settings (where export lives);
+/// dismissing snoozes it for [backupNudgePeriod].
+class _BackupNudgePill extends ConsumerWidget {
+  const _BackupNudgePill();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final color = AppColors.warning;
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const SettingsScreen()),
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(AppRadii.small),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.backup_outlined, size: 14, color: color),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'Your data lives only on this device — back it up',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.body(
+                    size: 12, weight: FontWeight.w600, color: color),
+              ),
+            ),
+            IconButton(
+              icon: Icon(Icons.close_rounded, size: 16, color: color),
+              padding: EdgeInsets.zero,
+              constraints:
+                  const BoxConstraints(minWidth: 32, minHeight: 32),
+              tooltip: 'Dismiss for 30 days',
+              onPressed: () async {
+                await Hive.box(AppConstants.settingsBox).put(
+                  AppConstants.keyBackupNudgeDismissedAt,
+                  DateTime.now().toIso8601String(),
+                );
+                ref.invalidate(isBackupOverdueProvider);
+              },
+            ),
+          ],
         ),
       ),
     );

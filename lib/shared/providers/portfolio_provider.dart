@@ -139,3 +139,34 @@ final isPriceStaleProvider = Provider<bool>((ref) {
   if (savedAt == null) return false;
   return DateTime.now().difference(savedAt) > stalePriceThreshold;
 });
+
+/// How long without a backup before the dashboard nudges the user — also the
+/// snooze window after the nudge is dismissed.
+const Duration backupNudgePeriod = Duration(days: 30);
+
+/// True when the user has assets but hasn't exported a backup within
+/// [backupNudgePeriod] (or ever), and hasn't dismissed the nudge within the
+/// same window.
+///
+/// Reads timestamps from the settings box — invalidate this provider after
+/// writing an export or a dismissal so the banner updates immediately.
+final isBackupOverdueProvider = Provider<bool>((ref) {
+  final assets = ref.watch(allAssetsProvider);
+  if (assets.isEmpty) return false; // nothing to lose yet — don't nag
+
+  final settings = Hive.box(AppConstants.settingsBox);
+  DateTime? readTime(String key) {
+    final raw = settings.get(key) as String?;
+    return raw == null ? null : DateTime.tryParse(raw);
+  }
+
+  final dismissedAt = readTime(AppConstants.keyBackupNudgeDismissedAt);
+  if (dismissedAt != null &&
+      DateTime.now().difference(dismissedAt) < backupNudgePeriod) {
+    return false; // snoozed
+  }
+
+  final lastExportAt = readTime(AppConstants.keyLastExportAt);
+  return lastExportAt == null ||
+      DateTime.now().difference(lastExportAt) > backupNudgePeriod;
+});
