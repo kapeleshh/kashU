@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required for price/forex fetching. The debug/profile manifests carry
+         their own copy; without this one, release builds ship with no network
+         access at all. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="kashu"
         android:name="${applicationName}"
