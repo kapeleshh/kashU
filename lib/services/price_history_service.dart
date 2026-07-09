@@ -74,6 +74,12 @@ class PriceHistoryService {
 
   Box get _box => _boxOverride ?? Hive.box(AppConstants.priceHistoryBox);
 
+  /// Whether the backing box is available. Guards reads so a screen or test
+  /// that renders without the box open degrades to "no history" instead of
+  /// throwing.
+  bool get _isOpen =>
+      _boxOverride != null || Hive.isBoxOpen(AppConstants.priceHistoryBox);
+
   /// Record (or overwrite) today's snapshot, then prune old entries.
   ///
   /// [total] is in the base currency; [assetValues] are per-asset native
@@ -83,6 +89,7 @@ class PriceHistoryService {
     required Map<String, double> assetValues,
     DateTime? now,
   }) async {
+    if (!_isOpen) return;
     final today = now ?? DateTime.now();
     final snap = DailySnapshot(
       date: DateTime(today.year, today.month, today.day),
@@ -95,6 +102,7 @@ class PriceHistoryService {
 
   /// All snapshots, oldest → newest.
   List<DailySnapshot> _all() {
+    if (!_isOpen) return const [];
     final out = <DailySnapshot>[];
     for (final v in _box.values) {
       if (v is! String) continue;
@@ -110,9 +118,9 @@ class PriceHistoryService {
     return out;
   }
 
-  /// Total from the most recent snapshot dated BEFORE today, or null if none.
+  /// The most recent snapshot dated BEFORE today, or null if none.
   /// This is the baseline for "today's change".
-  double? previousDayTotal({DateTime? now}) {
+  DailySnapshot? previousDaySnapshot({DateTime? now}) {
     final today = now ?? DateTime.now();
     final startOfToday = DateTime(today.year, today.month, today.day);
     DailySnapshot? latestPrior;
@@ -121,8 +129,14 @@ class PriceHistoryService {
         latestPrior = s; // _all() is sorted ascending, so last wins
       }
     }
-    return latestPrior?.total;
+    return latestPrior;
   }
+
+  /// Total from [previousDaySnapshot], or null. (Kept for callers/tests that
+  /// only need the portfolio total; today's-change now uses the per-asset
+  /// values on the snapshot to isolate price movement from holdings changes.)
+  double? previousDayTotal({DateTime? now}) =>
+      previousDaySnapshot(now: now)?.total;
 
   /// Ordered value series for [assetId] across retained snapshots (oldest →
   /// newest). Days where the asset had no recorded value are skipped.
@@ -136,7 +150,7 @@ class PriceHistoryService {
   }
 
   /// Number of stored snapshots (for tests / diagnostics).
-  int get snapshotCount => _box.length;
+  int get snapshotCount => _isOpen ? _box.length : 0;
 
   Future<void> _prune(DateTime now) async {
     final cutoff = now.subtract(retention);

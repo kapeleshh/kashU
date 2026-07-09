@@ -434,7 +434,8 @@ class _ValueCard extends StatelessWidget {
               color: AppColors.textSecondaryOn(context),
             ),
           ),
-          // Real value history (only once ≥2 daily snapshots exist).
+          // Real value history (only once ≥2 daily snapshots exist). Colour
+          // reflects the plotted series' own direction, not all-time gain.
           if (priceSeries.length >= 2) ...[
             const SizedBox(height: 14),
             SizedBox(
@@ -443,13 +444,15 @@ class _ValueCard extends StatelessWidget {
               child: CustomPaint(
                 painter: _SparklinePainter(
                   values: priceSeries,
-                  color: gainColor,
+                  color: priceSeries.last >= priceSeries.first
+                      ? AppColors.gainOn(context)
+                      : AppColors.lossOn(context),
                 ),
               ),
             ),
             const SizedBox(height: 4),
             Text(
-              'Last ${priceSeries.length} days',
+              'Recent trend',
               style: AppTheme.body(
                 size: 10.5,
                 weight: FontWeight.w600,

@@ -107,4 +107,32 @@ void main() {
     expect(service.assetSeries('a'), [100]);
     expect(service.previousDayTotal(now: day(2026, 1, 11)), 100);
   });
+
+  group('previousDaySnapshot', () {
+    test('returns the prior snapshot with its per-asset values', () async {
+      await service.recordDailySnapshot(
+          total: 100, assetValues: {'a': 40, 'b': 60}, now: day(2026, 1, 9));
+      final prior = service.previousDaySnapshot(now: day(2026, 1, 10));
+      expect(prior, isNotNull);
+      expect(prior!.total, 100);
+      expect(prior.assetValues['a'], 40);
+      expect(prior.assetValues['b'], 60);
+    });
+  });
+
+  group('closed-box guard', () {
+    test('reads degrade to empty instead of throwing when box is not open',
+        () async {
+      // Real (non-override) service with the history box NOT open.
+      await Hive.box(AppConstants.priceHistoryBox).close();
+      final unopened = PriceHistoryService();
+      expect(unopened.snapshotCount, 0);
+      expect(unopened.previousDaySnapshot(), isNull);
+      expect(unopened.assetSeries('a'), isEmpty);
+      // Recording is a no-op rather than a crash.
+      await expectLater(
+          unopened.recordDailySnapshot(total: 1, assetValues: {'a': 1}),
+          completes);
+    });
+  });
 }

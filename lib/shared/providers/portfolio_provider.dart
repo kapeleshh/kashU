@@ -101,13 +101,32 @@ final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
   final totalGainLossPercentage =
       totalInvested > 0 ? (totalGainLoss / totalInvested) * 100 : 0.0;
 
-  // Today's change: current base-currency total vs the most recent snapshot
-  // from a prior day. Shown only once such a baseline exists.
-  final priorDayTotal = ref.watch(priceHistoryServiceProvider).previousDayTotal();
-  final hasTodaysChange = priorDayTotal != null;
-  final todaysChange = hasTodaysChange ? totalValue - priorDayTotal : 0.0;
-  final todaysChangePercentage = (hasTodaysChange && priorDayTotal > 0)
-      ? (todaysChange / priorDayTotal) * 100
+  // Today's change: sum of PER-ASSET value deltas (now vs the most recent
+  // prior-day snapshot), for assets present in both, converted to base with
+  // current rates. Per-asset (not total-vs-total) so buying/selling an asset
+  // doesn't masquerade as a price move, and so a base-currency switch can't
+  // corrupt the comparison. Shown only once such a baseline exists.
+  final priorSnapshot =
+      ref.watch(priceHistoryServiceProvider).previousDaySnapshot();
+  double todaysChange = 0;
+  double priorBaseline = 0;
+  var hasTodaysChange = false;
+  if (priorSnapshot != null) {
+    for (final a in assets) {
+      final priorNative = priorSnapshot.assetValues[a.id];
+      if (priorNative == null) continue; // no baseline (asset is new)
+      hasTodaysChange = true;
+      final priorBase = rates == null
+          ? priorNative
+          : rates.convertBetween(priorNative, currencyOf(a), base);
+      final nowBase = toBase(a.currentValue, a);
+      todaysChange += nowBase - priorBase;
+      priorBaseline += priorBase;
+    }
+  }
+  if (!hasTodaysChange) todaysChange = 0;
+  final todaysChangePercentage = (hasTodaysChange && priorBaseline > 0)
+      ? (todaysChange / priorBaseline) * 100
       : 0.0;
 
   return PortfolioSummary(
