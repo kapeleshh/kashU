@@ -54,19 +54,18 @@ Future<void> _doRefreshPrices(WidgetRef ref, BuildContext context) async {
       // Widget update is best-effort; never crash the main refresh flow
     }
 
-    if (context.mounted) {
+    // On success the status pill below the header is the only feedback;
+    // a snack bar is shown only when some assets failed to refresh.
+    if (context.mounted && result.hasErrors) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(result.summary),
-          backgroundColor:
-              result.hasErrors ? AppColors.error : AppColors.success,
-          action: result.hasErrors
-              ? SnackBarAction(
-                  label: 'Details',
-                  textColor: Colors.white,
-                  onPressed: () => _showErrorDetails(context, result.errors),
-                )
-              : null,
+          backgroundColor: AppColors.error,
+          action: SnackBarAction(
+            label: 'Details',
+            textColor: Colors.white,
+            onPressed: () => _showErrorDetails(context, result.errors),
+          ),
         ),
       );
     }
@@ -127,12 +126,16 @@ class DashboardScreen extends ConsumerStatefulWidget {
 class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   int _currentIndex = 0;
 
+  static const _settingsTabIndex = 3;
+
   final List<Widget> _screens = const [
     _DashboardContent(),
     AssetsScreen(),
     TransactionsScreen(),
     SettingsScreen(),
   ];
+
+  void _switchToTab(int index) => setState(() => _currentIndex = index);
 
   Future<void> _openAddAsset() async {
     await Navigator.of(context).push(
@@ -186,23 +189,9 @@ class _DashboardContent extends ConsumerWidget {
             Row(
               children: [
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${greeting.text} ${greeting.emoji}',
-                        style: AppTheme.body(
-                          size: 12.5,
-                          weight: FontWeight.w700,
-                          color: AppColors.textSecondaryOn(context),
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Welcome back',
-                        style: Theme.of(context).textTheme.headlineSmall,
-                      ),
-                    ],
+                  child: Text(
+                    '${greeting.text} ${greeting.emoji}',
+                    style: Theme.of(context).textTheme.headlineSmall,
                   ),
                 ),
                 _RefreshButton(
@@ -350,8 +339,8 @@ class _RefreshButton extends StatelessWidget {
 }
 
 /// Dismissible nudge shown when the portfolio hasn't been backed up for a
-/// while (or ever). Tapping it opens Settings (where export lives);
-/// dismissing snoozes it for [backupNudgePeriod].
+/// while (or ever). Tapping it switches to the Settings tab (where export
+/// lives); dismissing snoozes it for [backupNudgePeriod].
 class _BackupNudgePill extends ConsumerWidget {
   const _BackupNudgePill();
 
@@ -359,10 +348,9 @@ class _BackupNudgePill extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final color = AppColors.warning;
     return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const SettingsScreen()),
-      ),
+      onTap: () => context
+          .findAncestorStateOfType<_DashboardScreenState>()
+          ?._switchToTab(_DashboardScreenState._settingsTabIndex),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         decoration: BoxDecoration(
@@ -471,7 +459,7 @@ class _SoftBottomNav extends StatelessWidget {
     (icon: Icons.home_rounded, label: 'Home'),
     (icon: Icons.account_balance_wallet_rounded, label: 'Assets'),
     (icon: Icons.swap_horiz_rounded, label: 'Activity'),
-    (icon: Icons.person_rounded, label: 'Profile'),
+    (icon: Icons.settings_rounded, label: 'Settings'),
   ];
 
   @override

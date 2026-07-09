@@ -379,8 +379,7 @@ class _ValueCard extends StatelessWidget {
           ),
           const SizedBox(height: 1),
           Text(
-            '${isProfit ? '+' : '-'}${CurrencyFormatter.formatINR(asset.gainLoss.abs())} since you bought'
-            '${isProfit ? ' ✨' : ''}',
+            '${isProfit ? '+' : '-'}${CurrencyFormatter.formatINR(asset.gainLoss.abs())} since you bought',
             style: AppTheme.body(
               size: 12,
               weight: FontWeight.w600,
@@ -455,7 +454,7 @@ class _DetailsCard extends StatelessWidget {
         '${asset.purchaseDate.day}/${asset.purchaseDate.month}/${asset.purchaseDate.year}',
       ),
       if (asset.platform != null) ('Platform', asset.platform!),
-      ('Currency', asset.currency),
+      if (asset.currency != 'INR') ('Currency', asset.currency),
     ];
 
     return Container(
@@ -669,17 +668,6 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (_isGold)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(
-                    'Or enter price manually:',
-                    style: AppTheme.body(
-                      size: 13,
-                      color: AppColors.textSecondaryOn(context),
-                    ),
-                  ),
-                ),
               Row(
                 children: [
                   Expanded(
@@ -794,15 +782,6 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
               ),
             ),
           ],
-
-          if (_lastBreakdown == null && _fetchError == null)
-            Text(
-              'Tap below to fetch the current gold price',
-              style: AppTheme.body(
-                size: 12,
-                color: AppColors.textSecondaryOn(context),
-              ),
-            ),
 
           const SizedBox(height: 12),
           SizedBox(

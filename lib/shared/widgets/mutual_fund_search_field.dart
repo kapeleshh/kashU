@@ -193,18 +193,15 @@ class _MutualFundSearchFieldState extends State<MutualFundSearchField> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                   )
-                : _selectedResult != null
-                    ? Icon(Icons.check_circle,
-                        color: AppColors.success, size: 20)
-                    : _controller.text.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear, size: 18),
-                            onPressed: () {
-                              _controller.clear();
-                              _onTextChanged('');
-                            },
-                          )
-                        : null,
+                : _controller.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () {
+                          _controller.clear();
+                          _onTextChanged('');
+                        },
+                      )
+                    : null,
           ),
         ),
 
@@ -246,8 +243,13 @@ class _MutualFundSearchFieldState extends State<MutualFundSearchField> {
                             Divider(color: Theme.of(context).dividerColor, height: 1),
                         itemBuilder: (context, index) {
                           final result = _results[index];
+                          // When a plan/option filter is active every row
+                          // would carry the same badge — hide it.
                           return _MfResultTile(
                             result: result,
+                            showPlanBadge: _planFilter == MfPlanFilter.all,
+                            showOptionBadge:
+                                _optionFilter == MfOptionFilter.all,
                             onTap: () => _onResultSelected(result),
                           );
                         },
@@ -255,55 +257,6 @@ class _MutualFundSearchFieldState extends State<MutualFundSearchField> {
           ),
         ],
 
-        // Selected result confirmation
-        if (_selectedResult != null && !_showDropdown) ...[
-          const SizedBox(height: 6),
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: AppColors.success.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.check_circle,
-                    color: AppColors.success, size: 16),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Code: ${_selectedResult!.schemeCode} · ${_selectedResult!.planLabel} · ${_selectedResult!.optionLabel}',
-                    style: TextStyle(
-                      color: AppColors.success,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                TextButton(
-                  onPressed: () {
-                    _controller.clear();
-                    setState(() {
-                      _selectedResult = null;
-                      _results = [];
-                    });
-                  },
-                  style: TextButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    minimumSize: const Size(40, 24),
-                  ),
-                  child: Text(
-                    'Change',
-                    style: TextStyle(
-                      color: AppColors.textSecondaryOn(context),
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
       ],
     );
   }
@@ -367,9 +320,16 @@ class _MutualFundSearchFieldState extends State<MutualFundSearchField> {
 
 class _MfResultTile extends StatelessWidget {
   final MutualFundResult result;
+  final bool showPlanBadge;
+  final bool showOptionBadge;
   final VoidCallback onTap;
 
-  const _MfResultTile({required this.result, required this.onTap});
+  const _MfResultTile({
+    required this.result,
+    required this.showPlanBadge,
+    required this.showOptionBadge,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -401,16 +361,19 @@ class _MfResultTile extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      // Plan badge
-                      _badge(result.planLabel, planColor),
-                      const SizedBox(width: 4),
-                      // Option badge
-                      _badge(result.optionLabel, optionColor),
-                    ],
-                  ),
+                  if (showPlanBadge || showOptionBadge) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        if (showPlanBadge)
+                          _badge(result.planLabel, planColor),
+                        if (showPlanBadge && showOptionBadge)
+                          const SizedBox(width: 4),
+                        if (showOptionBadge)
+                          _badge(result.optionLabel, optionColor),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),

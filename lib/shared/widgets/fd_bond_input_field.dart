@@ -468,7 +468,11 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
             result: _result!,
             isFd: widget.isFd,
             depositType: _depositType,
-            derivedRate: _derivedRate,
+            // Only worth showing when the app derived the rate from the
+            // maturity amount — in by-rate mode the user just typed it.
+            derivedRate: _inputMode == DepositInputMode.byMaturity
+                ? _derivedRate
+                : null,
             accentColor: accentColor,
           ),
         ],
@@ -685,27 +689,18 @@ class _CalculationCard extends StatelessWidget {
                 '₹${_fmt(result.interestEarnedSoFar)}',
                 color: AppColors.success),
             _row(context, 'Maturity Value', '₹${_fmt(result.maturityValue)}'),
-            _row(context, 'Total Interest',
-                '₹${_fmt(result.totalInterestAtMaturity)}'),
           ],
 
           const SizedBox(height: 10),
 
           if (!result.isMatured) ...[
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  '${result.daysElapsed} days elapsed',
-                  style: TextStyle(
-                      color: AppColors.textTertiaryOn(context), fontSize: 11),
-                ),
-                Text(
-                  '${result.daysRemaining} days left',
-                  style: TextStyle(
-                      color: AppColors.textTertiaryOn(context), fontSize: 11),
-                ),
-              ],
+            Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                '${result.daysRemaining} days left',
+                style: TextStyle(
+                    color: AppColors.textTertiaryOn(context), fontSize: 11),
+              ),
             ),
             const SizedBox(height: 4),
             ClipRRect(
@@ -726,7 +721,7 @@ class _CalculationCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
-                '✅ Matured',
+                'Matured',
                 style: TextStyle(
                   color: AppColors.success,
                   fontSize: 12,

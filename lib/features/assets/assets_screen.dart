@@ -70,7 +70,8 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
           ],
         ),
       ),
-      floatingActionButton: _SoftFab(onTap: _navigateToAddAsset),
+      floatingActionButton:
+          assets.isEmpty ? null : _SoftFab(onTap: _navigateToAddAsset),
     );
   }
 
@@ -107,7 +108,7 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
             ),
             const SizedBox(height: 6),
             Text(
-              'Add your first holding to start tracking ✨',
+              'Add your first holding to start tracking',
               textAlign: TextAlign.center,
               style: AppTheme.body(
                 size: 13,
@@ -119,7 +120,7 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
             ElevatedButton.icon(
               onPressed: _navigateToAddAsset,
               icon: const Icon(Icons.add_rounded),
-              label: const Text('Add Your First Asset'),
+              label: const Text('Add your first asset'),
             ),
           ],
         ),
@@ -164,6 +165,8 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
                 asset: typeAssets[i],
                 onTap: () => _navigateToAssetDetail(typeAssets[i]),
                 priceAge: _priceAge(typeAssets[i]),
+                // The group header already names the type.
+                showType: false,
               ),
             ],
             const SizedBox(height: 20),
@@ -478,10 +481,15 @@ class _AssetTile extends StatelessWidget {
   final VoidCallback onTap;
   final String? priceAge;
 
+  /// Whether the subtitle includes the asset type name. Off on the By-Type
+  /// tab, where the group header already names the type.
+  final bool showType;
+
   const _AssetTile({
     required this.asset,
     required this.onTap,
     required this.priceAge,
+    this.showType = true,
   });
 
   @override
@@ -520,17 +528,19 @@ class _AssetTile extends StatelessWidget {
                         color: Theme.of(context).colorScheme.onSurface,
                       ),
                     ),
-                    const SizedBox(height: 1),
-                    Text(
-                      _subtitle(),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.body(
-                        size: 11,
-                        weight: FontWeight.w600,
-                        color: AppColors.textSecondaryOn(context),
+                    if (_subtitle().isNotEmpty) ...[
+                      const SizedBox(height: 1),
+                      Text(
+                        _subtitle(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.body(
+                          size: 11,
+                          weight: FontWeight.w600,
+                          color: AppColors.textSecondaryOn(context),
+                        ),
                       ),
-                    ),
+                    ],
                     if (priceAge != null) ...[
                       const SizedBox(height: 1),
                       Text(
@@ -607,8 +617,10 @@ class _AssetTile extends StatelessWidget {
   String _subtitle() {
     final unit = asset.type.unitLabel;
     final qty = CurrencyFormatter.formatQuantity(asset.quantity);
-    final qtyPart = unit.isEmpty ? '' : '$qty $unit · ';
-    return '$qtyPart${asset.type.displayName}';
+    final qtyPart = unit.isEmpty ? '' : '$qty $unit';
+    if (!showType) return qtyPart;
+    if (qtyPart.isEmpty) return asset.type.displayName;
+    return '$qtyPart · ${asset.type.displayName}';
   }
 }
 

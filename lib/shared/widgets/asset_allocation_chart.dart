@@ -3,10 +3,10 @@ import 'package:fl_chart/fl_chart.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/theme/app_decorations.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/utils/currency_formatter.dart';
 import '../../data/models/asset_type.dart';
 
-/// "Your mix" — a soft donut with a centred total and a percentage legend.
+/// "Your mix" — a soft donut with a centred holdings count and a
+/// percentage legend.
 class AssetAllocationChart extends StatelessWidget {
   final Map<AssetType, double>? allocation;
   final double totalValue;
@@ -28,7 +28,6 @@ class AssetAllocationChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     if (isLoading) return _shell(context, child: _loadingBody());
     if (allocation == null || allocation!.isEmpty) {
       return _shell(context, child: _emptyBody(context));
@@ -68,23 +67,14 @@ class AssetAllocationChart extends StatelessWidget {
                         ],
                       ),
                     ),
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          CurrencyFormatter.formatCompactINR(totalValue),
-                          style: AppTheme.heading(
-                              size: 16, color: scheme.onSurface),
-                        ),
-                        Text(
-                          '$assetCount ${assetCount == 1 ? 'asset' : 'assets'}',
-                          style: AppTheme.body(
-                            size: 9.5,
-                            weight: FontWeight.w700,
-                            color: AppColors.textSecondaryOn(context),
-                          ),
-                        ),
-                      ],
+                    Text(
+                      '$assetCount ${assetCount == 1 ? 'holding' : 'holdings'}',
+                      textAlign: TextAlign.center,
+                      style: AppTheme.body(
+                        size: 11,
+                        weight: FontWeight.w700,
+                        color: AppColors.textSecondaryOn(context),
+                      ),
                     ),
                   ],
                 ),

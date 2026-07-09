@@ -81,8 +81,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
-          // Preferences Section
-          _buildSectionHeader(context, 'Preferences'),
+          // Preferences & Security Section
+          _buildSectionHeader(context, 'Preferences & Security'),
           const SizedBox(height: 11),
           _buildSettingsCard([
             _BaseCurrencyTile(
@@ -94,14 +94,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ref.invalidate(portfolioSummaryProvider);
               },
             ),
-          ]),
-
-          const SizedBox(height: 22),
-
-          // Security Section
-          _buildSectionHeader(context, AppStrings.security),
-          const SizedBox(height: 11),
-          _buildSettingsCard([
             SwitchListTile(
               secondary: _tileIcon(Icons.lock_outline),
               title: Text(
@@ -138,8 +130,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
               subtitle: Text(
-                'Send anonymous crash reports — off by default, '
-                'takes effect on restart',
+                'Anonymous crash reports (applies after restart)',
                 style: AppTheme.body(
                   size: 12.5,
                   weight: FontWeight.w500,
@@ -157,8 +148,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           const SizedBox(height: 22),
 
-          // Portfolio Tools Section
-          _buildSectionHeader(context, 'Portfolio Tools'),
+          // Tools Section
+          _buildSectionHeader(context, 'Tools'),
           const SizedBox(height: 11),
           _buildSettingsCard([
             _SettingsTile(
@@ -172,14 +163,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     builder: (_) => const RebalancingScreen()),
               ),
             ),
-          ]),
-
-          const SizedBox(height: 22),
-
-          // Data Management Section
-          _buildSectionHeader(context, AppStrings.dataManagement),
-          const SizedBox(height: 11),
-          _buildSettingsCard([
             _SettingsTile(
               icon: Icons.receipt_long_outlined,
               title: 'Tax Export',
@@ -190,6 +173,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     builder: (_) => const TaxExportScreen()),
               ),
             ),
+          ]),
+
+          const SizedBox(height: 22),
+
+          // Data Management Section
+          _buildSectionHeader(context, AppStrings.dataManagement),
+          const SizedBox(height: 11),
+          _buildSettingsCard([
             _SettingsTile(
               icon: Icons.upload_outlined,
               title: AppStrings.exportData,
@@ -209,20 +200,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               iconColor: AppColors.lossOn(context),
               destructive: true,
               onTap: () => _showClearDataDialog(context, ref),
-            ),
-          ]),
-
-          const SizedBox(height: 22),
-
-          // About Section
-          _buildSectionHeader(context, AppStrings.about),
-          const SizedBox(height: 11),
-          _buildSettingsCard([
-            _SettingsTile(
-              icon: Icons.info_outline,
-              title: AppStrings.appName,
-              subtitle: 'Version 1.0.0',
-              onTap: () => _showAboutDialog(context),
             ),
           ]),
 
@@ -263,6 +240,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     size: 13.5,
                     weight: FontWeight.w500,
                     color: AppColors.textSecondaryOn(context),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'v1.0.0',
+                  style: AppTheme.body(
+                    size: 12,
+                    weight: FontWeight.w500,
+                    color: AppColors.textTertiaryOn(context),
                   ),
                 ),
               ],
@@ -550,74 +536,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               'Clear All',
               style: TextStyle(color: AppColors.lossOn(context)),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAboutDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                gradient: AppColors.primaryGradient,
-                borderRadius: BorderRadius.circular(AppRadii.avatar),
-              ),
-              child: Center(
-                child: Text(
-                  'K',
-                  style: AppTheme.heading(
-                    size: 22,
-                    weight: FontWeight.w800,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            const Text(AppStrings.appName),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              AppStrings.appTagline,
-              style: AppTheme.body(
-                size: 14,
-                weight: FontWeight.w500,
-                color: AppColors.textSecondaryOn(context),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text('Version 1.0.0'),
-            const SizedBox(height: 8),
-            const Text('Track all your investments in one place.'),
-            const SizedBox(height: 8),
-            Text(
-              '• Stocks, Mutual Funds, Gold, Crypto\n'
-              '• Multiple currencies support\n'
-              '• Offline-first, privacy-focused\n'
-              '• Export & backup your data',
-              style: AppTheme.body(
-                size: 13,
-                weight: FontWeight.w500,
-                color: AppColors.textSecondaryOn(context),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
           ),
         ],
       ),

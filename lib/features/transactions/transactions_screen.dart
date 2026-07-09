@@ -41,7 +41,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header — "Activity" + month · count
+            // Header — "Activity" + transaction count
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               child: _Header(count: allTransactions.length),
@@ -54,20 +54,6 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
               activeFilter: _activeFilter,
               onFilterChanged: (f) => setState(() => _activeFilter = f),
             ),
-
-            // Filtered-count hint
-            if (allTransactions.isNotEmpty && _activeFilter != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
-                child: Text(
-                  '${transactions.length} of ${allTransactions.length}',
-                  style: AppTheme.body(
-                    size: 12,
-                    weight: FontWeight.w700,
-                    color: AppColors.textTertiaryOn(context),
-                  ),
-                ),
-              ),
 
             // List
             Expanded(
@@ -133,56 +119,27 @@ class _Header extends StatelessWidget {
   final int count;
   const _Header({required this.count});
 
-  static const _months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
-  ];
-
   @override
   Widget build(BuildContext context) {
-    final month = _months[DateTime.now().month - 1];
-    final subtitle = count == 0
-        ? month
-        : '$month · $count transaction${count == 1 ? '' : 's'}';
+    final subtitle = '$count transaction${count == 1 ? '' : 's'}';
 
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Activity',
-                style: AppTheme.heading(
-                  size: 22,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                subtitle,
-                style: AppTheme.body(
-                  size: 12.5,
-                  weight: FontWeight.w700,
-                  color: AppColors.textSecondaryOn(context),
-                ),
-              ),
-            ],
+        Text(
+          'Activity',
+          style: AppTheme.heading(
+            size: 22,
+            color: Theme.of(context).colorScheme.onSurface,
           ),
         ),
-        Container(
-          width: 40,
-          height: 40,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            borderRadius: BorderRadius.circular(AppRadii.avatar),
-            boxShadow: AppShadows.soft(opacity: 0.16, y: 8, blur: 18),
-          ),
-          child: Icon(
-            Icons.swap_horiz_rounded,
-            size: 20,
-            color: Theme.of(context).colorScheme.onSurface,
+        const SizedBox(height: 2),
+        Text(
+          subtitle,
+          style: AppTheme.body(
+            size: 12.5,
+            weight: FontWeight.w700,
+            color: AppColors.textSecondaryOn(context),
           ),
         ),
       ],
@@ -323,6 +280,7 @@ class _TransactionCard extends StatelessWidget {
         : AppColors.gainOn(context);
 
     final title = assetName ?? transaction.type.displayName;
+    final subtitle = _subtitle();
 
     return Dismissible(
       key: ValueKey(transaction.id),
@@ -384,17 +342,19 @@ class _TransactionCard extends StatelessWidget {
                       color: Theme.of(context).colorScheme.onSurface,
                     ),
                   ),
-                  const SizedBox(height: 1),
-                  Text(
-                    _subtitle(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTheme.body(
-                      size: 11,
-                      weight: FontWeight.w600,
-                      color: AppColors.textSecondaryOn(context),
+                  if (subtitle.isNotEmpty) ...[
+                    const SizedBox(height: 1),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(
+                        size: 11,
+                        weight: FontWeight.w600,
+                        color: AppColors.textSecondaryOn(context),
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -425,15 +385,15 @@ class _TransactionCard extends StatelessWidget {
     );
   }
 
-  /// Subtitle: prefer "qty @ price", else the type name; append notes if present.
+  /// Subtitle: "qty @ price" when there is a quantity; append notes if
+  /// present. The type itself is already shown by the tag avatar, so a
+  /// quantity-less transaction with no notes gets no subtitle.
   String _subtitle() {
     final parts = <String>[];
     if (transaction.quantity > 0) {
       parts.add(
         '${CurrencyFormatter.formatQuantity(transaction.quantity)} @ ${CurrencyFormatter.formatINR(transaction.price)}',
       );
-    } else {
-      parts.add(transaction.type.displayName);
     }
     if (transaction.notes != null && transaction.notes!.trim().isNotEmpty) {
       parts.add(transaction.notes!.trim());
@@ -494,7 +454,7 @@ class _EmptyState extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               noneAtAll
-                  ? 'Add an asset to see your activity here ✨'
+                  ? 'Add an asset to see your activity here'
                   : 'Try a different filter',
               textAlign: TextAlign.center,
               style: AppTheme.body(
