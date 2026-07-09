@@ -1,3 +1,4 @@
+import '../core/utils/result.dart';
 import '../data/models/asset.dart';
 import '../data/models/asset_type.dart';
 import '../data/repositories/asset_repository.dart';
@@ -5,6 +6,7 @@ import 'coingecko_service.dart';
 import 'cryptocompare_service.dart';
 import 'currency_converter_service.dart';
 import 'gold_price_service.dart';
+import 'mutual_fund_service.dart';
 import 'price_cache_service.dart';
 import 'price_service.dart';
 import 'stooq_service.dart';
@@ -59,6 +61,7 @@ class PriceUpdateService {
   final StooqService _stooqService;
   final CurrencyConverterService _currencyConverter;
   final GoldPriceService _goldPriceService;
+  final MutualFundService _mutualFundService;
   final PriceCacheService _priceCache;
   final CoinGeckoService Function(String vsCurrency)? _coinGeckoFactory;
   final CryptoCompareService Function(String vsCurrency)?
@@ -70,6 +73,7 @@ class PriceUpdateService {
     StooqService? stooqService,
     CurrencyConverterService? currencyConverter,
     GoldPriceService? goldPriceService,
+    MutualFundService? mutualFundService,
     PriceCacheService? priceCache,
     CoinGeckoService Function(String vsCurrency)? coinGeckoFactory,
     CryptoCompareService Function(String vsCurrency)? cryptoFallbackFactory,
@@ -78,6 +82,7 @@ class PriceUpdateService {
         _stooqService = stooqService ?? StooqService(),
         _currencyConverter = currencyConverter ?? CurrencyConverterService(),
         _goldPriceService = goldPriceService ?? GoldPriceService(),
+        _mutualFundService = mutualFundService ?? MutualFundService(),
         _priceCache = priceCache ?? PriceCacheService(),
         _coinGeckoFactory = coinGeckoFactory,
         _cryptoFallbackFactory = cryptoFallbackFactory;
@@ -136,9 +141,17 @@ class PriceUpdateService {
       baseCurrency,
       exchangeRates,
     );
+    final mfStats = await _refreshMutualFundAssets(
+      trackable.where((a) => a.type == AssetType.mutualFund).toList(),
+    );
+    // Stocks and bonds share the equity path (Yahoo → Stooq); mutual funds
+    // and the other typed buckets are handled separately above.
     final stockStats = await _refreshStockBondAssets(
       trackable
-          .where((a) => a.type != AssetType.crypto && a.type != AssetType.gold)
+          .where((a) =>
+              a.type != AssetType.crypto &&
+              a.type != AssetType.gold &&
+              a.type != AssetType.mutualFund)
           .toList(),
       baseCurrency,
       exchangeRates,
@@ -146,12 +159,19 @@ class PriceUpdateService {
 
     return PriceRefreshResult(
       total: assets.length,
-      updated: cryptoStats.updated + goldStats.updated + stockStats.updated,
+      updated: cryptoStats.updated +
+          goldStats.updated +
+          mfStats.updated +
+          stockStats.updated,
       skipped: skipped,
-      failed: cryptoStats.failed + goldStats.failed + stockStats.failed,
+      failed: cryptoStats.failed +
+          goldStats.failed +
+          mfStats.failed +
+          stockStats.failed,
       errors: <String>[
         ...cryptoStats.errors,
         ...goldStats.errors,
+        ...mfStats.errors,
         ...stockStats.errors,
       ],
       completedAt: DateTime.now(),
@@ -175,6 +195,9 @@ class PriceUpdateService {
     }
     if (asset.type == AssetType.gold) {
       return _refreshSingleGold(asset, baseCurrency);
+    }
+    if (asset.type == AssetType.mutualFund) {
+      return _refreshSingleMutualFund(asset, symbol);
     }
     return _refreshSingleStockBond(asset, symbol, baseCurrency);
   }
@@ -317,6 +340,41 @@ class PriceUpdateService {
     return (updated: updated, failed: failed, errors: errors);
   }
 
+  Future<_RefreshStats> _refreshMutualFundAssets(List<Asset> assets) async {
+    if (assets.isEmpty) return (updated: 0, failed: 0, errors: <String>[]);
+
+    int updated = 0;
+    int failed = 0;
+    final errors = <String>[];
+
+    for (final asset in assets) {
+      final symbol = _getSymbol(asset);
+      if (symbol == null) continue;
+
+      final result = await _fetchMutualFundNav(symbol);
+      if (result.success) {
+        await _priceCache.cachePrice(result);
+        await _assetRepository.updateAssetPrice(asset.id, result.price);
+        updated++;
+      } else {
+        final cached = _priceCache.getCachedResult(symbol);
+        if (cached.success) {
+          await _assetRepository.updateAssetPrice(asset.id, cached.price,
+              asOf: cached.fetchedAt);
+          updated++;
+        } else {
+          failed++;
+          errors.add('${asset.name} ($symbol): ${result.error}');
+        }
+      }
+
+      // Throttle to be gentle on MFAPI.in
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    }
+
+    return (updated: updated, failed: failed, errors: errors);
+  }
+
   Future<_RefreshStats> _refreshStockBondAssets(
     List<Asset> assets,
     String baseCurrency,
@@ -439,6 +497,49 @@ class PriceUpdateService {
     await _priceCache.cachePrice(liveResult);
     await _assetRepository.updateAssetPrice(asset.id, breakdown.finalPerGram);
     return liveResult;
+  }
+
+  Future<PriceResult> _refreshSingleMutualFund(
+      Asset asset, String symbol) async {
+    final result = await _fetchMutualFundNav(symbol);
+    if (result.success) {
+      await _priceCache.cachePrice(result);
+      await _assetRepository.updateAssetPrice(asset.id, result.price);
+      return result;
+    }
+
+    final cached = _priceCache.getCachedResult(symbol);
+    if (cached.success) {
+      await _assetRepository.updateAssetPrice(asset.id, cached.price,
+          asOf: cached.fetchedAt);
+      return cached;
+    }
+    return result;
+  }
+
+  /// Fetch a mutual fund's latest NAV (INR) from MFAPI.in.
+  ///
+  /// The stored symbol is the numeric AMFI scheme code. If it is not numeric
+  /// (e.g. a user entered an ETF-proxy ticker like NIFTYBEES.NS), fall back to
+  /// the equity path so those still resolve.
+  Future<PriceResult> _fetchMutualFundNav(String symbol) async {
+    final schemeCode = int.tryParse(symbol);
+    if (schemeCode == null) {
+      return _fetchEquityPrice(symbol);
+    }
+
+    final navResult = await _mutualFundService.fetchNav(schemeCode);
+    return switch (navResult) {
+      Ok(:final value) when (value.nav ?? 0) > 0 => PriceResult(
+          symbol: symbol,
+          price: value.nav!,
+          currency: 'INR', // MFAPI.in quotes NAV in INR
+          fetchedAt: DateTime.now(),
+          success: true,
+        ),
+      Ok() => PriceResult.failure(symbol, 'No NAV available for scheme $symbol'),
+      Err(:final message) => PriceResult.failure(symbol, message),
+    };
   }
 
   Future<PriceResult> _refreshSingleStockBond(
