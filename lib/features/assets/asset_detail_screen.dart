@@ -8,6 +8,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../data/models/asset.dart';
 import '../../data/models/asset_type.dart';
+import '../../services/currency_converter_service.dart';
 import '../../services/gold_price_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
 import 'add_asset_screen.dart';
@@ -23,6 +24,20 @@ class AssetDetailScreen extends ConsumerWidget {
     final gainColor =
         isProfit ? AppColors.gainOn(context) : AppColors.lossOn(context);
     final unit = asset.type.unitLabel;
+
+    // Base-currency conversion primitives, read once here.
+    final base = ref.watch(baseCurrencyProvider);
+    final rates = ref.watch(exchangeRatesProvider).valueOrNull ??
+        ExchangeRateResult.failure('loading');
+    // For per-unit price displays we keep the asset's own currency.
+    final priceCurrency = asset.currency.isEmpty ? base : asset.currency;
+    // VALUE conversions (worth) → base currency.
+    final currentValueBase =
+        rates.convertBetween(asset.currentValue, priceCurrency, base);
+    final investedBase =
+        rates.convertBetween(asset.totalInvested, priceCurrency, base);
+    final gainLossBase =
+        rates.convertBetween(asset.gainLoss.abs(), priceCurrency, base);
 
     return Scaffold(
       body: SafeArea(
@@ -42,6 +57,9 @@ class AssetDetailScreen extends ConsumerWidget {
                 asset: asset,
                 isProfit: isProfit,
                 gainColor: gainColor,
+                currentValueBase: currentValueBase,
+                gainLossBase: gainLossBase,
+                base: base,
               ),
 
               const SizedBox(height: 14),
@@ -60,7 +78,10 @@ class AssetDetailScreen extends ConsumerWidget {
                   Expanded(
                     child: _StatTile(
                       label: 'AVG BUY',
-                      value: CurrencyFormatter.formatINR(asset.purchasePrice),
+                      value: CurrencyFormatter.formatCurrency(
+                        asset.purchasePrice,
+                        priceCurrency,
+                      ),
                     ),
                   ),
                 ],
@@ -71,14 +92,20 @@ class AssetDetailScreen extends ConsumerWidget {
                   Expanded(
                     child: _StatTile(
                       label: 'CURRENT',
-                      value: CurrencyFormatter.formatINR(asset.currentPrice),
+                      value: CurrencyFormatter.formatCurrency(
+                        asset.currentPrice,
+                        priceCurrency,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: _StatTile(
                       label: 'INVESTED',
-                      value: CurrencyFormatter.formatINR(asset.totalInvested),
+                      value: CurrencyFormatter.formatCurrency(
+                        investedBase,
+                        base,
+                      ),
                     ),
                   ),
                 ],
@@ -322,10 +349,22 @@ class _ValueCard extends StatelessWidget {
   final bool isProfit;
   final Color gainColor;
 
+  /// Current worth converted into the base currency.
+  final double currentValueBase;
+
+  /// Absolute gain/loss amount converted into the base currency.
+  final double gainLossBase;
+
+  /// The portfolio base currency these values are expressed in.
+  final String base;
+
   const _ValueCard({
     required this.asset,
     required this.isProfit,
     required this.gainColor,
+    required this.currentValueBase,
+    required this.gainLossBase,
+    required this.base,
   });
 
   @override
@@ -354,7 +393,7 @@ class _ValueCard extends StatelessWidget {
             children: [
               Flexible(
                 child: Text(
-                  CurrencyFormatter.formatINR(asset.currentValue),
+                  CurrencyFormatter.formatCurrency(currentValueBase, base),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AppTheme.heading(
@@ -379,7 +418,7 @@ class _ValueCard extends StatelessWidget {
           ),
           const SizedBox(height: 1),
           Text(
-            '${isProfit ? '+' : '-'}${CurrencyFormatter.formatINR(asset.gainLoss.abs())} since you bought',
+            '${isProfit ? '+' : '-'}${CurrencyFormatter.formatCurrency(gainLossBase, base)} since you bought',
             style: AppTheme.body(
               size: 12,
               weight: FontWeight.w600,
@@ -762,7 +801,8 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
                   ),
                 ),
                 Text(
-                  '₹${_lastBreakdown!.finalPerGram.toStringAsFixed(2)}',
+                  CurrencyFormatter.formatCurrency(
+                      _lastBreakdown!.finalPerGram, widget.asset.currency),
                   style: AppTheme.heading(size: 18, color: goldTone),
                 ),
               ],
@@ -857,7 +897,9 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Gold price updated to ₹${price.toStringAsFixed(2)}/gram (incl. Indian taxes)',
+          'Gold price updated to '
+          '${CurrencyFormatter.formatCurrency(price, widget.asset.currency)}/gram'
+          '${widget.asset.currency == 'INR' ? ' (incl. Indian taxes)' : ''}',
         ),
         backgroundColor: AppColors.success,
       ),

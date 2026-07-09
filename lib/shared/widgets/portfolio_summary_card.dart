@@ -13,21 +13,27 @@ class PortfolioSummaryCard extends StatelessWidget {
   final bool isLoading;
   final String? errorMessage;
 
+  /// Currency the (already-converted) summary values are shown in.
+  final String baseCurrency;
+
   const PortfolioSummaryCard({
     super.key,
     required this.summary,
+    this.baseCurrency = 'INR',
   })  : isLoading = false,
         errorMessage = null;
 
   const PortfolioSummaryCard.loading({super.key})
       : summary = null,
         isLoading = true,
-        errorMessage = null;
+        errorMessage = null,
+        baseCurrency = 'INR';
 
   const PortfolioSummaryCard.error(String error, {super.key})
       : summary = null,
         isLoading = false,
-        errorMessage = error;
+        errorMessage = error,
+        baseCurrency = 'INR';
 
   @override
   Widget build(BuildContext context) {
@@ -70,18 +76,18 @@ class PortfolioSummaryCard extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                CurrencyFormatter.formatINR(data.totalValue),
+                CurrencyFormatter.formatCurrency(data.totalValue, baseCurrency),
                 style: AppTheme.heading(size: 33, color: Colors.white),
               ),
               const SizedBox(height: 12),
               _pill(
                 '${isProfit ? '+' : '-'}${CurrencyFormatter.formatPercentage(data.totalGainLossPercentage.abs(), showSign: false)} '
-                '(${CurrencyFormatter.formatCompactINR(data.totalGainLoss.abs())}) all-time',
+                '(${CurrencyFormatter.formatCompactCurrency(data.totalGainLoss.abs(), baseCurrency)}) all-time',
               ),
               if (!data.isEmpty) ...[
                 const SizedBox(height: 9),
                 Text(
-                  'Invested ${CurrencyFormatter.formatCompactINR(data.totalInvested)}',
+                  'Invested ${CurrencyFormatter.formatCompactCurrency(data.totalInvested, baseCurrency)}',
                   style: AppTheme.body(
                     size: 11,
                     weight: FontWeight.w600,

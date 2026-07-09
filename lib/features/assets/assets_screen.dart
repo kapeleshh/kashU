@@ -8,6 +8,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../data/models/asset.dart';
 import '../../data/models/asset_type.dart';
+import '../../services/currency_converter_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
 import 'add_asset_screen.dart';
 import 'asset_detail_screen.dart';
@@ -39,7 +40,15 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
   @override
   Widget build(BuildContext context) {
     final assets = ref.watch(allAssetsProvider);
-    final totalValue = assets.fold<double>(0, (sum, a) => sum + a.currentValue);
+    final base = ref.watch(baseCurrencyProvider);
+    final rates = ref.watch(exchangeRatesProvider).valueOrNull ??
+        ExchangeRateResult.failure('loading');
+    final totalValue = assets.fold<double>(
+      0,
+      (sum, a) => sum +
+          rates.convertBetween(
+              a.currentValue, a.currency.isEmpty ? base : a.currency, base),
+    );
 
     return Scaffold(
       body: SafeArea(
@@ -47,7 +56,11 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _Header(count: assets.length, totalValue: totalValue),
+            _Header(
+              count: assets.length,
+              totalValue: totalValue,
+              baseCurrency: base,
+            ),
             _TypeTabBar(controller: _tabController),
             if (assets.isNotEmpty) ...[
               const SizedBox(height: 6),
@@ -62,8 +75,8 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
                   : TabBarView(
                       controller: _tabController,
                       children: [
-                        _buildAssetsByType(assets),
-                        _buildAssetsByPlatform(assets),
+                        _buildAssetsByType(assets, rates, base),
+                        _buildAssetsByPlatform(assets, rates, base),
                       ],
                     ),
             ),
@@ -128,7 +141,8 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
     );
   }
 
-  Widget _buildAssetsByType(List<Asset> assets) {
+  Widget _buildAssetsByType(
+      List<Asset> assets, ExchangeRateResult rates, String base) {
     final groupedAssets = <AssetType, List<Asset>>{};
 
     for (final asset in assets) {
@@ -146,8 +160,12 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
       itemBuilder: (context, index) {
         final type = groupedAssets.keys.elementAt(index);
         final typeAssets = groupedAssets[type]!;
-        final totalValue =
-            typeAssets.fold<double>(0, (sum, a) => sum + a.currentValue);
+        final totalValue = typeAssets.fold<double>(
+          0,
+          (sum, a) => sum +
+              rates.convertBetween(
+                  a.currentValue, a.currency.isEmpty ? base : a.currency, base),
+        );
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -157,12 +175,20 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
               icon: type.icon,
               title: type.displayName,
               totalValue: totalValue,
+              baseCurrency: base,
             ),
             const SizedBox(height: 10),
             for (var i = 0; i < typeAssets.length; i++) ...[
               if (i > 0) const SizedBox(height: 9),
               _AssetTile(
                 asset: typeAssets[i],
+                valueInBase: rates.convertBetween(
+                    typeAssets[i].currentValue,
+                    typeAssets[i].currency.isEmpty
+                        ? base
+                        : typeAssets[i].currency,
+                    base),
+                baseCurrency: base,
                 onTap: () => _navigateToAssetDetail(typeAssets[i]),
                 priceAge: _priceAge(typeAssets[i]),
                 // The group header already names the type.
@@ -176,7 +202,8 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
     );
   }
 
-  Widget _buildAssetsByPlatform(List<Asset> assets) {
+  Widget _buildAssetsByPlatform(
+      List<Asset> assets, ExchangeRateResult rates, String base) {
     final groupedAssets = <String, List<Asset>>{};
 
     for (final asset in assets) {
@@ -195,8 +222,12 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
       itemBuilder: (context, index) {
         final platform = groupedAssets.keys.elementAt(index);
         final platformAssets = groupedAssets[platform]!;
-        final totalValue =
-            platformAssets.fold<double>(0, (sum, a) => sum + a.currentValue);
+        final totalValue = platformAssets.fold<double>(
+          0,
+          (sum, a) => sum +
+              rates.convertBetween(
+                  a.currentValue, a.currency.isEmpty ? base : a.currency, base),
+        );
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -206,12 +237,20 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
               icon: Icons.account_balance_rounded,
               title: platform,
               totalValue: totalValue,
+              baseCurrency: base,
             ),
             const SizedBox(height: 10),
             for (var i = 0; i < platformAssets.length; i++) ...[
               if (i > 0) const SizedBox(height: 9),
               _AssetTile(
                 asset: platformAssets[i],
+                valueInBase: rates.convertBetween(
+                    platformAssets[i].currentValue,
+                    platformAssets[i].currency.isEmpty
+                        ? base
+                        : platformAssets[i].currency,
+                    base),
+                baseCurrency: base,
                 onTap: () => _navigateToAssetDetail(platformAssets[i]),
                 priceAge: _priceAge(platformAssets[i]),
               ),
@@ -271,15 +310,20 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
 class _Header extends StatelessWidget {
   final int count;
   final double totalValue;
+  final String baseCurrency;
 
-  const _Header({required this.count, required this.totalValue});
+  const _Header({
+    required this.count,
+    required this.totalValue,
+    required this.baseCurrency,
+  });
 
   @override
   Widget build(BuildContext context) {
     final subtitle = count == 0
         ? 'Nothing tracked yet'
         : '$count ${count == 1 ? 'holding' : 'holdings'} · '
-            '${CurrencyFormatter.formatCompactINR(totalValue)}';
+            '${CurrencyFormatter.formatCompactCurrency(totalValue, baseCurrency)}';
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 12, 18, 4),
@@ -425,12 +469,14 @@ class _GroupHeader extends StatelessWidget {
   final IconData icon;
   final String title;
   final double totalValue;
+  final String baseCurrency;
 
   const _GroupHeader({
     required this.gradient,
     required this.icon,
     required this.title,
     required this.totalValue,
+    required this.baseCurrency,
   });
 
   @override
@@ -463,7 +509,7 @@ class _GroupHeader extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Text(
-            CurrencyFormatter.formatCompactINR(totalValue),
+            CurrencyFormatter.formatCompactCurrency(totalValue, baseCurrency),
             style: AppTheme.heading(size: 14, color: AppColors.primary),
           ),
         ],
@@ -478,6 +524,10 @@ class _GroupHeader extends StatelessWidget {
 
 class _AssetTile extends StatelessWidget {
   final Asset asset;
+
+  /// The asset's current value converted into the base currency for display.
+  final double valueInBase;
+  final String baseCurrency;
   final VoidCallback onTap;
   final String? priceAge;
 
@@ -487,6 +537,8 @@ class _AssetTile extends StatelessWidget {
 
   const _AssetTile({
     required this.asset,
+    required this.valueInBase,
+    required this.baseCurrency,
     required this.onTap,
     required this.priceAge,
     this.showType = true,
@@ -562,7 +614,7 @@ class _AssetTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    CurrencyFormatter.formatINR(asset.currentValue),
+                    CurrencyFormatter.formatCurrency(valueInBase, baseCurrency),
                     style: AppTheme.heading(
                       size: 13.5,
                       color: Theme.of(context).colorScheme.onSurface,

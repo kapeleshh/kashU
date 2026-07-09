@@ -174,6 +174,7 @@ class _DashboardContent extends ConsumerWidget {
     final lastResult = ref.watch(lastRefreshResultProvider);
     final isPriceStale = ref.watch(isPriceStaleProvider);
     final isBackupOverdue = ref.watch(isBackupOverdueProvider);
+    final baseCurrency = ref.watch(baseCurrencyProvider);
     final greeting = _greeting();
 
     return SafeArea(
@@ -238,7 +239,8 @@ class _DashboardContent extends ConsumerWidget {
 
             // Hero
             portfolioAsync.when(
-              data: (summary) => PortfolioSummaryCard(summary: summary),
+              data: (summary) => PortfolioSummaryCard(
+                  summary: summary, baseCurrency: baseCurrency),
               loading: () => const PortfolioSummaryCard.loading(),
               error: (e, _) => PortfolioSummaryCard.error(e.toString()),
             ),

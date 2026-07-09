@@ -14,6 +14,7 @@ import 'package:kashu/features/auth/lock_screen.dart';
 import 'package:kashu/features/dashboard/dashboard_screen.dart';
 import 'package:kashu/main.dart';
 import 'package:kashu/services/auth_service.dart';
+import 'package:kashu/services/currency_converter_service.dart';
 import 'package:kashu/shared/providers/portfolio_provider.dart';
 
 /// Deterministic auth: never prompts, always returns [result].
@@ -85,6 +86,11 @@ void main() {
         overrides: [
           authServiceProvider.overrideWithValue(_StubAuthService(authResult)),
           appLockedProvider.overrideWith((ref) => startLocked),
+          // The dashboard's IndexedStack builds all tab screens, which now
+          // watch exchange rates — stub them so no real network/retry timer
+          // leaks into this widget test.
+          exchangeRatesProvider.overrideWith(
+              (ref) async => ExchangeRateResult.failure('test')),
         ],
         child: KashUApp(
           showOnboarding: false,

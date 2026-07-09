@@ -43,6 +43,28 @@ class CurrencyFormatter {
     return formatter.format(amount);
   }
 
+  /// Compact notation for any currency (e.g. ₹1.2L, $10K).
+  ///
+  /// INR uses the Indian Cr/L/K scale (like [formatCompactINR]); other
+  /// currencies use K/M/B. Values below 1000 fall back to [formatCurrency].
+  static String formatCompactCurrency(double amount, String currency) {
+    final symbol = AppConstants.currencies[currency] ?? currency;
+    final sign = amount < 0 ? '-' : '';
+    final n = amount.abs();
+
+    if (currency == 'INR') {
+      if (n >= 10000000) return '$sign$symbol${(n / 10000000).toStringAsFixed(2)}Cr';
+      if (n >= 100000) return '$sign$symbol${(n / 100000).toStringAsFixed(2)}L';
+      if (n >= 1000) return '$sign$symbol${(n / 1000).toStringAsFixed(2)}K';
+      return formatCurrency(amount, currency);
+    }
+
+    if (n >= 1000000000) return '$sign$symbol${(n / 1000000000).toStringAsFixed(2)}B';
+    if (n >= 1000000) return '$sign$symbol${(n / 1000000).toStringAsFixed(2)}M';
+    if (n >= 1000) return '$sign$symbol${(n / 1000).toStringAsFixed(2)}K';
+    return formatCurrency(amount, currency);
+  }
+
   /// Format quantity (for stocks, crypto, etc.)
   static String formatQuantity(double quantity) {
     if (quantity == quantity.truncate()) {
