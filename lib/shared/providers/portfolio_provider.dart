@@ -64,11 +64,17 @@ final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
     return PortfolioSummary.empty();
   }
 
-  final rates = await ref.watch(exchangeRatesProvider.future);
-
   String currencyOf(Asset a) => a.currency.isNotEmpty ? a.currency : base;
+
+  // Offline-first: only touch the forex network when a holding is actually
+  // in a different currency than the base. An all-INR (all-base) portfolio
+  // converts by identity, so it must not block on (or require) a fetch.
+  final needsConversion = assets.any((a) => currencyOf(a) != base);
+  final rates =
+      needsConversion ? await ref.watch(exchangeRatesProvider.future) : null;
+
   double toBase(double amount, Asset a) =>
-      rates.convertBetween(amount, currencyOf(a), base);
+      rates == null ? amount : rates.convertBetween(amount, currencyOf(a), base);
 
   double totalValue = 0;
   double totalInvested = 0;

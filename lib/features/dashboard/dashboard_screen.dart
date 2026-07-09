@@ -35,20 +35,16 @@ Future<void> _doRefreshPrices(WidgetRef ref, BuildContext context) async {
     ref.invalidate(allAssetsProvider);
     ref.invalidate(portfolioSummaryProvider);
 
-    // Update home screen widget with latest portfolio figures
+    // Update home screen widget with latest portfolio figures. Use the
+    // summary's base-currency-converted totals (not raw repo sums, which
+    // would mis-total a mixed-currency portfolio).
     try {
-      final repo = ref.read(assetRepositoryProvider);
-      final totalValue = repo.getTotalValue();
-      final totalInvested = repo.getTotalInvested();
-      final totalGainLoss = totalValue - totalInvested;
-      final gainLossPct =
-          totalInvested > 0 ? (totalGainLoss / totalInvested) * 100 : 0.0;
-      final baseCurrency = repo.getBaseCurrency();
+      final summary = await ref.read(portfolioSummaryProvider.future);
       await WidgetUpdateService.updatePortfolioWidget(
-        totalValue: totalValue,
-        totalGainLoss: totalGainLoss,
-        gainLossPct: gainLossPct,
-        baseCurrency: baseCurrency,
+        totalValue: summary.totalValue,
+        totalGainLoss: summary.totalGainLoss,
+        gainLossPct: summary.totalGainLossPercentage,
+        baseCurrency: ref.read(baseCurrencyProvider),
       );
     } catch (_) {
       // Widget update is best-effort; never crash the main refresh flow
