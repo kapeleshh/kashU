@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../core/constants/app_constants.dart';
 import '../../data/models/asset.dart';
+import '../../data/models/asset_type.dart';
 import '../../data/models/portfolio_summary.dart';
 import '../../data/repositories/asset_repository.dart';
 import '../../data/repositories/portfolio_write_service.dart';
@@ -48,22 +49,56 @@ final baseCurrencyProvider = StateProvider<String>((ref) {
   return repo.getBaseCurrency();
 });
 
-/// Provider for portfolio summary
+/// Provider for portfolio summary.
+///
+/// All money is converted into the user's base currency before aggregating,
+/// so a portfolio holding assets in different currencies sums correctly (the
+/// old code added raw values across currencies). Per-asset gain/loss *percent*
+/// is currency-independent, so gainers/losers are unaffected.
 final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
   final repository = ref.watch(assetRepositoryProvider);
+  final base = ref.watch(baseCurrencyProvider);
 
   final assets = repository.getAllAssets();
-
   if (assets.isEmpty) {
     return PortfolioSummary.empty();
   }
 
-  final totalValue = repository.getTotalValue();
-  final totalInvested = repository.getTotalInvested();
+  String currencyOf(Asset a) => a.currency.isNotEmpty ? a.currency : base;
+
+  // Offline-first: only touch the forex network when a holding is actually
+  // in a different currency than the base. An all-INR (all-base) portfolio
+  // converts by identity, so it must not block on (or require) a fetch.
+  final needsConversion = assets.any((a) => currencyOf(a) != base);
+  final rates =
+      needsConversion ? await ref.watch(exchangeRatesProvider.future) : null;
+
+  double toBase(double amount, Asset a) =>
+      rates == null ? amount : rates.convertBetween(amount, currencyOf(a), base);
+
+  double totalValue = 0;
+  double totalInvested = 0;
+  final allocation = <AssetType, double>{};
+  for (final a in assets) {
+    final value = toBase(a.currentValue, a);
+    totalValue += value;
+    totalInvested += toBase(a.totalInvested, a);
+    allocation.update(a.type, (v) => v + value, ifAbsent: () => value);
+  }
+
+  // Before the first price refresh, values are 0 — fall back to invested so
+  // the allocation chart isn't blank (mirrors AssetRepository.getAssetAllocation).
+  if (totalValue == 0 && totalInvested > 0) {
+    allocation.clear();
+    for (final a in assets) {
+      final inv = toBase(a.totalInvested, a);
+      allocation.update(a.type, (v) => v + inv, ifAbsent: () => inv);
+    }
+  }
+
   final totalGainLoss = totalValue - totalInvested;
-  final totalGainLossPercentage = totalInvested > 0
-      ? (totalGainLoss / totalInvested) * 100
-      : 0.0;
+  final totalGainLossPercentage =
+      totalInvested > 0 ? (totalGainLoss / totalInvested) * 100 : 0.0;
 
   return PortfolioSummary(
     totalValue: totalValue,
@@ -72,7 +107,7 @@ final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
     totalGainLossPercentage: totalGainLossPercentage,
     todaysChange: 0,
     todaysChangePercentage: 0,
-    assetAllocation: repository.getAssetAllocation(),
+    assetAllocation: allocation,
     topGainers: repository.getTopGainers(),
     topLosers: repository.getTopLosers(),
     totalAssets: assets.length,
@@ -90,6 +125,14 @@ final allAssetsProvider = Provider<List<Asset>>((ref) {
 final currencyConverterServiceProvider =
     Provider<CurrencyConverterService>((ref) {
   return CurrencyConverterService();
+});
+
+/// Live USD-based exchange rates, used to convert holdings into the base
+/// currency for display. The service caches for 30 min, so watchers resolve
+/// quickly after the first load; display code falls back to approximate
+/// static rates via [ExchangeRateResult.convertBetween] while this is loading.
+final exchangeRatesProvider = FutureProvider<ExchangeRateResult>((ref) async {
+  return ref.watch(currencyConverterServiceProvider).fetchRates();
 });
 
 /// Provider for GoldPriceService (uses COMEX GC=F + live forex + Indian taxes)

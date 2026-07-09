@@ -7,6 +7,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../data/models/transaction.dart';
 import '../../data/models/transaction_type.dart';
+import '../../services/currency_converter_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
 
 class TransactionsScreen extends ConsumerStatefulWidget {
@@ -23,6 +24,11 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   Widget build(BuildContext context) {
     final txRepo = ref.watch(transactionRepositoryProvider);
     final assetRepo = ref.watch(assetRepositoryProvider);
+
+    // Base currency + live exchange rates for VALUE conversion.
+    final base = ref.watch(baseCurrencyProvider);
+    final rates = ref.watch(exchangeRatesProvider).valueOrNull ??
+        ExchangeRateResult.failure('loading');
 
     // Build asset-name lookup map once per build
     final assetNames = {
@@ -68,9 +74,21 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                       separatorBuilder: (_, __) => const SizedBox(height: 9),
                       itemBuilder: (context, index) {
                         final transaction = transactions[index];
+                        final txCurrency = transaction.currency.isEmpty
+                            ? base
+                            : transaction.currency;
+                        // VALUE: convert the transaction amount into base.
+                        final amountInBase = rates.convertBetween(
+                          transaction.amount,
+                          txCurrency,
+                          base,
+                        );
                         return _TransactionCard(
                           transaction: transaction,
                           assetName: assetNames[transaction.assetId],
+                          amountInBase: amountInBase,
+                          baseCurrency: base,
+                          txCurrency: txCurrency,
                           onDelete: () => _deleteTransaction(transaction),
                         );
                       },
@@ -235,11 +253,24 @@ class _FilterChip extends StatelessWidget {
 class _TransactionCard extends StatelessWidget {
   final Transaction transaction;
   final String? assetName;
+
+  /// Transaction amount already converted into [baseCurrency] for display.
+  final double amountInBase;
+
+  /// Base currency to format the (converted) value amount in.
+  final String baseCurrency;
+
+  /// The transaction's own currency — used for the per-unit price, which is
+  /// left unconverted.
+  final String txCurrency;
   final VoidCallback onDelete;
 
   const _TransactionCard({
     required this.transaction,
     required this.assetName,
+    required this.amountInBase,
+    required this.baseCurrency,
+    required this.txCurrency,
     required this.onDelete,
   });
 
@@ -365,7 +396,7 @@ class _TransactionCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  '${isInflow ? '+' : '-'}${CurrencyFormatter.formatINR(transaction.amount)}',
+                  '${isInflow ? '+' : '-'}${CurrencyFormatter.formatCurrency(amountInBase, baseCurrency)}',
                   style: AppTheme.heading(size: 13.5, color: amountColor),
                 ),
                 const SizedBox(height: 2),
@@ -392,7 +423,7 @@ class _TransactionCard extends StatelessWidget {
     final parts = <String>[];
     if (transaction.quantity > 0) {
       parts.add(
-        '${CurrencyFormatter.formatQuantity(transaction.quantity)} @ ${CurrencyFormatter.formatINR(transaction.price)}',
+        '${CurrencyFormatter.formatQuantity(transaction.quantity)} @ ${CurrencyFormatter.formatCurrency(transaction.price, txCurrency)}',
       );
     }
     if (transaction.notes != null && transaction.notes!.trim().isNotEmpty) {
