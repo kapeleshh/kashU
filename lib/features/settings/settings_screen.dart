@@ -405,7 +405,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               controller: textController,
               maxLines: 6,
               decoration: const InputDecoration(
-                hintText: '{ "version": "1.0", "assets": [...] }',
+                // Must match the real export envelope (ImportValidator
+                // rejects a bare "version" key).
+                hintText:
+                    '{ "schemaVersion": ${AppConstants.backupFormatVersion}, "assets": [...] }',
                 border: OutlineInputBorder(),
               ),
               style: const TextStyle(fontFamily: 'monospace', fontSize: 12),

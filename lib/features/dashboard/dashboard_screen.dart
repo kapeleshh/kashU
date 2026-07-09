@@ -269,8 +269,8 @@ class _DashboardContent extends ConsumerWidget {
 
             const SizedBox(height: 20),
 
-            // On the move (gainers)
-            _SectionTitle('On the move'),
+            // Best performers (all-time gainers)
+            _SectionTitle('Best performers'),
             const SizedBox(height: 11),
             portfolioAsync.when(
               data: (summary) => summary.topGainers.isEmpty
@@ -281,7 +281,7 @@ class _DashboardContent extends ConsumerWidget {
               error: (e, _) => const SizedBox.shrink(),
             ),
 
-            // Cooling off (losers) — only when there are any
+            // Underperformers (all-time losers) — only when there are any
             portfolioAsync.maybeWhen(
               data: (summary) => summary.topLosers.isEmpty
                   ? const SizedBox.shrink()
@@ -289,7 +289,7 @@ class _DashboardContent extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const SizedBox(height: 20),
-                        _SectionTitle('Cooling off'),
+                        _SectionTitle('Underperformers'),
                         const SizedBox(height: 11),
                         TopPerformersList(
                             assets: summary.topLosers, isGainers: false),
