@@ -9,6 +9,10 @@ class PortfolioSummary {
   final double totalGainLossPercentage;
   final double todaysChange;
   final double todaysChangePercentage;
+
+  /// True only when there is a prior-day snapshot to compare against, so the
+  /// UI can hide the "today" figure until day-over-day data actually exists.
+  final bool hasTodaysChange;
   final Map<AssetType, double> assetAllocation;
   final List<Asset> topGainers;
   final List<Asset> topLosers;
@@ -22,6 +26,7 @@ class PortfolioSummary {
     required this.totalGainLossPercentage,
     required this.todaysChange,
     required this.todaysChangePercentage,
+    this.hasTodaysChange = false,
     required this.assetAllocation,
     required this.topGainers,
     required this.topLosers,

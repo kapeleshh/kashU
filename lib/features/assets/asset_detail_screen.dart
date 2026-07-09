@@ -39,6 +39,9 @@ class AssetDetailScreen extends ConsumerWidget {
     final gainLossBase =
         rates.convertBetween(asset.gainLoss.abs(), priceCurrency, base);
 
+    // Real per-asset value history (native currency; shape is what matters).
+    final priceSeries = ref.watch(priceHistoryServiceProvider).assetSeries(asset.id);
+
     return Scaffold(
       body: SafeArea(
         bottom: false,
@@ -60,6 +63,7 @@ class AssetDetailScreen extends ConsumerWidget {
                 currentValueBase: currentValueBase,
                 gainLossBase: gainLossBase,
                 base: base,
+                priceSeries: priceSeries,
               ),
 
               const SizedBox(height: 14),
@@ -358,6 +362,10 @@ class _ValueCard extends StatelessWidget {
   /// The portfolio base currency these values are expressed in.
   final String base;
 
+  /// Recorded daily value history for this asset (native currency, oldest →
+  /// newest). Empty or single-point series render no chart.
+  final List<double> priceSeries;
+
   const _ValueCard({
     required this.asset,
     required this.isProfit,
@@ -365,6 +373,7 @@ class _ValueCard extends StatelessWidget {
     required this.currentValueBase,
     required this.gainLossBase,
     required this.base,
+    required this.priceSeries,
   });
 
   @override
@@ -425,6 +434,32 @@ class _ValueCard extends StatelessWidget {
               color: AppColors.textSecondaryOn(context),
             ),
           ),
+          // Real value history (only once ≥2 daily snapshots exist). Colour
+          // reflects the plotted series' own direction, not all-time gain.
+          if (priceSeries.length >= 2) ...[
+            const SizedBox(height: 14),
+            SizedBox(
+              height: 56,
+              width: double.infinity,
+              child: CustomPaint(
+                painter: _SparklinePainter(
+                  values: priceSeries,
+                  color: priceSeries.last >= priceSeries.first
+                      ? AppColors.gainOn(context)
+                      : AppColors.lossOn(context),
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Recent trend',
+              style: AppTheme.body(
+                size: 10.5,
+                weight: FontWeight.w600,
+                color: AppColors.textTertiaryOn(context),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -961,4 +996,79 @@ class _UpdateButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Area sparkline over a REAL value series (from recorded daily snapshots).
+/// Unlike the earlier decorative version, every point is actual data.
+class _SparklinePainter extends CustomPainter {
+  final List<double> values;
+  final Color color;
+
+  _SparklinePainter({required this.values, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.length < 2) return;
+
+    var min = values.first;
+    var max = values.first;
+    for (final v in values) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    final range = (max - min).abs();
+
+    double yFor(double v) {
+      const topPad = 6.0;
+      const bottomPad = 6.0;
+      final usable = size.height - topPad - bottomPad;
+      if (range == 0) return size.height / 2; // flat series → mid-line
+      final t = (v - min) / range; // 0 (min) → 1 (max)
+      return topPad + (1 - t) * usable; // higher value = higher on screen
+    }
+
+    final dx = size.width / (values.length - 1);
+    final line = Path();
+    final fill = Path()..moveTo(0, size.height);
+    for (var i = 0; i < values.length; i++) {
+      final x = dx * i;
+      final y = yFor(values[i]);
+      if (i == 0) {
+        line.moveTo(x, y);
+      } else {
+        line.lineTo(x, y);
+      }
+      fill.lineTo(x, y);
+    }
+    fill.lineTo(size.width, size.height);
+    fill.close();
+
+    canvas.drawPath(
+      fill,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [color.withValues(alpha: 0.26), color.withValues(alpha: 0.0)],
+        ).createShader(Offset.zero & size),
+    );
+    canvas.drawPath(
+      line,
+      Paint()
+        ..color = color
+        ..strokeWidth = 3
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+    canvas.drawCircle(
+      Offset(size.width, yFor(values.last)),
+      4,
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _SparklinePainter old) =>
+      old.values != values || old.color != color;
 }

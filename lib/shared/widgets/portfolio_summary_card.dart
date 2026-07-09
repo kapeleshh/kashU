@@ -80,9 +80,21 @@ class PortfolioSummaryCard extends StatelessWidget {
                 style: AppTheme.heading(size: 33, color: Colors.white),
               ),
               const SizedBox(height: 12),
-              _pill(
-                '${isProfit ? '+' : '-'}${CurrencyFormatter.formatPercentage(data.totalGainLossPercentage.abs(), showSign: false)} '
-                '(${CurrencyFormatter.formatCompactCurrency(data.totalGainLoss.abs(), baseCurrency)}) all-time',
+              Wrap(
+                spacing: 7,
+                runSpacing: 7,
+                children: [
+                  // Today's change — only once a prior-day snapshot exists.
+                  if (data.hasTodaysChange)
+                    _pill(
+                      '${data.todaysChange >= 0 ? '▲' : '▼'} '
+                      '${CurrencyFormatter.formatCompactCurrency(data.todaysChange.abs(), baseCurrency)} today',
+                    ),
+                  _pill(
+                    '${isProfit ? '+' : '-'}${CurrencyFormatter.formatPercentage(data.totalGainLossPercentage.abs(), showSign: false)} '
+                    '(${CurrencyFormatter.formatCompactCurrency(data.totalGainLoss.abs(), baseCurrency)}) all-time',
+                  ),
+                ],
               ),
               if (!data.isEmpty) ...[
                 const SizedBox(height: 9),
