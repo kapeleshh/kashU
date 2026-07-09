@@ -35,9 +35,9 @@ Future<void> _doRefreshPrices(WidgetRef ref, BuildContext context) async {
     ref.invalidate(allAssetsProvider);
     ref.invalidate(portfolioSummaryProvider);
 
-    // Update home screen widget with latest portfolio figures. Use the
-    // summary's base-currency-converted totals (not raw repo sums, which
-    // would mis-total a mixed-currency portfolio).
+    // Update home screen widget with latest portfolio figures, and record a
+    // daily price snapshot (drives today's-change + the detail sparkline).
+    // Both use the summary's base-currency total; both are best-effort.
     try {
       final summary = await ref.read(portfolioSummaryProvider.future);
       await WidgetUpdateService.updatePortfolioWidget(
@@ -46,8 +46,16 @@ Future<void> _doRefreshPrices(WidgetRef ref, BuildContext context) async {
         gainLossPct: summary.totalGainLossPercentage,
         baseCurrency: ref.read(baseCurrencyProvider),
       );
+
+      final assets = ref.read(allAssetsProvider);
+      if (assets.isNotEmpty) {
+        await ref.read(priceHistoryServiceProvider).recordDailySnapshot(
+              total: summary.totalValue,
+              assetValues: {for (final a in assets) a.id: a.currentValue},
+            );
+      }
     } catch (_) {
-      // Widget update is best-effort; never crash the main refresh flow
+      // Widget update + history are best-effort; never crash the refresh flow
     }
 
     // On success the status pill below the header is the only feedback;

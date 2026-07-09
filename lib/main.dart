@@ -139,6 +139,7 @@ Future<void> _bootstrap(HiveAesCipher cipher) async {
     await Hive.openBox<Transaction>(AppConstants.transactionsBox,
         encryptionCipher: cipher);
     await Hive.openBox(AppConstants.priceCacheBox, encryptionCipher: cipher);
+    await Hive.openBox(AppConstants.priceHistoryBox, encryptionCipher: cipher);
   } catch (e, stack) {
     debugPrint('[KashU] Failed to open Hive boxes: $e\n$stack');
     if (AppConfig.isSentryEnabled) {

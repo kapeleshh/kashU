@@ -10,6 +10,7 @@ import '../../data/repositories/transaction_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/currency_converter_service.dart';
 import '../../services/gold_price_service.dart';
+import '../../services/price_history_service.dart';
 import '../../services/price_update_service.dart';
 
 /// Provider for AssetRepository
@@ -100,13 +101,23 @@ final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
   final totalGainLossPercentage =
       totalInvested > 0 ? (totalGainLoss / totalInvested) * 100 : 0.0;
 
+  // Today's change: current base-currency total vs the most recent snapshot
+  // from a prior day. Shown only once such a baseline exists.
+  final priorDayTotal = ref.watch(priceHistoryServiceProvider).previousDayTotal();
+  final hasTodaysChange = priorDayTotal != null;
+  final todaysChange = hasTodaysChange ? totalValue - priorDayTotal : 0.0;
+  final todaysChangePercentage = (hasTodaysChange && priorDayTotal > 0)
+      ? (todaysChange / priorDayTotal) * 100
+      : 0.0;
+
   return PortfolioSummary(
     totalValue: totalValue,
     totalInvested: totalInvested,
     totalGainLoss: totalGainLoss,
     totalGainLossPercentage: totalGainLossPercentage,
-    todaysChange: 0,
-    todaysChangePercentage: 0,
+    todaysChange: todaysChange,
+    todaysChangePercentage: todaysChangePercentage,
+    hasTodaysChange: hasTodaysChange,
     assetAllocation: allocation,
     topGainers: repository.getTopGainers(),
     topLosers: repository.getTopLosers(),
@@ -133,6 +144,11 @@ final currencyConverterServiceProvider =
 /// static rates via [ExchangeRateResult.convertBetween] while this is loading.
 final exchangeRatesProvider = FutureProvider<ExchangeRateResult>((ref) async {
   return ref.watch(currencyConverterServiceProvider).fetchRates();
+});
+
+/// Provider for PriceHistoryService (daily snapshots → today's change + sparkline)
+final priceHistoryServiceProvider = Provider<PriceHistoryService>((ref) {
+  return PriceHistoryService();
 });
 
 /// Provider for GoldPriceService (uses COMEX GC=F + live forex + Indian taxes)
