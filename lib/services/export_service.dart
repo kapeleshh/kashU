@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'package:csv/csv.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
@@ -14,36 +14,56 @@ import '../data/models/transaction_type.dart';
 abstract final class ExportService {
   // ─── CSV ──────────────────────────────────────────────────────────────────
 
+  /// Build the holdings CSV rows (header + one row per asset). Pure — no I/O,
+  /// so it's unit-testable independently of the share sheet.
+  static List<List<dynamic>> holdingsCsvRows(List<Asset> assets) => [
+        [
+          'Name', 'Symbol', 'Type', 'Platform', 'Currency',
+          'Quantity', 'Avg Buy Price', 'Current Price',
+          'Invested', 'Current Value', 'Gain/Loss', 'Gain/Loss %',
+          'Purchase Date',
+        ],
+        for (final a in assets)
+          [
+            a.name,
+            a.symbol ?? '',
+            a.type.displayName,
+            a.platform ?? '',
+            a.currency,
+            _fmt(a.quantity),
+            _fmt(a.purchasePrice),
+            _fmt(a.currentPrice),
+            _fmt(a.totalInvested),
+            _fmt(a.currentValue),
+            _fmt(a.gainLoss),
+            '${a.gainLossPercentage.toStringAsFixed(2)}%',
+            _date(a.purchaseDate),
+          ],
+      ];
+
+  /// Build the transactions CSV rows (header + one row per transaction). Pure.
+  static List<List<dynamic>> transactionsCsvRows(
+    List<Transaction> transactions,
+    Map<String, String> assetNames,
+  ) =>
+      [
+        ['Date', 'Asset', 'Type', 'Quantity', 'Price', 'Amount', 'Currency', 'Notes'],
+        for (final t in transactions)
+          [
+            _date(t.date),
+            assetNames[t.assetId] ?? t.assetId,
+            t.type.displayName,
+            _fmt(t.quantity),
+            _fmt(t.price),
+            _fmt(t.amount),
+            t.currency,
+            t.notes ?? '',
+          ],
+      ];
+
   /// Export all holdings as a CSV file and trigger the share sheet.
   static Future<void> exportHoldingsCsv(List<Asset> assets) async {
-    final rows = <List<dynamic>>[
-      // Header
-      [
-        'Name', 'Symbol', 'Type', 'Platform', 'Currency',
-        'Quantity', 'Avg Buy Price', 'Current Price',
-        'Invested', 'Current Value', 'Gain/Loss', 'Gain/Loss %',
-        'Purchase Date',
-      ],
-      // Data
-      for (final a in assets)
-        [
-          a.name,
-          a.symbol ?? '',
-          a.type.displayName,
-          a.platform ?? '',
-          a.currency,
-          _fmt(a.quantity),
-          _fmt(a.purchasePrice),
-          _fmt(a.currentPrice),
-          _fmt(a.totalInvested),
-          _fmt(a.currentValue),
-          _fmt(a.gainLoss),
-          '${a.gainLossPercentage.toStringAsFixed(2)}%',
-          _date(a.purchaseDate),
-        ],
-    ];
-
-    final csv = const ListToCsvConverter().convert(rows);
+    final csv = const ListToCsvConverter().convert(holdingsCsvRows(assets));
     await _shareText(csv, 'kashu_holdings', 'csv', 'KashU Holdings');
   }
 
@@ -52,22 +72,8 @@ abstract final class ExportService {
     List<Transaction> transactions,
     Map<String, String> assetNames,
   ) async {
-    final rows = <List<dynamic>>[
-      ['Date', 'Asset', 'Type', 'Quantity', 'Price', 'Amount', 'Currency', 'Notes'],
-      for (final t in transactions)
-        [
-          _date(t.date),
-          assetNames[t.assetId] ?? t.assetId,
-          t.type.displayName,
-          _fmt(t.quantity),
-          _fmt(t.price),
-          _fmt(t.amount),
-          t.currency,
-          t.notes ?? '',
-        ],
-    ];
-
-    final csv = const ListToCsvConverter().convert(rows);
+    final csv = const ListToCsvConverter()
+        .convert(transactionsCsvRows(transactions, assetNames));
     await _shareText(csv, 'kashu_transactions', 'csv', 'KashU Transactions');
   }
 
@@ -84,7 +90,7 @@ abstract final class ExportService {
     final now = DateTime.now();
 
     // Compute capital gains: sell transactions where buy data is available
-    final gains = _computeCapitalGains(assets, transactions, assetNames);
+    final gains = computeCapitalGains(assets, transactions, assetNames);
 
     doc.addPage(
       pw.MultiPage(
@@ -127,7 +133,7 @@ abstract final class ExportService {
   ) async {
     final doc = pw.Document();
     final now = DateTime.now();
-    final gains = _computeCapitalGains(assets, transactions, assetNames);
+    final gains = computeCapitalGains(assets, transactions, assetNames);
 
     doc.addPage(
       pw.MultiPage(
@@ -154,12 +160,12 @@ abstract final class ExportService {
 
   // ─── Capital gains calculation ────────────────────────────────────────────
 
-  static List<_CapitalGainRow> _computeCapitalGains(
+  static List<CapitalGainRow> computeCapitalGains(
     List<Asset> assets,
     List<Transaction> transactions,
     Map<String, String> assetNames,
   ) {
-    final rows = <_CapitalGainRow>[];
+    final rows = <CapitalGainRow>[];
     final assetMap = {for (final a in assets) a.id: a};
 
     final sells = transactions
@@ -181,7 +187,7 @@ abstract final class ExportService {
           sell.date.difference(asset.purchaseDate).inDays;
       final isLongTerm = holdingDays >= 365;
 
-      rows.add(_CapitalGainRow(
+      rows.add(CapitalGainRow(
         assetName: assetNames[sell.assetId] ?? 'Unknown',
         assetType: asset.type,
         saleDate: sell.date,
@@ -327,7 +333,7 @@ abstract final class ExportService {
   }
 
   static pw.Widget _pdfCapitalGainsTable(
-      List<_CapitalGainRow> gains, String currency) {
+      List<CapitalGainRow> gains, String currency) {
     if (gains.isEmpty) {
       return pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -476,7 +482,7 @@ abstract final class ExportService {
 
 // ─── Internal data class ───────────────────────────────────────────────────
 
-class _CapitalGainRow {
+class CapitalGainRow {
   final String assetName;
   final AssetType assetType;
   final DateTime saleDate;
@@ -490,7 +496,7 @@ class _CapitalGainRow {
   final int holdingDays;
   final String currency;
 
-  const _CapitalGainRow({
+  const CapitalGainRow({
     required this.assetName,
     required this.assetType,
     required this.saleDate,
