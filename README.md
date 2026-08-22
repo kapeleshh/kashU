@@ -94,6 +94,30 @@ flutter build apk --debug
 flutter build ios --debug
 ```
 
+### Generating your release keystore (Android)
+
+Release builds are signed from `android/key.properties`, which is **not**
+checked in — you generate and keep your own keystore. Without it, release
+builds fall back to debug signing (fine for local testing, not for
+distribution).
+
+```bash
+keytool -genkey -v -keystore ~/kashu-release.jks -keyalg RSA \
+  -keysize 2048 -validity 10000 -alias kashu
+```
+
+Then create `android/key.properties`:
+
+```properties
+storeFile=/absolute/path/to/kashu-release.jks
+storePassword=<store password>
+keyAlias=kashu
+keyPassword=<key password>
+```
+
+Both the keystore and `key.properties` are gitignored. Keep backups — a lost
+keystore means you cannot update a published app.
+
 ---
 
 ## 📁 Project Structure

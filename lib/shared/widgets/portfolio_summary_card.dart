@@ -1,225 +1,190 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_strings.dart';
+import '../../core/theme/app_decorations.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../data/models/portfolio_summary.dart';
 
+/// The "Total worth" hero — an indigo→lavender gradient card with the
+/// portfolio value and the all-time return as a soft pill.
 class PortfolioSummaryCard extends StatelessWidget {
   final PortfolioSummary? summary;
   final bool isLoading;
   final String? errorMessage;
 
+  /// Currency the (already-converted) summary values are shown in.
+  final String baseCurrency;
+
   const PortfolioSummaryCard({
     super.key,
     required this.summary,
+    this.baseCurrency = 'INR',
   })  : isLoading = false,
         errorMessage = null;
 
   const PortfolioSummaryCard.loading({super.key})
       : summary = null,
         isLoading = true,
-        errorMessage = null;
+        errorMessage = null,
+        baseCurrency = 'INR';
 
   const PortfolioSummaryCard.error(String error, {super.key})
       : summary = null,
         isLoading = false,
-        errorMessage = error;
+        errorMessage = error,
+        baseCurrency = 'INR';
 
   @override
   Widget build(BuildContext context) {
-    if (isLoading) {
-      return _buildLoadingCard();
-    }
-
-    if (errorMessage != null) {
-      return _buildErrorCard();
-    }
+    if (isLoading) return _buildLoadingCard(context);
+    if (errorMessage != null) return _buildErrorCard(context);
 
     final data = summary ?? PortfolioSummary.empty();
     final isProfit = data.totalGainLoss >= 0;
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        gradient: AppColors.primaryGradient,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primary.withValues(alpha: 0.3),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
-        ],
+        gradient: AppColors.heroGradient,
+        borderRadius: BorderRadius.circular(AppRadii.hero),
+        boxShadow: AppShadows.glow(AppColors.primary, opacity: 0.5),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          // decorative blobs
+          Positioned(
+            right: -28,
+            top: -28,
+            child: _blob(90, 0.12),
+          ),
+          Positioned(
+            right: 24,
+            bottom: -34,
+            child: _blob(60, 0.10),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 AppStrings.totalPortfolioValue,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.8),
-                  fontSize: 14,
+                style: AppTheme.body(
+                  size: 12,
+                  weight: FontWeight.w700,
+                  color: Colors.white.withValues(alpha: 0.85),
                 ),
               ),
-              if (data.lastUpdated != null)
-                Text(
-                  'Updated just now',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.6),
-                    fontSize: 12,
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            CurrencyFormatter.formatINR(data.totalValue),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 32,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              _buildStatItem(
-                label: AppStrings.totalInvested,
-                value: CurrencyFormatter.formatCompactINR(data.totalInvested),
+              const SizedBox(height: 4),
+              Text(
+                CurrencyFormatter.formatCurrency(data.totalValue, baseCurrency),
+                style: AppTheme.heading(size: 33, color: Colors.white),
               ),
-              const SizedBox(width: 24),
-              _buildStatItem(
-                label: AppStrings.totalGainLoss,
-                value: CurrencyFormatter.formatCompactINR(data.totalGainLoss.abs()),
-                valueColor: isProfit ? AppColors.successLight : AppColors.errorLight,
-                prefix: isProfit ? '+' : '-',
-                suffix: ' (${CurrencyFormatter.formatPercentage(data.totalGainLossPercentage)})',
-              ),
-            ],
-          ),
-          if (data.isEmpty) ...[
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 7,
+                runSpacing: 7,
                 children: [
-                  Icon(
-                    Icons.info_outline,
-                    color: Colors.white.withValues(alpha: 0.8),
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      AppStrings.noAssets,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.8),
-                        fontSize: 13,
-                      ),
+                  // Today's change — only once a prior-day snapshot exists.
+                  if (data.hasTodaysChange)
+                    _pill(
+                      '${data.todaysChange >= 0 ? '▲' : '▼'} '
+                      '${CurrencyFormatter.formatCompactCurrency(data.todaysChange.abs(), baseCurrency)} today',
                     ),
+                  _pill(
+                    '${isProfit ? '+' : '-'}${CurrencyFormatter.formatPercentage(data.totalGainLossPercentage.abs(), showSign: false)} '
+                    '(${CurrencyFormatter.formatCompactCurrency(data.totalGainLoss.abs(), baseCurrency)}) all-time',
                   ),
                 ],
               ),
-            ),
-          ],
+              if (!data.isEmpty) ...[
+                const SizedBox(height: 9),
+                Text(
+                  'Invested ${CurrencyFormatter.formatCompactCurrency(data.totalInvested, baseCurrency)}',
+                  style: AppTheme.body(
+                    size: 11,
+                    weight: FontWeight.w600,
+                    color: Colors.white.withValues(alpha: 0.82),
+                  ),
+                ),
+              ],
+              if (data.isEmpty) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(AppRadii.small),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.auto_awesome,
+                          color: Colors.white.withValues(alpha: 0.9), size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          AppStrings.noAssets,
+                          style: AppTheme.body(
+                            size: 12.5,
+                            color: Colors.white.withValues(alpha: 0.9),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildStatItem({
-    required String label,
-    required String value,
-    Color? valueColor,
-    String? prefix,
-    String? suffix,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.6),
-            fontSize: 12,
-          ),
+  Widget _blob(double size, double opacity) => Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: opacity),
+          shape: BoxShape.circle,
         ),
-        const SizedBox(height: 4),
-        RichText(
-          text: TextSpan(
-            children: [
-              if (prefix != null)
-                TextSpan(
-                  text: prefix,
-                  style: TextStyle(
-                    color: valueColor ?? Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              TextSpan(
-                text: value,
-                style: TextStyle(
-                  color: valueColor ?? Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              if (suffix != null)
-                TextSpan(
-                  text: suffix,
-                  style: TextStyle(
-                    color: valueColor?.withValues(alpha: 0.8) ?? Colors.white.withValues(alpha: 0.8),
-                    fontSize: 12,
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+      );
 
-  Widget _buildLoadingCard() {
+  Widget _pill(String text) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.22),
+          borderRadius: BorderRadius.circular(AppRadii.pill),
+        ),
+        child: Text(
+          text,
+          style: AppTheme.body(
+            size: 11.5,
+            weight: FontWeight.w700,
+            color: Colors.white,
+          ),
+        ),
+      );
+
+  Widget _buildLoadingCard(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(20),
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(AppRadii.hero),
+        boxShadow: AppShadows.soft(),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildShimmer(width: 150, height: 14),
+          _shimmer(140, 14),
           const SizedBox(height: 12),
-          _buildShimmer(width: 200, height: 32),
+          _shimmer(200, 34),
           const SizedBox(height: 16),
           Row(
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildShimmer(width: 80, height: 12),
-                  const SizedBox(height: 4),
-                  _buildShimmer(width: 100, height: 16),
-                ],
-              ),
-              const SizedBox(width: 24),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildShimmer(width: 80, height: 12),
-                  const SizedBox(height: 4),
-                  _buildShimmer(width: 120, height: 16),
-                ],
-              ),
+              _shimmer(110, 26),
+              const SizedBox(width: 8),
+              _shimmer(110, 26),
             ],
           ),
         ],
@@ -227,38 +192,33 @@ class PortfolioSummaryCard extends StatelessWidget {
     );
   }
 
-  Widget _buildShimmer({required double width, required double height}) {
-    return Container(
-      width: width,
-      height: height,
-      decoration: BoxDecoration(
-        color: AppColors.shimmerBase,
-        borderRadius: BorderRadius.circular(4),
-      ),
-    );
-  }
+  Widget _shimmer(double width, double height) => Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: AppColors.shimmerBase,
+          borderRadius: BorderRadius.circular(8),
+        ),
+      );
 
-  Widget _buildErrorCard() {
+  Widget _buildErrorCard(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.error.withValues(alpha: 0.3)),
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(AppRadii.hero),
+        border: Border.all(color: AppColors.error.withValues(alpha: 0.35)),
       ),
       child: Row(
         children: [
-          Icon(
-            Icons.error_outline,
-            color: AppColors.error,
-            size: 24,
-          ),
+          const Icon(Icons.error_outline, color: AppColors.error, size: 24),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
               errorMessage ?? AppStrings.errorGeneric,
-              style: TextStyle(
-                color: AppColors.textSecondary,
+              style: AppTheme.body(
+                size: 13,
+                color: Theme.of(context).colorScheme.onSurface,
               ),
             ),
           ),

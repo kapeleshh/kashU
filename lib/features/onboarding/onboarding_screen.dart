@@ -4,6 +4,8 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
+import '../../core/theme/app_decorations.dart';
+import '../../core/theme/app_theme.dart';
 import '../dashboard/dashboard_screen.dart';
 
 class OnboardingScreen extends StatefulWidget {
@@ -50,7 +52,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final isLastPage = _currentPage == _pages.length - 1;
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         child: Column(
           children: [
@@ -63,7 +65,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   onPressed: _finish,
                   child: Text(
                     'Skip',
-                    style: TextStyle(color: AppColors.textSecondary),
+                    style: AppTheme.body(
+                      size: 14,
+                      weight: FontWeight.w700,
+                      color: AppColors.textSecondaryOn(context),
+                    ),
                   ),
                 ),
               ),
@@ -90,45 +96,70 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       final active = i == _currentPage;
                       return AnimatedContainer(
                         duration: const Duration(milliseconds: 250),
+                        curve: Curves.easeInOut,
                         margin: const EdgeInsets.symmetric(horizontal: 4),
-                        width: active ? 24 : 8,
+                        width: active ? 26 : 8,
                         height: 8,
                         decoration: BoxDecoration(
+                          gradient: active ? AppColors.primaryGradient : null,
                           color: active
-                              ? AppColors.primary
-                              : AppColors.textTertiary,
+                              ? null
+                              : AppColors.textTertiaryOn(context)
+                                  .withValues(alpha: 0.45),
                           borderRadius: BorderRadius.circular(4),
                         ),
                       );
                     }),
                   ),
                   const SizedBox(height: 24),
-                  // CTA button
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _nextPage,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      child: Text(
-                        isLastPage ? 'Get Started' : 'Next',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
+                  // CTA button — full-width indigo→lavender gradient
+                  _GradientCtaButton(
+                    label: isLastPage ? 'Get Started' : 'Next',
+                    onPressed: _nextPage,
                   ),
                 ],
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-width indigo→lavender gradient call-to-action button.
+class _GradientCtaButton extends StatelessWidget {
+  final String label;
+  final VoidCallback onPressed;
+
+  const _GradientCtaButton({required this.label, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: AppColors.primaryGradient,
+        borderRadius: BorderRadius.circular(AppRadii.tile),
+        boxShadow: AppShadows.glow(AppColors.primary, opacity: 0.5),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(AppRadii.tile),
+          child: Container(
+            width: double.infinity,
+            alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(vertical: 17),
+            child: Text(
+              label,
+              style: AppTheme.heading(
+                size: 16,
+                weight: FontWeight.w700,
+                color: Colors.white,
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -147,28 +178,22 @@ class _WelcomePage extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Logo
+          // Logo — brand gradient badge with soft glow
           Container(
-            width: 100,
-            height: 100,
+            width: 104,
+            height: 104,
             decoration: BoxDecoration(
-              gradient: AppColors.primaryGradient,
-              borderRadius: BorderRadius.circular(28),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.primary.withValues(alpha: 0.4),
-                  blurRadius: 32,
-                  offset: const Offset(0, 8),
-                ),
-              ],
+              gradient: AppColors.heroGradient,
+              borderRadius: BorderRadius.circular(AppRadii.hero),
+              boxShadow: AppShadows.glow(AppColors.primary, opacity: 0.55),
             ),
-            child: const Center(
+            child: Center(
               child: Text(
                 'K',
-                style: TextStyle(
+                style: AppTheme.heading(
+                  size: 52,
+                  weight: FontWeight.w800,
                   color: Colors.white,
-                  fontSize: 52,
-                  fontWeight: FontWeight.bold,
                 ),
               ),
             ),
@@ -176,29 +201,31 @@ class _WelcomePage extends StatelessWidget {
           const SizedBox(height: 40),
           Text(
             'Welcome to ${AppStrings.appName}',
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
-                ),
+            style: AppTheme.heading(
+              size: 26,
+              weight: FontWeight.w700,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           Text(
             AppStrings.appTagline,
-            style: TextStyle(
-              color: AppColors.textSecondary,
-              fontSize: 18,
+            style: AppTheme.body(
+              size: 17,
+              weight: FontWeight.w600,
+              color: AppColors.textSecondaryOn(context),
             ),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 22),
           Text(
-            'Track all your investments — stocks, mutual funds, gold, crypto and more — in one clean dashboard.',
-            style: TextStyle(
-              color: AppColors.textTertiary,
-              fontSize: 15,
-              height: 1.6,
-            ),
+            'All your investments, one calm dashboard.',
+            style: AppTheme.body(
+              size: 15,
+              weight: FontWeight.w500,
+              color: AppColors.textTertiaryOn(context),
+            ).copyWith(height: 1.6),
             textAlign: TextAlign.center,
           ),
         ],
@@ -222,15 +249,20 @@ class _FeaturesPage extends StatelessWidget {
         children: [
           Text(
             'Everything in one place',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
-                ),
+            style: AppTheme.heading(
+              size: 22,
+              weight: FontWeight.w700,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
           ),
           const SizedBox(height: 8),
           Text(
             'Live prices, allocation charts, and performance at a glance.',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 15),
+            style: AppTheme.body(
+              size: 15,
+              weight: FontWeight.w500,
+              color: AppColors.textSecondaryOn(context),
+            ),
           ),
           const SizedBox(height: 36),
           ..._features.map((f) => _FeatureTile(
@@ -249,19 +281,19 @@ class _FeaturesPage extends StatelessWidget {
       Icons.show_chart,
       AppColors.stockColor,
       'Stocks & Mutual Funds',
-      'NSE, BSE, NASDAQ — live prices via Yahoo Finance',
+      'Live prices for NSE, BSE and NASDAQ',
     ),
     (
       Icons.diamond,
       AppColors.goldColor,
       'Gold & Silver',
-      'COMEX prices with Indian import duty + GST applied',
+      'Live gold and silver rates in INR',
     ),
     (
       Icons.currency_bitcoin,
       AppColors.cryptoColor,
       'Cryptocurrency',
-      '10,000+ coins via CoinGecko, no API key needed',
+      '10,000+ coins with live prices',
     ),
     (
       Icons.savings,
@@ -291,14 +323,16 @@ class _FeatureTile extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 20),
       child: Row(
         children: [
+          // Asset-tone gradient avatar badge
           Container(
-            width: 48,
-            height: 48,
+            width: 50,
+            height: 50,
             decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(14),
+              gradient: softAvatarGradient(color),
+              borderRadius: BorderRadius.circular(AppRadii.avatar),
+              boxShadow: AppShadows.glow(color, opacity: 0.35),
             ),
-            child: Icon(icon, color: color, size: 24),
+            child: Icon(icon, color: Colors.white, size: 24),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -307,17 +341,19 @@ class _FeatureTile extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
+                  style: AppTheme.body(
+                    size: 15,
+                    weight: FontWeight.w700,
+                    color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 3),
                 Text(
                   subtitle,
-                  style: TextStyle(
-                    color: AppColors.textTertiary,
-                    fontSize: 13,
+                  style: AppTheme.body(
+                    size: 13,
+                    weight: FontWeight.w500,
+                    color: AppColors.textTertiaryOn(context),
                   ),
                 ),
               ],
@@ -341,41 +377,46 @@ class _PrivacyPage extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          // Mint gradient privacy/lock badge
           Container(
-            width: 88,
-            height: 88,
+            width: 92,
+            height: 92,
             decoration: BoxDecoration(
-              color: AppColors.success.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(24),
+              gradient: AppColors.mintGradient,
+              borderRadius: BorderRadius.circular(AppRadii.hero),
+              boxShadow: AppShadows.glow(AppColors.success, opacity: 0.45),
             ),
             child: const Icon(
               Icons.lock_outline,
-              color: AppColors.success,
+              color: Colors.white,
               size: 44,
             ),
           ),
           const SizedBox(height: 32),
           Text(
             'Your data stays on your device',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
-                ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'KashU is 100% offline-first. Your portfolio data never leaves your phone.',
-            style: TextStyle(
-              color: AppColors.textSecondary,
-              fontSize: 15,
-              height: 1.6,
+            style: AppTheme.heading(
+              size: 22,
+              weight: FontWeight.w700,
+              color: Theme.of(context).colorScheme.onSurface,
             ),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 32),
-          ..._privacyPoints.map(
-            (point) => _PrivacyPoint(icon: point.$1, text: point.$2),
+          const SizedBox(height: 30),
+          // Soft surface card grouping the privacy points
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(AppRadii.card),
+              boxShadow: AppShadows.soft(opacity: 0.16, y: 10, blur: 24),
+            ),
+            child: Column(
+              children: _privacyPoints
+                  .map((point) => _PrivacyPoint(icon: point.$1, text: point.$2))
+                  .toList(),
+            ),
           ),
         ],
       ),
@@ -399,15 +440,32 @@ class _PrivacyPoint extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.symmetric(vertical: 11),
       child: Row(
         children: [
-          Icon(icon, color: AppColors.success, size: 20),
-          const SizedBox(width: 12),
+          // Tonal mint icon chip
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: AppColors.success.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(AppRadii.avatar),
+            ),
+            child: Icon(
+              icon,
+              color: AppColors.gainOn(context),
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 14),
           Expanded(
             child: Text(
               text,
-              style: const TextStyle(fontSize: 15),
+              style: AppTheme.body(
+                size: 14.5,
+                weight: FontWeight.w600,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
             ),
           ),
         ],

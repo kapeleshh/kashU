@@ -39,6 +39,24 @@ class ExchangeRateResult {
   double convert(double amount, String targetCurrency) {
     return amount * getRate(targetCurrency);
   }
+
+  /// Convert [amount] from currency [from] to currency [to].
+  ///
+  /// Rates are [base]-relative (units of X per 1 [base]), so this routes
+  /// [from] → [base] → [to]. Falls back to the static approximate rates when
+  /// this result is a failure or a currency is missing, so a display path
+  /// never shows a wildly wrong figure or divides by zero.
+  double convertBetween(double amount, String from, String to) {
+    if (from == to) return amount;
+    final fromRate = success ? (rates[from] ?? _fallback(from)) : _fallback(from);
+    final toRate = success ? (rates[to] ?? _fallback(to)) : _fallback(to);
+    if (fromRate == 0) return amount;
+    // amount is in `from`; `base` per unit = amount / fromRate; then × toRate.
+    return (amount / fromRate) * toRate;
+  }
+
+  static double _fallback(String currency) =>
+      currency == 'USD' ? 1.0 : CurrencyConverterService.fallbackRate(currency);
 }
 
 /// Fetches live exchange rates using the free Open Exchange Rates API.

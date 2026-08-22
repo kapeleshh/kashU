@@ -1,14 +1,18 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:kashu/core/utils/result.dart';
 import 'package:kashu/data/models/asset.dart';
 import 'package:kashu/data/models/asset_type.dart';
 import 'package:kashu/data/repositories/asset_repository.dart';
 import 'package:kashu/services/coingecko_service.dart';
+import 'package:kashu/services/cryptocompare_service.dart';
 import 'package:kashu/services/currency_converter_service.dart';
 import 'package:kashu/services/gold_price_service.dart';
+import 'package:kashu/services/mutual_fund_service.dart';
 import 'package:kashu/services/price_cache_service.dart';
 import 'package:kashu/services/price_service.dart';
 import 'package:kashu/services/price_update_service.dart';
+import 'package:kashu/services/stooq_service.dart';
 import 'package:kashu/services/yahoo_finance_service.dart';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
@@ -17,6 +21,8 @@ class MockAssetRepository extends Mock implements AssetRepository {}
 
 class MockYahooFinanceService extends Mock implements YahooFinanceService {}
 
+class MockStooqService extends Mock implements StooqService {}
+
 class MockCurrencyConverterService extends Mock
     implements CurrencyConverterService {}
 
@@ -24,7 +30,21 @@ class MockGoldPriceService extends Mock implements GoldPriceService {}
 
 class MockCoinGeckoService extends Mock implements CoinGeckoService {}
 
+class MockCryptoCompareService extends Mock implements CryptoCompareService {}
+
 class MockPriceCacheService extends Mock implements PriceCacheService {}
+
+class MockMutualFundService extends Mock implements MutualFundService {}
+
+MutualFundResult _mf(int code, double nav) => MutualFundResult(
+      schemeCode: code,
+      schemeName: 'Scheme $code',
+      fundHouse: '',
+      schemeCategory: '',
+      schemeType: '',
+      nav: nav,
+      navDate: '01-01-2024',
+    );
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -84,36 +104,64 @@ void main() {
       success: false,
     ));
     registerFallbackValue(<String>[]);
+    registerFallbackValue(DateTime(2024));
   });
 
   late MockAssetRepository mockRepo;
   late MockYahooFinanceService mockYahoo;
+  late MockStooqService mockStooq;
   late MockCurrencyConverterService mockFx;
   late MockGoldPriceService mockGold;
   late MockPriceCacheService mockCache;
   late MockCoinGeckoService mockCoinGecko;
+  late MockCryptoCompareService mockCryptoCompare;
+  late MockMutualFundService mockMutualFund;
   late PriceUpdateService service;
 
   setUp(() {
     mockRepo = MockAssetRepository();
     mockYahoo = MockYahooFinanceService();
+    mockStooq = MockStooqService();
     mockFx = MockCurrencyConverterService();
     mockGold = MockGoldPriceService();
     mockCache = MockPriceCacheService();
     mockCoinGecko = MockCoinGeckoService();
+    mockCryptoCompare = MockCryptoCompareService();
+    mockMutualFund = MockMutualFundService();
 
     // Default: cache returns miss (no cached price)
     when(() => mockCache.cachePrice(any())).thenAnswer((_) async {});
     when(() => mockCache.getCachedResult(any()))
         .thenReturn(PriceResult.failure('x', 'no cache'));
 
+    // Default: fallback providers fail too (individual tests override).
+    // Injecting them keeps the tests hermetic — no real network attempts.
+    when(() => mockStooq.fetchPrice(any())).thenAnswer((inv) async =>
+        PriceResult.failure(
+            inv.positionalArguments.first as String, 'stooq unavailable'));
+    when(() => mockCryptoCompare.fetchPrice(any())).thenAnswer((inv) async =>
+        PriceResult.failure(inv.positionalArguments.first as String,
+            'cryptocompare unavailable'));
+    when(() => mockCryptoCompare.fetchMultiplePrices(any())).thenAnswer(
+        (inv) async => (inv.positionalArguments.first as List<String>)
+            .map((s) => PriceResult.failure(s, 'cryptocompare unavailable'))
+            .toList());
+
+    // Default: NAV fetch fails (individual tests override). Keeps tests
+    // hermetic — no real MFAPI.in call.
+    when(() => mockMutualFund.fetchNav(any())).thenAnswer(
+        (inv) async => Err('mfapi unavailable'));
+
     service = PriceUpdateService(
       assetRepository: mockRepo,
       yahooService: mockYahoo,
+      stooqService: mockStooq,
       currencyConverter: mockFx,
       goldPriceService: mockGold,
+      mutualFundService: mockMutualFund,
       priceCache: mockCache,
       coinGeckoFactory: (_) => mockCoinGecko,
+      cryptoFallbackFactory: (_) => mockCryptoCompare,
     );
   });
 
@@ -176,16 +224,48 @@ void main() {
           .thenAnswer((_) async =>
               PriceResult.failure('RELIANCE.NS', 'timeout'));
       // Cache has a valid price
-      when(() => mockCache.getCachedResult('RELIANCE.NS'))
-          .thenReturn(_success('RELIANCE.NS', 2800.0));
-      when(() => mockRepo.updateAssetPrice('s1', 2800.0))
+      final cachedAt = DateTime.now().subtract(const Duration(hours: 2));
+      when(() => mockCache.getCachedResult('RELIANCE.NS')).thenReturn(
+          PriceResult(
+              symbol: 'RELIANCE.NS',
+              price: 2800.0,
+              currency: 'INR',
+              fetchedAt: cachedAt,
+              success: true,
+              isStale: true));
+      when(() => mockRepo.updateAssetPrice('s1', 2800.0,
+          asOf: any(named: 'asOf'))).thenAnswer((_) async {});
+
+      final result = await service.refreshAllPrices();
+
+      expect(result.updated, 1);
+      expect(result.failed, 0);
+      // The fallback must carry the cached fetch time, not "now" — stale
+      // data must not be stamped fresh.
+      verify(() => mockRepo.updateAssetPrice('s1', 2800.0, asOf: cachedAt))
+          .called(1);
+    });
+
+    test('falls back to Stooq when Yahoo fails', () async {
+      final asset = _makeAsset(
+          id: 's1', symbol: 'RELIANCE.NS', type: AssetType.stock);
+      when(() => mockRepo.getAllAssets()).thenReturn([asset]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
+      when(() => mockYahoo.fetchPrice('RELIANCE.NS'))
+          .thenAnswer((_) async =>
+              PriceResult.failure('RELIANCE.NS', 'timeout'));
+      when(() => mockStooq.fetchPrice('RELIANCE.NS'))
+          .thenAnswer((_) async => _success('RELIANCE.NS', 2810.0));
+      when(() => mockRepo.updateAssetPrice('s1', 2810.0))
           .thenAnswer((_) async {});
 
       final result = await service.refreshAllPrices();
 
       expect(result.updated, 1);
       expect(result.failed, 0);
-      verify(() => mockRepo.updateAssetPrice('s1', 2800.0)).called(1);
+      verify(() => mockRepo.updateAssetPrice('s1', 2810.0)).called(1);
+      verifyNever(() => mockCache.getCachedResult(any()));
     });
 
     test('skips non-trackable asset types (e.g. cash)', () async {
@@ -258,13 +338,62 @@ void main() {
               ]);
       when(() => mockCache.getCachedResult('bitcoin'))
           .thenReturn(_success('bitcoin', 5750000.0));
-      when(() => mockRepo.updateAssetPrice('cr1', 5750000.0))
+      when(() => mockRepo.updateAssetPrice('cr1', 5750000.0,
+          asOf: any(named: 'asOf'))).thenAnswer((_) async {});
+
+      final result = await service.refreshAllPrices();
+
+      expect(result.updated, 1);
+      verify(() => mockRepo.updateAssetPrice('cr1', 5750000.0,
+          asOf: any(named: 'asOf'))).called(1);
+    });
+
+    test('uses CryptoCompare fallback before the cache when CoinGecko fails',
+        () async {
+      final asset = _makeAsset(
+          id: 'cr1', symbol: 'bitcoin', type: AssetType.crypto);
+      when(() => mockRepo.getAllAssets()).thenReturn([asset]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
+      when(() => mockCoinGecko.fetchMultiplePrices(any()))
+          .thenAnswer((_) async => [
+                PriceResult.failure('bitcoin', 'rate limit'),
+              ]);
+      when(() => mockCryptoCompare.fetchMultiplePrices(['bitcoin']))
+          .thenAnswer((_) async => [_success('bitcoin', 5820000.0)]);
+      when(() => mockRepo.updateAssetPrice('cr1', 5820000.0))
           .thenAnswer((_) async {});
 
       final result = await service.refreshAllPrices();
 
       expect(result.updated, 1);
-      verify(() => mockRepo.updateAssetPrice('cr1', 5750000.0)).called(1);
+      expect(result.failed, 0);
+      // The recovered price is stored AND written to the cache; the stale
+      // cache fallback is never consulted.
+      verify(() => mockRepo.updateAssetPrice('cr1', 5820000.0)).called(1);
+      verify(() => mockCache.cachePrice(any(
+          that: predicate<PriceResult>(
+              (r) => r.symbol == 'bitcoin' && r.price == 5820000.0))))
+          .called(1);
+      verifyNever(() => mockCache.getCachedResult(any()));
+    });
+
+    test('single-asset refresh falls back to CryptoCompare', () async {
+      final asset = _makeAsset(
+          id: 'cr1', symbol: 'ethereum', type: AssetType.crypto);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockCoinGecko.fetchPrice('ethereum')).thenAnswer(
+          (_) async => PriceResult.failure('ethereum', 'rate limit'));
+      when(() => mockCryptoCompare.fetchPrice('ethereum'))
+          .thenAnswer((_) async => _success('ethereum', 310000.0));
+      when(() => mockRepo.updateAssetPrice('cr1', 310000.0))
+          .thenAnswer((_) async {});
+
+      final result = await service.refreshSinglePrice(asset);
+
+      expect(result.success, true);
+      expect(result.price, 310000.0);
+      verify(() => mockRepo.updateAssetPrice('cr1', 310000.0)).called(1);
     });
   });
 
@@ -311,13 +440,14 @@ void main() {
           .thenAnswer((_) async => null);
       when(() => mockCache.getCachedResult(PriceSymbols.goldComex))
           .thenReturn(_success(PriceSymbols.goldComex, 6500.0));
-      when(() => mockRepo.updateAssetPrice('g1', 6500.0))
-          .thenAnswer((_) async {});
+      when(() => mockRepo.updateAssetPrice('g1', 6500.0,
+          asOf: any(named: 'asOf'))).thenAnswer((_) async {});
 
       final result = await service.refreshAllPrices();
 
       expect(result.updated, 1);
-      verify(() => mockRepo.updateAssetPrice('g1', 6500.0)).called(1);
+      verify(() => mockRepo.updateAssetPrice('g1', 6500.0,
+          asOf: any(named: 'asOf'))).called(1);
     });
   });
 
@@ -376,13 +506,92 @@ void main() {
               PriceResult.failure('FAIL.NS', 'not found'));
       when(() => mockCache.getCachedResult('FAIL.NS'))
           .thenReturn(_success('FAIL.NS', 3900.0));
-      when(() => mockRepo.updateAssetPrice('s1', 3900.0))
-          .thenAnswer((_) async {});
+      when(() => mockRepo.updateAssetPrice('s1', 3900.0,
+          asOf: any(named: 'asOf'))).thenAnswer((_) async {});
 
       final result = await service.refreshSinglePrice(asset);
 
       expect(result.success, true);
       expect(result.price, 3900.0);
+    });
+  });
+
+  group('mutual funds via MutualFundService (regression for MF refresh)', () {
+    test('routes to MFAPI NAV, not the Yahoo/Stooq equity path', () async {
+      final asset = _makeAsset(
+          id: 'mf1', symbol: '120503', type: AssetType.mutualFund);
+      when(() => mockRepo.getAllAssets()).thenReturn([asset]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
+      when(() => mockMutualFund.fetchNav(120503))
+          .thenAnswer((_) async => Ok(_mf(120503, 96.1234)));
+      when(() => mockRepo.updateAssetPrice('mf1', 96.1234))
+          .thenAnswer((_) async {});
+
+      final result = await service.refreshAllPrices();
+
+      expect(result.updated, 1);
+      expect(result.failed, 0);
+      verify(() => mockMutualFund.fetchNav(120503)).called(1);
+      verify(() => mockRepo.updateAssetPrice('mf1', 96.1234)).called(1);
+      // The old bug: MFs fell through to the equity path with a numeric
+      // scheme code that never resolves. That must not happen anymore.
+      verifyNever(() => mockYahoo.fetchPrice(any()));
+      verifyNever(() => mockStooq.fetchPrice(any()));
+    });
+
+    test('single MF refresh returns the NAV', () async {
+      final asset = _makeAsset(
+          id: 'mf1', symbol: '118989', type: AssetType.mutualFund);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockMutualFund.fetchNav(118989))
+          .thenAnswer((_) async => Ok(_mf(118989, 250.5)));
+      when(() => mockRepo.updateAssetPrice('mf1', 250.5))
+          .thenAnswer((_) async {});
+
+      final result = await service.refreshSinglePrice(asset);
+
+      expect(result.success, true);
+      expect(result.price, 250.5);
+      expect(result.currency, 'INR');
+    });
+
+    test('falls back to cache when NAV fetch fails', () async {
+      final asset = _makeAsset(
+          id: 'mf1', symbol: '120503', type: AssetType.mutualFund);
+      when(() => mockRepo.getAllAssets()).thenReturn([asset]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
+      when(() => mockMutualFund.fetchNav(120503))
+          .thenAnswer((_) async => Err('mfapi down'));
+      when(() => mockCache.getCachedResult('120503'))
+          .thenReturn(_success('120503', 94.0));
+      when(() => mockRepo.updateAssetPrice('mf1', 94.0,
+          asOf: any(named: 'asOf'))).thenAnswer((_) async {});
+
+      final result = await service.refreshAllPrices();
+
+      expect(result.updated, 1);
+      verify(() => mockRepo.updateAssetPrice('mf1', 94.0,
+          asOf: any(named: 'asOf'))).called(1);
+    });
+
+    test('a non-numeric symbol (ETF proxy) uses the equity path', () async {
+      final asset = _makeAsset(
+          id: 'mf1', symbol: 'NIFTYBEES.NS', type: AssetType.mutualFund);
+      when(() => mockRepo.getAllAssets()).thenReturn([asset]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
+      when(() => mockYahoo.fetchPrice('NIFTYBEES.NS')).thenAnswer(
+          (_) async => _success('NIFTYBEES.NS', 275.0, currency: 'INR'));
+      when(() => mockRepo.updateAssetPrice('mf1', 275.0))
+          .thenAnswer((_) async {});
+
+      final result = await service.refreshAllPrices();
+
+      expect(result.updated, 1);
+      verify(() => mockYahoo.fetchPrice('NIFTYBEES.NS')).called(1);
+      verifyNever(() => mockMutualFund.fetchNav(any()));
     });
   });
 }

@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/theme/app_decorations.dart';
+import '../../core/theme/app_theme.dart';
 import '../../services/export_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
+import '../../shared/widgets/soft_disclaimer.dart';
 
 class TaxExportScreen extends ConsumerStatefulWidget {
   const TaxExportScreen({super.key});
@@ -21,55 +24,88 @@ class _TaxExportScreenState extends ConsumerState<TaxExportScreen> {
         title: const Text('Export for Tax Filing'),
       ),
       body: _isExporting
-          ? const Center(
+          ? Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('Generating export…'),
+                  Container(
+                    width: 70,
+                    height: 70,
+                    decoration: BoxDecoration(
+                      gradient: AppColors.primaryGradient,
+                      borderRadius: BorderRadius.circular(AppRadii.tile),
+                      boxShadow:
+                          AppShadows.glow(AppColors.primary, opacity: 0.5),
+                    ),
+                    child: const Center(
+                      child: SizedBox(
+                        width: 28,
+                        height: 28,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.6,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    'Generating export…',
+                    style: AppTheme.body(
+                      size: 14,
+                      weight: FontWeight.w600,
+                      color: AppColors.textSecondaryOn(context),
+                    ),
+                  ),
                 ],
               ),
             )
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
               children: [
-                _InfoCard(),
+                const _InfoCard(),
                 const SizedBox(height: 24),
                 _SectionHeader('CSV Exports'),
-                const SizedBox(height: 8),
-                _ExportTile(
-                  icon: Icons.table_chart_outlined,
-                  title: 'Holdings CSV',
-                  subtitle: 'All current holdings with cost basis and P&L',
-                  onTap: () => _export(_exportHoldings),
-                ),
-                const SizedBox(height: 8),
-                _ExportTile(
-                  icon: Icons.receipt_long_outlined,
-                  title: 'Transactions CSV',
-                  subtitle: 'Full transaction history — buy, sell, dividends',
-                  onTap: () => _export(_exportTransactions),
+                const SizedBox(height: 11),
+                _ExportGroup(
+                  children: [
+                    _ExportTile(
+                      icon: Icons.table_chart_outlined,
+                      tone: AppColors.stockColor,
+                      title: 'Holdings',
+                      subtitle:
+                          'All current holdings with cost basis and P&L',
+                      onTap: () => _export(_exportHoldings),
+                    ),
+                    _ExportTile(
+                      icon: Icons.receipt_long_outlined,
+                      tone: AppColors.bondColor,
+                      title: 'Transactions',
+                      subtitle:
+                          'Full transaction history — buy, sell, dividends',
+                      onTap: () => _export(_exportTransactions),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 24),
                 _SectionHeader('PDF Report'),
-                const SizedBox(height: 8),
-                _ExportTile(
-                  icon: Icons.picture_as_pdf_outlined,
-                  title: 'Capital Gains Report (PDF)',
-                  subtitle:
-                      'Holdings, capital gains summary (STCG/LTCG), and full transaction log. Share with your CA.',
-                  onTap: () => _export(_exportPdf),
+                const SizedBox(height: 11),
+                _ExportGroup(
+                  children: [
+                    _ExportTile(
+                      icon: Icons.picture_as_pdf_outlined,
+                      tone: AppColors.cryptoColor,
+                      title: 'Capital gains report',
+                      subtitle:
+                          'STCG (< 1 year) and LTCG (≥ 1 year) with holdings and transaction log — opens a preview to share or print.',
+                      onTap: () => _export(_previewPdf),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
-                _ExportTile(
-                  icon: Icons.preview_outlined,
-                  title: 'Preview PDF',
-                  subtitle: 'Preview the report before exporting',
-                  onTap: () => _export(_previewPdf),
+                const SizedBox(height: 28),
+                const SoftDisclaimer(
+                  'Reports are based on your entered data, for information only — verify with a CA before filing.',
                 ),
-                const SizedBox(height: 32),
-                _Disclaimer(),
               ],
             ),
     );
@@ -106,16 +142,6 @@ class _TaxExportScreenState extends ConsumerState<TaxExportScreen> {
     await ExportService.exportTransactionsCsv(transactions, assetNames);
   }
 
-  Future<void> _exportPdf() async {
-    final assets = ref.read(allAssetsProvider);
-    final txRepo = ref.read(transactionRepositoryProvider);
-    final transactions = txRepo.getAllTransactions();
-    final assetNames = {for (final a in assets) a.id: a.name};
-    final baseCurrency = ref.read(baseCurrencyProvider);
-    await ExportService.exportCapitalGainsPdf(
-        assets, transactions, assetNames, baseCurrency);
-  }
-
   Future<void> _previewPdf() async {
     final assets = ref.read(allAssetsProvider);
     final txRepo = ref.read(transactionRepositoryProvider);
@@ -127,30 +153,54 @@ class _TaxExportScreenState extends ConsumerState<TaxExportScreen> {
   }
 }
 
+/// Soft gradient hero explaining what these exports do.
 class _InfoCard extends StatelessWidget {
+  const _InfoCard();
+
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppColors.primary.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+        gradient: AppColors.heroGradient,
+        borderRadius: BorderRadius.circular(AppRadii.hero),
+        boxShadow: AppShadows.glow(AppColors.primary, opacity: 0.5),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.info_outline, color: AppColors.primary, size: 20),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              'Generate CSV or PDF reports of your portfolio for tax filing. '
-              'The capital gains report calculates STCG (< 1 year) and '
-              'LTCG (≥ 1 year) based on your transaction history.',
-              style: TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 13,
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(AppRadii.avatar),
+                ),
+                child: const Icon(Icons.description_outlined,
+                    color: Colors.white, size: 22),
               ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  'Tax-ready exports',
+                  style: AppTheme.heading(
+                    size: 18,
+                    weight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'CSV and PDF reports of your portfolio, ready for tax filing.',
+            style: AppTheme.body(
+              size: 13,
+              weight: FontWeight.w500,
+              color: Colors.white.withValues(alpha: 0.92),
             ),
           ),
         ],
@@ -165,24 +215,67 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      title,
-      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-            color: AppColors.textSecondary,
-            fontWeight: FontWeight.w600,
-          ),
+    return Padding(
+      padding: const EdgeInsets.only(left: 2),
+      child: Text(
+        title,
+        style: Theme.of(context).textTheme.titleLarge,
+      ),
+    );
+  }
+}
+
+/// A soft rounded group holding [_ExportTile] rows, divided in both modes.
+class _ExportGroup extends StatelessWidget {
+  final List<Widget> children;
+  const _ExportGroup({required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(AppRadii.card),
+        boxShadow: AppShadows.soft(opacity: 0.16, y: 10, blur: 24),
+      ),
+      child: Material(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(AppRadii.card),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: children.asMap().entries.map((entry) {
+            final index = entry.key;
+            final child = entry.value;
+            if (index < children.length - 1) {
+              return Column(
+                children: [
+                  child,
+                  Divider(
+                    color: Theme.of(context).dividerColor,
+                    height: 1,
+                    indent: 16,
+                    endIndent: 16,
+                  ),
+                ],
+              );
+            }
+            return child;
+          }).toList(),
+        ),
+      ),
     );
   }
 }
 
 class _ExportTile extends StatelessWidget {
   final IconData icon;
+  final Color tone;
   final String title;
   final String subtitle;
   final VoidCallback onTap;
 
   const _ExportTile({
     required this.icon,
+    required this.tone,
     required this.title,
     required this.subtitle,
     required this.onTap,
@@ -190,48 +283,41 @@ class _ExportTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        leading: Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: AppColors.primary.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Icon(icon, color: AppColors.primary, size: 20),
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      leading: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: tone.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(AppRadii.avatar),
         ),
-        title: Text(title,
-            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-        subtitle: Text(
+        child: Icon(icon, color: tone, size: 21),
+      ),
+      title: Text(
+        title,
+        style: AppTheme.body(
+          size: 15,
+          weight: FontWeight.w700,
+          color: Theme.of(context).colorScheme.onSurface,
+        ),
+      ),
+      subtitle: Padding(
+        padding: const EdgeInsets.only(top: 2),
+        child: Text(
           subtitle,
-          style: TextStyle(color: AppColors.textTertiary, fontSize: 12),
-        ),
-        trailing: Icon(Icons.chevron_right, color: AppColors.textTertiary),
-        onTap: onTap,
-      ),
-    );
-  }
-}
-
-class _Disclaimer extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceLight,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        '⚠ Disclaimer: Reports are based on manually entered data and are '
-        'for informational purposes only. Verify figures with your broker '
-        'statements. Consult a qualified CA before filing taxes.',
-        style: TextStyle(
-          color: AppColors.textTertiary,
-          fontSize: 11,
+          style: AppTheme.body(
+            size: 12.5,
+            weight: FontWeight.w500,
+            color: AppColors.textTertiaryOn(context),
+          ),
         ),
       ),
+      trailing: Icon(
+        Icons.chevron_right,
+        color: AppColors.textTertiaryOn(context),
+      ),
+      onTap: onTap,
     );
   }
 }

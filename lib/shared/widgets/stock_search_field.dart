@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/theme/app_decorations.dart';
 import '../../services/stock_search_service.dart';
 
 /// Exchange filter options for the stock search field.
@@ -262,18 +263,15 @@ class _StockSearchFieldState extends State<StockSearchField> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                   )
-                : _selectedResult != null
-                    ? Icon(Icons.check_circle,
-                        color: AppColors.success, size: 20)
-                    : _controller.text.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear, size: 18),
-                            onPressed: () {
-                              _controller.clear();
-                              _onTextChanged('');
-                            },
-                          )
-                        : null,
+                : _controller.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () {
+                          _controller.clear();
+                          _onTextChanged('');
+                        },
+                      )
+                    : null,
           ),
         ),
 
@@ -283,23 +281,18 @@ class _StockSearchFieldState extends State<StockSearchField> {
           Container(
             constraints: const BoxConstraints(maxHeight: 280),
             decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.15),
-                  blurRadius: 8,
-                  offset: const Offset(0, 4),
-                ),
-              ],
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(AppRadii.small),
+              boxShadow: AppShadows.soft(opacity: 0.18, y: 6, blur: 16),
             ),
             child: _isSearching && _filteredResults.isEmpty
-                ? const Padding(
-                    padding: EdgeInsets.all(16),
+                ? Padding(
+                    padding: const EdgeInsets.all(16),
                     child: Center(
                       child: Text(
                         'Searching...',
-                        style: TextStyle(color: Colors.grey),
+                        style: TextStyle(
+                            color: AppColors.textSecondaryOn(context)),
                       ),
                     ),
                   )
@@ -311,7 +304,7 @@ class _StockSearchFieldState extends State<StockSearchField> {
                               ? 'No results found. Try a different name or symbol.'
                               : 'No ${_selectedExchange.label} results found. Try "All" or a different name.',
                           style: TextStyle(
-                            color: AppColors.textSecondary,
+                            color: AppColors.textSecondaryOn(context),
                             fontSize: 13,
                           ),
                         ),
@@ -321,11 +314,15 @@ class _StockSearchFieldState extends State<StockSearchField> {
                         padding: const EdgeInsets.symmetric(vertical: 4),
                         itemCount: _filteredResults.length,
                         separatorBuilder: (context, index) =>
-                            Divider(color: AppColors.divider, height: 1),
+                            Divider(color: Theme.of(context).dividerColor, height: 1),
                         itemBuilder: (context, index) {
                           final result = _filteredResults[index];
                           return _SearchResultTile(
                             result: result,
+                            // When a specific exchange filter is active every
+                            // row would carry the same badge — hide it.
+                            showExchangeBadge:
+                                _selectedExchange == ExchangeFilter.all,
                             onTap: () => _onResultSelected(result),
                           );
                         },
@@ -333,56 +330,6 @@ class _StockSearchFieldState extends State<StockSearchField> {
           ),
         ],
 
-        // Selected result confirmation
-        if (_selectedResult != null && !_showDropdown) ...[
-          const SizedBox(height: 6),
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: AppColors.success.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.check_circle,
-                    color: AppColors.success, size: 16),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '${_selectedResult!.symbol} · ${_selectedResult!.exchangeLabel}',
-                    style: TextStyle(
-                      color: AppColors.success,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                TextButton(
-                  onPressed: () {
-                    _controller.clear();
-                    setState(() {
-                      _selectedResult = null;
-                      _allResults = [];
-                      _filteredResults = [];
-                    });
-                  },
-                  style: TextButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    minimumSize: const Size(40, 24),
-                  ),
-                  child: Text(
-                    'Change',
-                    style: TextStyle(
-                      color: AppColors.textSecondary,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
       ],
     );
   }
@@ -390,9 +337,14 @@ class _StockSearchFieldState extends State<StockSearchField> {
 
 class _SearchResultTile extends StatelessWidget {
   final StockSearchResult result;
+  final bool showExchangeBadge;
   final VoidCallback onTap;
 
-  const _SearchResultTile({required this.result, required this.onTap});
+  const _SearchResultTile({
+    required this.result,
+    required this.showExchangeBadge,
+    required this.onTap,
+  });
 
   Color _exchangeColor(String exchange) {
     switch (exchange) {
@@ -421,23 +373,25 @@ class _SearchResultTile extends StatelessWidget {
         child: Row(
           children: [
             // Exchange badge
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: exchangeColor.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                result.exchangeLabel,
-                style: TextStyle(
-                  color: exchangeColor,
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
+            if (showExchangeBadge) ...[
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: exchangeColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  result.exchangeLabel,
+                  style: TextStyle(
+                    color: exchangeColor,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
+              const SizedBox(width: 10),
+            ],
             // Symbol + name
             Expanded(
               child: Column(
@@ -453,7 +407,7 @@ class _SearchResultTile extends StatelessWidget {
                   Text(
                     result.name,
                     style: TextStyle(
-                      color: AppColors.textSecondary,
+                      color: AppColors.textSecondaryOn(context),
                       fontSize: 12,
                     ),
                     maxLines: 1,

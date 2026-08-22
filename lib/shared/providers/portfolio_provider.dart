@@ -2,11 +2,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../core/constants/app_constants.dart';
 import '../../data/models/asset.dart';
+import '../../data/models/asset_type.dart';
 import '../../data/models/portfolio_summary.dart';
 import '../../data/repositories/asset_repository.dart';
+import '../../data/repositories/portfolio_write_service.dart';
 import '../../data/repositories/transaction_repository.dart';
+import '../../services/auth_service.dart';
 import '../../services/currency_converter_service.dart';
 import '../../services/gold_price_service.dart';
+import '../../services/price_history_service.dart';
 import '../../services/price_update_service.dart';
 
 /// Provider for AssetRepository
@@ -19,27 +23,110 @@ final transactionRepositoryProvider = Provider<TransactionRepository>((ref) {
   return TransactionRepository();
 });
 
+/// Provider for AuthService (biometric / device-credential auth)
+final authServiceProvider = Provider<AuthService>((ref) {
+  return AuthService();
+});
+
+/// Whether the app is currently locked behind biometric/PIN authentication.
+///
+/// Seeded at startup (true when app lock is enabled) via a ProviderScope
+/// override in main.dart, set true again by the resume re-lock in KashUApp,
+/// and cleared by LockScreen on successful authentication. The lock renders
+/// as an overlay above the whole app — no navigation involved.
+final appLockedProvider = StateProvider<bool>((ref) => false);
+
+/// Provider for PortfolioWriteService — combined asset+transaction writes
+final portfolioWriteServiceProvider = Provider<PortfolioWriteService>((ref) {
+  return PortfolioWriteService(
+    assetRepository: ref.watch(assetRepositoryProvider),
+    transactionRepository: ref.watch(transactionRepositoryProvider),
+  );
+});
+
 /// Provider for base currency (persisted in settings)
 final baseCurrencyProvider = StateProvider<String>((ref) {
   final repo = ref.watch(assetRepositoryProvider);
   return repo.getBaseCurrency();
 });
 
-/// Provider for portfolio summary
+/// Provider for portfolio summary.
+///
+/// All money is converted into the user's base currency before aggregating,
+/// so a portfolio holding assets in different currencies sums correctly (the
+/// old code added raw values across currencies). Per-asset gain/loss *percent*
+/// is currency-independent, so gainers/losers are unaffected.
 final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
   final repository = ref.watch(assetRepositoryProvider);
+  final base = ref.watch(baseCurrencyProvider);
 
   final assets = repository.getAllAssets();
-
   if (assets.isEmpty) {
     return PortfolioSummary.empty();
   }
 
-  final totalValue = repository.getTotalValue();
-  final totalInvested = repository.getTotalInvested();
+  String currencyOf(Asset a) => a.currency.isNotEmpty ? a.currency : base;
+
+  // Offline-first: only touch the forex network when a holding is actually
+  // in a different currency than the base. An all-INR (all-base) portfolio
+  // converts by identity, so it must not block on (or require) a fetch.
+  final needsConversion = assets.any((a) => currencyOf(a) != base);
+  final rates =
+      needsConversion ? await ref.watch(exchangeRatesProvider.future) : null;
+
+  double toBase(double amount, Asset a) =>
+      rates == null ? amount : rates.convertBetween(amount, currencyOf(a), base);
+
+  double totalValue = 0;
+  double totalInvested = 0;
+  final allocation = <AssetType, double>{};
+  for (final a in assets) {
+    final value = toBase(a.currentValue, a);
+    totalValue += value;
+    totalInvested += toBase(a.totalInvested, a);
+    allocation.update(a.type, (v) => v + value, ifAbsent: () => value);
+  }
+
+  // Before the first price refresh, values are 0 — fall back to invested so
+  // the allocation chart isn't blank (mirrors AssetRepository.getAssetAllocation).
+  if (totalValue == 0 && totalInvested > 0) {
+    allocation.clear();
+    for (final a in assets) {
+      final inv = toBase(a.totalInvested, a);
+      allocation.update(a.type, (v) => v + inv, ifAbsent: () => inv);
+    }
+  }
+
   final totalGainLoss = totalValue - totalInvested;
-  final totalGainLossPercentage = totalInvested > 0
-      ? (totalGainLoss / totalInvested) * 100
+  final totalGainLossPercentage =
+      totalInvested > 0 ? (totalGainLoss / totalInvested) * 100 : 0.0;
+
+  // Today's change: sum of PER-ASSET value deltas (now vs the most recent
+  // prior-day snapshot), for assets present in both, converted to base with
+  // current rates. Per-asset (not total-vs-total) so buying/selling an asset
+  // doesn't masquerade as a price move, and so a base-currency switch can't
+  // corrupt the comparison. Shown only once such a baseline exists.
+  final priorSnapshot =
+      ref.watch(priceHistoryServiceProvider).previousDaySnapshot();
+  double todaysChange = 0;
+  double priorBaseline = 0;
+  var hasTodaysChange = false;
+  if (priorSnapshot != null) {
+    for (final a in assets) {
+      final priorNative = priorSnapshot.assetValues[a.id];
+      if (priorNative == null) continue; // no baseline (asset is new)
+      hasTodaysChange = true;
+      final priorBase = rates == null
+          ? priorNative
+          : rates.convertBetween(priorNative, currencyOf(a), base);
+      final nowBase = toBase(a.currentValue, a);
+      todaysChange += nowBase - priorBase;
+      priorBaseline += priorBase;
+    }
+  }
+  if (!hasTodaysChange) todaysChange = 0;
+  final todaysChangePercentage = (hasTodaysChange && priorBaseline > 0)
+      ? (todaysChange / priorBaseline) * 100
       : 0.0;
 
   return PortfolioSummary(
@@ -47,9 +134,10 @@ final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
     totalInvested: totalInvested,
     totalGainLoss: totalGainLoss,
     totalGainLossPercentage: totalGainLossPercentage,
-    todaysChange: 0,
-    todaysChangePercentage: 0,
-    assetAllocation: repository.getAssetAllocation(),
+    todaysChange: todaysChange,
+    todaysChangePercentage: todaysChangePercentage,
+    hasTodaysChange: hasTodaysChange,
+    assetAllocation: allocation,
     topGainers: repository.getTopGainers(),
     topLosers: repository.getTopLosers(),
     totalAssets: assets.length,
@@ -67,6 +155,19 @@ final allAssetsProvider = Provider<List<Asset>>((ref) {
 final currencyConverterServiceProvider =
     Provider<CurrencyConverterService>((ref) {
   return CurrencyConverterService();
+});
+
+/// Live USD-based exchange rates, used to convert holdings into the base
+/// currency for display. The service caches for 30 min, so watchers resolve
+/// quickly after the first load; display code falls back to approximate
+/// static rates via [ExchangeRateResult.convertBetween] while this is loading.
+final exchangeRatesProvider = FutureProvider<ExchangeRateResult>((ref) async {
+  return ref.watch(currencyConverterServiceProvider).fetchRates();
+});
+
+/// Provider for PriceHistoryService (daily snapshots → today's change + sparkline)
+final priceHistoryServiceProvider = Provider<PriceHistoryService>((ref) {
+  return PriceHistoryService();
 });
 
 /// Provider for GoldPriceService (uses COMEX GC=F + live forex + Indian taxes)
@@ -115,4 +216,35 @@ final isPriceStaleProvider = Provider<bool>((ref) {
   final savedAt = DateTime.tryParse(raw);
   if (savedAt == null) return false;
   return DateTime.now().difference(savedAt) > stalePriceThreshold;
+});
+
+/// How long without a backup before the dashboard nudges the user — also the
+/// snooze window after the nudge is dismissed.
+const Duration backupNudgePeriod = Duration(days: 30);
+
+/// True when the user has assets but hasn't exported a backup within
+/// [backupNudgePeriod] (or ever), and hasn't dismissed the nudge within the
+/// same window.
+///
+/// Reads timestamps from the settings box — invalidate this provider after
+/// writing an export or a dismissal so the banner updates immediately.
+final isBackupOverdueProvider = Provider<bool>((ref) {
+  final assets = ref.watch(allAssetsProvider);
+  if (assets.isEmpty) return false; // nothing to lose yet — don't nag
+
+  final settings = Hive.box(AppConstants.settingsBox);
+  DateTime? readTime(String key) {
+    final raw = settings.get(key) as String?;
+    return raw == null ? null : DateTime.tryParse(raw);
+  }
+
+  final dismissedAt = readTime(AppConstants.keyBackupNudgeDismissedAt);
+  if (dismissedAt != null &&
+      DateTime.now().difference(dismissedAt) < backupNudgePeriod) {
+    return false; // snoozed
+  }
+
+  final lastExportAt = readTime(AppConstants.keyLastExportAt);
+  return lastExportAt == null ||
+      DateTime.now().difference(lastExportAt) > backupNudgePeriod;
 });

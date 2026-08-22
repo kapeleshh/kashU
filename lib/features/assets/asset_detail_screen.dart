@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
+import '../../core/theme/app_decorations.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../data/models/asset.dart';
 import '../../data/models/asset_type.dart';
+import '../../services/currency_converter_service.dart';
 import '../../services/gold_price_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
 import 'add_asset_screen.dart';
@@ -17,223 +21,162 @@ class AssetDetailScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isProfit = asset.gainLossPercentage >= 0;
-    final color = isProfit ? AppColors.success : AppColors.error;
+    final gainColor =
+        isProfit ? AppColors.gainOn(context) : AppColors.lossOn(context);
+    final unit = asset.type.unitLabel;
+
+    // Base-currency conversion primitives, read once here.
+    final base = ref.watch(baseCurrencyProvider);
+    final rates = ref.watch(exchangeRatesProvider).valueOrNull ??
+        ExchangeRateResult.failure('loading');
+    // For per-unit price displays we keep the asset's own currency.
+    final priceCurrency = asset.currency.isEmpty ? base : asset.currency;
+    // VALUE conversions (worth) → base currency.
+    final currentValueBase =
+        rates.convertBetween(asset.currentValue, priceCurrency, base);
+    final investedBase =
+        rates.convertBetween(asset.totalInvested, priceCurrency, base);
+    final gainLossBase =
+        rates.convertBetween(asset.gainLoss.abs(), priceCurrency, base);
+
+    // Real per-asset value history (native currency; shape is what matters).
+    final priceSeries = ref.watch(priceHistoryServiceProvider).assetSeries(asset.id);
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(asset.name),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.edit),
-            onPressed: () => _editAsset(context, ref),
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header Card
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: AppColors.card,
-                borderRadius: BorderRadius.circular(16),
+      body: SafeArea(
+        bottom: false,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Header: back + gradient avatar + name + live pill ──────────
+              _Header(asset: asset),
+
+              const SizedBox(height: 16),
+
+              // ── Current value card with sparkline + range selector ─────────
+              _ValueCard(
+                asset: asset,
+                isProfit: isProfit,
+                gainColor: gainColor,
+                currentValueBase: currentValueBase,
+                gainLossBase: gainLossBase,
+                base: base,
+                priceSeries: priceSeries,
               ),
-              child: Column(
+
+              const SizedBox(height: 14),
+
+              // ── 2-column soft stat grid ────────────────────────────────────
+              Row(
                 children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 56,
-                        height: 56,
-                        decoration: BoxDecoration(
-                          color: asset.type.color.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Icon(
-                          asset.type.icon,
-                          color: asset.type.color,
-                          size: 28,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              asset.name,
-                              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                            ),
-                            if (asset.symbol != null)
-                              Text(
-                                asset.symbol!,
-                                style: TextStyle(
-                                  color: AppColors.textTertiary,
-                                  fontSize: 14,
-                                ),
-                              ),
-                            Text(
-                              asset.type.displayName,
-                              style: TextStyle(
-                                color: asset.type.color,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                  // Current Value
-                  Text(
-                    CurrencyFormatter.formatINR(asset.currentValue),
-                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: color.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(20),
+                  Expanded(
+                    child: _StatTile(
+                      label: 'HOLDING',
+                      value:
+                          '${CurrencyFormatter.formatQuantity(asset.quantity)}${unit.isNotEmpty ? ' $unit' : ''}',
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          isProfit ? Icons.arrow_upward : Icons.arrow_downward,
-                          color: color,
-                          size: 18,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${CurrencyFormatter.formatINR(asset.gainLoss.abs())} (${CurrencyFormatter.formatPercentage(asset.gainLossPercentage)})',
-                          style: TextStyle(
-                            color: color,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _StatTile(
+                      label: 'AVG BUY',
+                      value: CurrencyFormatter.formatCurrency(
+                        asset.purchasePrice,
+                        priceCurrency,
+                      ),
                     ),
                   ),
                 ],
               ),
-            ),
-
-            const SizedBox(height: 24),
-
-            // Details Section
-            Text(
-              'Details',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-            ),
-            const SizedBox(height: 12),
-
-            Container(
-              decoration: BoxDecoration(
-                color: AppColors.card,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Column(
+              const SizedBox(height: 10),
+              Row(
                 children: [
-                  _buildDetailRow(
-                    'Quantity',
-                    '${CurrencyFormatter.formatQuantity(asset.quantity)} ${asset.type.unitLabel}'.trim(),
+                  Expanded(
+                    child: _StatTile(
+                      label: 'CURRENT',
+                      value: CurrencyFormatter.formatCurrency(
+                        asset.currentPrice,
+                        priceCurrency,
+                      ),
+                    ),
                   ),
-                  _buildDivider(),
-                  _buildDetailRow('Purchase Price', CurrencyFormatter.formatINR(asset.purchasePrice)),
-                  _buildDivider(),
-                  _buildDetailRow('Current Price', CurrencyFormatter.formatINR(asset.currentPrice)),
-                  _buildDivider(),
-                  _buildDetailRow('Total Invested', CurrencyFormatter.formatINR(asset.totalInvested)),
-                  _buildDivider(),
-                  _buildDetailRow(
-                    'Purchase Date',
-                    '${asset.purchaseDate.day}/${asset.purchaseDate.month}/${asset.purchaseDate.year}',
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _StatTile(
+                      label: 'INVESTED',
+                      value: CurrencyFormatter.formatCurrency(
+                        investedBase,
+                        base,
+                      ),
+                    ),
                   ),
-                  if (asset.platform != null) ...[
-                    _buildDivider(),
-                    _buildDetailRow('Platform', asset.platform!),
-                  ],
-                  _buildDivider(),
-                  _buildDetailRow('Currency', asset.currency),
                 ],
               ),
-            ),
 
-            if (asset.notes != null && asset.notes!.isNotEmpty) ...[
-              const SizedBox(height: 24),
-              Text(
-                AppStrings.notes,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
+              const SizedBox(height: 14),
+
+              // ── Extra detail rows (date / platform / currency) ─────────────
+              _DetailsCard(asset: asset),
+
+              if (asset.notes != null && asset.notes!.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                _SectionLabel(AppStrings.notes),
+                const SizedBox(height: 10),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(AppRadii.card),
+                    boxShadow: AppShadows.soft(opacity: 0.14, y: 10, blur: 24),
+                  ),
+                  child: Text(
+                    asset.notes!,
+                    style: AppTheme.body(
+                      size: 13.5,
+                      color: AppColors.textSecondaryOn(context),
                     ),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppColors.card,
-                  borderRadius: BorderRadius.circular(16),
+                  ),
                 ),
-                child: Text(
-                  asset.notes!,
-                  style: TextStyle(color: AppColors.textSecondary),
-                ),
+              ],
+
+              const SizedBox(height: 16),
+
+              // ── Update price ───────────────────────────────────────────────
+              _SectionLabel(AppStrings.updatePrices),
+              const SizedBox(height: 10),
+              _UpdatePriceCard(asset: asset),
+
+              const SizedBox(height: 18),
+
+              // ── Bottom actions: Edit (gradient) + Delete (soft) ────────────
+              Row(
+                children: [
+                  Expanded(
+                    child: _GradientButton(
+                      label: 'Edit',
+                      icon: Icons.edit_rounded,
+                      onTap: () => _editAsset(context, ref),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _SoftButton(
+                      label: 'Delete',
+                      icon: Icons.delete_outline_rounded,
+                      color: AppColors.lossOn(context),
+                      onTap: () => _confirmDelete(context, ref),
+                    ),
+                  ),
+                ],
               ),
             ],
-
-            const SizedBox(height: 24),
-
-            // Update Price Section
-            Text(
-              AppStrings.updatePrices,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-            ),
-            const SizedBox(height: 12),
-            _UpdatePriceCard(asset: asset),
-
-            const SizedBox(height: 24),
-          ],
+          ),
         ),
       ),
     );
-  }
-
-  Widget _buildDetailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: TextStyle(color: AppColors.textSecondary),
-          ),
-          Text(
-            value,
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDivider() {
-    return Divider(color: AppColors.divider, height: 1);
   }
 
   void _editAsset(BuildContext context, WidgetRef ref) {
@@ -248,7 +191,503 @@ class AssetDetailScreen extends ConsumerWidget {
       navigator.pop();
     });
   }
+
+  void _confirmDelete(BuildContext context, WidgetRef ref) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete asset?'),
+        content: Text(
+          'This will permanently remove "${asset.name}" from your portfolio.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final navigator = Navigator.of(context);
+              Navigator.pop(dialogContext);
+              await ref
+                  .read(portfolioWriteServiceProvider)
+                  .deleteAssetWithTransactions(asset.id);
+              ref.invalidate(allAssetsProvider);
+              ref.invalidate(portfolioSummaryProvider);
+              navigator.pop();
+            },
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.lossOn(context),
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Header
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _Header extends StatelessWidget {
+  final Asset asset;
+  const _Header({required this.asset});
+
+  @override
+  Widget build(BuildContext context) {
+    final surface = Theme.of(context).colorScheme.surface;
+    return Row(
+      children: [
+        // Back button — soft surface square.
+        Material(
+          color: surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadii.avatar),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => Navigator.of(context).maybePop(),
+            child: SizedBox(
+              width: 40,
+              height: 40,
+              child: Icon(
+                Icons.chevron_left_rounded,
+                size: 24,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        // Gradient type avatar.
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            gradient: softAvatarGradient(asset.type.color),
+            borderRadius: BorderRadius.circular(AppRadii.avatar),
+            boxShadow: AppShadows.glow(asset.type.color, opacity: 0.4),
+          ),
+          child: Icon(asset.type.icon, color: Colors.white, size: 19),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                asset.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.heading(
+                  size: 18,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+              Text(
+                asset.symbol ?? asset.type.displayName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.body(
+                  size: 11.5,
+                  weight: FontWeight.w700,
+                  color: asset.type.color,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        // Price freshness — the real fact from priceUpdatedAt (prices only
+        // change on manual refresh, so no "live" indicator).
+        if (_priceAge(asset) != null)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: surface,
+              borderRadius: BorderRadius.circular(AppRadii.pill),
+              boxShadow: AppShadows.soft(opacity: 0.12, y: 6, blur: 14),
+            ),
+            child: Text(
+              'Updated ${_priceAge(asset)}',
+              style: AppTheme.body(
+                size: 11,
+                weight: FontWeight.w700,
+                color: AppColors.textSecondaryOn(context),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Relative age of the asset's last price update, or null when never fetched.
+/// Mirrors the wording used on the assets list tiles.
+String? _priceAge(Asset asset) {
+  if (asset.priceUpdatedAt == null) return null;
+  final diff = DateTime.now().difference(asset.priceUpdatedAt!);
+  if (diff.inMinutes < 1) return 'just now';
+  if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+  if (diff.inHours < 24) return '${diff.inHours}h ago';
+  if (diff.inDays < 7) return '${diff.inDays}d ago';
+  return '${(diff.inDays / 7).floor()}w ago';
+}
+
+/// Singular unit for the manual price label ('gram', 'coin', 'unit').
+String _priceUnit(AssetType type) {
+  final label = type.unitLabel; // 'units', 'grams', 'coins', or ''
+  if (label.isEmpty) return 'unit';
+  return label.endsWith('s') ? label.substring(0, label.length - 1) : label;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Value card
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ValueCard extends StatelessWidget {
+  final Asset asset;
+  final bool isProfit;
+  final Color gainColor;
+
+  /// Current worth converted into the base currency.
+  final double currentValueBase;
+
+  /// Absolute gain/loss amount converted into the base currency.
+  final double gainLossBase;
+
+  /// The portfolio base currency these values are expressed in.
+  final String base;
+
+  /// Recorded daily value history for this asset (native currency, oldest →
+  /// newest). Empty or single-point series render no chart.
+  final List<double> priceSeries;
+
+  const _ValueCard({
+    required this.asset,
+    required this.isProfit,
+    required this.gainColor,
+    required this.currentValueBase,
+    required this.gainLossBase,
+    required this.base,
+    required this.priceSeries,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(AppRadii.hero),
+        boxShadow: AppShadows.soft(),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Current value',
+            style: AppTheme.body(
+              size: 12,
+              weight: FontWeight.w700,
+              color: AppColors.textSecondaryOn(context),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Flexible(
+                child: Text(
+                  CurrencyFormatter.formatCurrency(currentValueBase, base),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.heading(
+                    size: 30,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 9),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 5),
+                child: Text(
+                  '${isProfit ? '▲' : '▼'} ${CurrencyFormatter.formatPercentage(asset.gainLossPercentage.abs(), showSign: false)}',
+                  style: AppTheme.body(
+                    size: 13,
+                    weight: FontWeight.w800,
+                    color: gainColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 1),
+          Text(
+            '${isProfit ? '+' : '-'}${CurrencyFormatter.formatCurrency(gainLossBase, base)} since you bought',
+            style: AppTheme.body(
+              size: 12,
+              weight: FontWeight.w600,
+              color: AppColors.textSecondaryOn(context),
+            ),
+          ),
+          // Real value history (only once ≥2 daily snapshots exist). Colour
+          // reflects the plotted series' own direction, not all-time gain.
+          if (priceSeries.length >= 2) ...[
+            const SizedBox(height: 14),
+            SizedBox(
+              height: 56,
+              width: double.infinity,
+              child: CustomPaint(
+                painter: _SparklinePainter(
+                  values: priceSeries,
+                  color: priceSeries.last >= priceSeries.first
+                      ? AppColors.gainOn(context)
+                      : AppColors.lossOn(context),
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Recent trend',
+              style: AppTheme.body(
+                size: 10.5,
+                weight: FontWeight.w600,
+                color: AppColors.textTertiaryOn(context),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stat tile
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _StatTile extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _StatTile({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(AppRadii.small),
+        boxShadow: AppShadows.soft(opacity: 0.12, y: 8, blur: 20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: AppTheme.body(
+              size: 10,
+              weight: FontWeight.w800,
+              color: AppColors.textSecondaryOn(context),
+            ).copyWith(letterSpacing: 0.3),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTheme.heading(
+              size: 16,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Details card
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _DetailsCard extends StatelessWidget {
+  final Asset asset;
+  const _DetailsCard({required this.asset});
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <(String, String)>[
+      (
+        'Purchase date',
+        '${asset.purchaseDate.day}/${asset.purchaseDate.month}/${asset.purchaseDate.year}',
+      ),
+      if (asset.platform != null) ('Platform', asset.platform!),
+      if (asset.currency != 'INR') ('Currency', asset.currency),
+    ];
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(AppRadii.card),
+        boxShadow: AppShadows.soft(opacity: 0.14, y: 10, blur: 24),
+      ),
+      child: Column(
+        children: [
+          for (var i = 0; i < rows.length; i++) ...[
+            if (i > 0)
+              Divider(
+                color: Theme.of(context).colorScheme.outline,
+                height: 1,
+                indent: 16,
+                endIndent: 16,
+              ),
+            Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    rows[i].$1,
+                    style: AppTheme.body(
+                      size: 13.5,
+                      color: AppColors.textSecondaryOn(context),
+                    ),
+                  ),
+                  Flexible(
+                    child: Text(
+                      rows[i].$2,
+                      textAlign: TextAlign.right,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.body(
+                        size: 13.5,
+                        weight: FontWeight.w700,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared small bits
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _SectionLabel extends StatelessWidget {
+  final String text;
+  const _SectionLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 2),
+      child: Text(text, style: Theme.of(context).textTheme.titleLarge),
+    );
+  }
+}
+
+class _GradientButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _GradientButton({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 50,
+      decoration: BoxDecoration(
+        gradient: AppColors.primaryGradient,
+        borderRadius: BorderRadius.circular(AppRadii.tile),
+        boxShadow: AppShadows.glow(AppColors.primary, opacity: 0.5),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppRadii.tile),
+          onTap: onTap,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: Colors.white, size: 19),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: AppTheme.heading(size: 15, color: Colors.white),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SoftButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _SoftButton({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 50,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(AppRadii.tile),
+        boxShadow: AppShadows.soft(opacity: 0.14, y: 10, blur: 22),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppRadii.tile),
+          onTap: onTap,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: color, size: 19),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: AppTheme.heading(size: 15, color: color),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Update price (gold live fetch + manual) — restyled, behaviour preserved
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _UpdatePriceCard extends ConsumerStatefulWidget {
   final Asset asset;
@@ -286,7 +725,7 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Live fetch button for gold assets
+        // Live fetch card for gold assets
         if (_isGold) ...[
           _buildGoldLivePriceCard(context),
           const SizedBox(height: 12),
@@ -296,40 +735,29 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: AppColors.card,
-            borderRadius: BorderRadius.circular(16),
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(AppRadii.card),
+            boxShadow: AppShadows.soft(opacity: 0.14, y: 10, blur: 24),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (_isGold)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(
-                    'Or enter price manually:',
-                    style: TextStyle(
-                      color: AppColors.textSecondary,
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
               Row(
                 children: [
                   Expanded(
                     child: TextField(
                       controller: _priceController,
-                      decoration: const InputDecoration(
-                        labelText: 'Price per gram',
-                        prefixText: '₹ ',
+                      decoration: InputDecoration(
+                        labelText: 'Price per ${_priceUnit(widget.asset.type)}',
+                        prefixText:
+                            '${AppConstants.currencies[widget.asset.currency] ?? widget.asset.currency} ',
                       ),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
                     ),
                   ),
-                  const SizedBox(width: 16),
-                  ElevatedButton(
-                    onPressed: _updatePrice,
-                    child: const Text(AppStrings.update),
-                  ),
+                  const SizedBox(width: 12),
+                  _UpdateButton(onTap: _updatePrice),
                 ],
               ),
             ],
@@ -340,13 +768,15 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
   }
 
   Widget _buildGoldLivePriceCard(BuildContext context) {
+    final goldTone = AppColors.goldColor;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(16),
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(AppRadii.card),
+        boxShadow: AppShadows.soft(opacity: 0.14, y: 10, blur: 24),
         border: Border.all(
-          color: const Color(0xFFFFD700).withValues(alpha: 0.4),
+          color: goldTone.withValues(alpha: 0.4),
           width: 1,
         ),
       ),
@@ -355,14 +785,14 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
         children: [
           Row(
             children: [
-              const Icon(Icons.auto_awesome, color: Color(0xFFFFD700), size: 18),
+              Icon(Icons.auto_awesome, color: goldTone, size: 18),
               const SizedBox(width: 8),
               Text(
                 'Live Gold Price',
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary,
-                  fontSize: 14,
+                style: AppTheme.body(
+                  size: 14,
+                  weight: FontWeight.w700,
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
             ],
@@ -373,17 +803,21 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: AppColors.error.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
+                color: AppColors.lossOn(context).withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(AppRadii.small),
               ),
               child: Row(
                 children: [
-                  Icon(Icons.error_outline, color: AppColors.error, size: 16),
+                  Icon(Icons.error_outline,
+                      color: AppColors.lossOn(context), size: 16),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'Could not fetch live price. Check your connection.',
-                      style: TextStyle(color: AppColors.error, fontSize: 12),
+                      style: AppTheme.body(
+                        size: 12,
+                        color: AppColors.lossOn(context),
+                      ),
                     ),
                   ),
                 ],
@@ -396,15 +830,15 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
               children: [
                 Text(
                   'Current price per gram',
-                  style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+                  style: AppTheme.body(
+                    size: 14,
+                    color: AppColors.textSecondaryOn(context),
+                  ),
                 ),
                 Text(
-                  '₹${_lastBreakdown!.finalPerGram.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFFFFD700),
-                    fontSize: 18,
-                  ),
+                  CurrencyFormatter.formatCurrency(
+                      _lastBreakdown!.finalPerGram, widget.asset.currency),
+                  style: AppTheme.heading(size: 18, color: goldTone),
                 ),
               ],
             ),
@@ -412,25 +846,17 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () => _applyLivePrice(_lastBreakdown!.finalPerGram),
+                onPressed: () =>
+                    _applyLivePrice(_lastBreakdown!.finalPerGram),
                 icon: const Icon(Icons.check_circle_outline, size: 18),
                 label: const Text('Apply Live Price'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFFFD700),
-                  foregroundColor: Colors.black,
+                  backgroundColor: goldTone,
+                  foregroundColor: Colors.white,
                 ),
               ),
             ),
           ],
-
-          if (_lastBreakdown == null && _fetchError == null)
-            Text(
-              'Tap below to fetch the current gold price',
-              style: TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 12,
-              ),
-            ),
 
           const SizedBox(height: 12),
           SizedBox(
@@ -447,7 +873,9 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
               label: Text(
                 _isFetchingLivePrice
                     ? 'Fetching...'
-                    : (_lastBreakdown != null ? 'Refresh Price' : 'Fetch Live Price'),
+                    : (_lastBreakdown != null
+                        ? 'Refresh Price'
+                        : 'Fetch Live Price'),
               ),
             ),
           ),
@@ -464,9 +892,8 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
 
     try {
       final goldService = ref.read(goldPriceServiceProvider);
-      final targetCurrency = widget.asset.currency.isNotEmpty
-          ? widget.asset.currency
-          : 'INR';
+      final targetCurrency =
+          widget.asset.currency.isNotEmpty ? widget.asset.currency : 'INR';
 
       final breakdown = await goldService.fetchGoldPriceBreakdown(
         targetCurrency: targetCurrency,
@@ -505,7 +932,9 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Gold price updated to ₹${price.toStringAsFixed(2)}/gram (incl. Indian taxes)',
+          'Gold price updated to '
+          '${CurrencyFormatter.formatCurrency(price, widget.asset.currency)}/gram'
+          '${widget.asset.currency == 'INR' ? ' (incl. Indian taxes)' : ''}',
         ),
         backgroundColor: AppColors.success,
       ),
@@ -533,4 +962,113 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
       );
     }
   }
+}
+
+/// Small gradient "Update" CTA matching the soft-pop direction.
+class _UpdateButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _UpdateButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 50,
+      decoration: BoxDecoration(
+        gradient: AppColors.primaryGradient,
+        borderRadius: BorderRadius.circular(AppRadii.tile),
+        boxShadow: AppShadows.glow(AppColors.primary, opacity: 0.45),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppRadii.tile),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+            child: Center(
+              child: Text(
+                AppStrings.update,
+                style: AppTheme.heading(size: 14, color: Colors.white),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Area sparkline over a REAL value series (from recorded daily snapshots).
+/// Unlike the earlier decorative version, every point is actual data.
+class _SparklinePainter extends CustomPainter {
+  final List<double> values;
+  final Color color;
+
+  _SparklinePainter({required this.values, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.length < 2) return;
+
+    var min = values.first;
+    var max = values.first;
+    for (final v in values) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    final range = (max - min).abs();
+
+    double yFor(double v) {
+      const topPad = 6.0;
+      const bottomPad = 6.0;
+      final usable = size.height - topPad - bottomPad;
+      if (range == 0) return size.height / 2; // flat series → mid-line
+      final t = (v - min) / range; // 0 (min) → 1 (max)
+      return topPad + (1 - t) * usable; // higher value = higher on screen
+    }
+
+    final dx = size.width / (values.length - 1);
+    final line = Path();
+    final fill = Path()..moveTo(0, size.height);
+    for (var i = 0; i < values.length; i++) {
+      final x = dx * i;
+      final y = yFor(values[i]);
+      if (i == 0) {
+        line.moveTo(x, y);
+      } else {
+        line.lineTo(x, y);
+      }
+      fill.lineTo(x, y);
+    }
+    fill.lineTo(size.width, size.height);
+    fill.close();
+
+    canvas.drawPath(
+      fill,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [color.withValues(alpha: 0.26), color.withValues(alpha: 0.0)],
+        ).createShader(Offset.zero & size),
+    );
+    canvas.drawPath(
+      line,
+      Paint()
+        ..color = color
+        ..strokeWidth = 3
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+    canvas.drawCircle(
+      Offset(size.width, yFor(values.last)),
+      4,
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _SparklinePainter old) =>
+      old.values != values || old.color != color;
 }

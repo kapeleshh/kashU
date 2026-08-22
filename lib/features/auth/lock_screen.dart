@@ -1,22 +1,26 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_strings.dart';
+import '../../core/theme/app_decorations.dart';
+import '../../core/theme/app_theme.dart';
 import '../../services/auth_service.dart';
-import '../dashboard/dashboard_screen.dart';
+import '../../shared/providers/portfolio_provider.dart';
 
-/// Full-screen lock screen shown at app startup when authentication is enabled.
+/// Full-screen lock shown while [appLockedProvider] is true — rendered as an
+/// overlay above the app (see KashUApp's MaterialApp.builder), so unlocking
+/// is a state change, not a navigation.
 ///
 /// Uses [AuthService] which delegates to the device's built-in auth
 /// (biometrics or device PIN) — no in-app PIN setup required.
-class LockScreen extends StatefulWidget {
+class LockScreen extends ConsumerStatefulWidget {
   const LockScreen({super.key});
 
   @override
-  State<LockScreen> createState() => _LockScreenState();
+  ConsumerState<LockScreen> createState() => _LockScreenState();
 }
 
-class _LockScreenState extends State<LockScreen> {
-  final _authService = AuthService();
+class _LockScreenState extends ConsumerState<LockScreen> {
   bool _isAuthenticating = false;
   bool _notEnrolled = false;
   String? _errorMessage;
@@ -24,8 +28,14 @@ class _LockScreenState extends State<LockScreen> {
   @override
   void initState() {
     super.initState();
-    // Trigger auth prompt automatically on first open
+    // Trigger the auth prompt automatically when the lock appears. This only
+    // runs on mount — the overlay stays mounted while locked, so a resume
+    // can never fire a second prompt on top of an active one.
     WidgetsBinding.instance.addPostFrameCallback((_) => _authenticate());
+  }
+
+  void _unlock() {
+    ref.read(appLockedProvider.notifier).state = false;
   }
 
   Future<void> _authenticate() async {
@@ -35,22 +45,18 @@ class _LockScreenState extends State<LockScreen> {
       _errorMessage = null;
     });
 
-    final result = await _authService.authenticate(
-      reason: 'Authenticate to open ${AppStrings.appName}',
-    );
+    final result = await ref.read(authServiceProvider).authenticate(
+          reason: 'Authenticate to open ${AppStrings.appName}',
+        );
 
     if (!mounted) return;
 
     switch (result) {
       case AuthResult.success:
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const DashboardScreen()),
-        );
+        _unlock();
       case AuthResult.notAvailable:
         // Device doesn't support auth — let them in anyway
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const DashboardScreen()),
-        );
+        _unlock();
       case AuthResult.notEnrolled:
         setState(() {
           _isAuthenticating = false;
@@ -75,8 +81,9 @@ class _LockScreenState extends State<LockScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
-      backgroundColor: AppColors.background,
       body: SafeArea(
         child: Center(
           child: Padding(
@@ -84,28 +91,22 @@ class _LockScreenState extends State<LockScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // App logo
+                // Brand badge — indigo→lavender gradient with the K mark.
                 Container(
                   width: 88,
                   height: 88,
                   decoration: BoxDecoration(
                     gradient: AppColors.primaryGradient,
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.primary.withValues(alpha: 0.35),
-                        blurRadius: 28,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
+                    borderRadius: BorderRadius.circular(AppRadii.hero),
+                    boxShadow: AppShadows.glow(AppColors.primary, opacity: 0.5),
                   ),
-                  child: const Center(
+                  child: Center(
                     child: Text(
                       'K',
-                      style: TextStyle(
+                      style: AppTheme.heading(
+                        size: 46,
                         color: Colors.white,
-                        fontSize: 46,
-                        fontWeight: FontWeight.bold,
+                        weight: FontWeight.w800,
                       ),
                     ),
                   ),
@@ -115,54 +116,19 @@ class _LockScreenState extends State<LockScreen> {
 
                 Text(
                   AppStrings.appName,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                ),
-
-                const SizedBox(height: 8),
-
-                Text(
-                  'Unlock to continue',
-                  style: TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 15,
+                  style: AppTheme.heading(
+                    size: 28,
+                    color: theme.colorScheme.onSurface,
+                    weight: FontWeight.w700,
                   ),
                 ),
 
                 const SizedBox(height: 48),
 
                 if (_isAuthenticating)
-                  const CircularProgressIndicator()
+                  const CircularProgressIndicator(color: AppColors.primary)
                 else
-                  GestureDetector(
-                    onTap: _authenticate,
-                    child: Column(
-                      children: [
-                        Container(
-                          width: 72,
-                          height: 72,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary.withValues(alpha: 0.12),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.fingerprint,
-                            size: 40,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          'Tap to authenticate',
-                          style: TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  _UnlockButton(onTap: _authenticate),
 
                 if (_errorMessage != null) ...[
                   const SizedBox(height: 24),
@@ -170,17 +136,18 @@ class _LockScreenState extends State<LockScreen> {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 16, vertical: 12),
                     decoration: BoxDecoration(
-                      color: AppColors.error.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(12),
+                      color: theme.colorScheme.error.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(AppRadii.small),
                       border: Border.all(
-                        color: AppColors.error.withValues(alpha: 0.3),
+                        color: theme.colorScheme.error.withValues(alpha: 0.3),
                       ),
                     ),
                     child: Text(
                       _errorMessage!,
-                      style: TextStyle(
-                        color: AppColors.error,
-                        fontSize: 13,
+                      style: AppTheme.body(
+                        size: 13,
+                        weight: FontWeight.w600,
+                        color: theme.colorScheme.error,
                       ),
                       textAlign: TextAlign.center,
                     ),
@@ -188,14 +155,8 @@ class _LockScreenState extends State<LockScreen> {
                   if (_notEnrolled) ...[
                     const SizedBox(height: 16),
                     TextButton(
-                      onPressed: () => Navigator.of(context).pushReplacement(
-                        MaterialPageRoute(
-                            builder: (_) => const DashboardScreen()),
-                      ),
-                      child: const Text(
-                        'Continue without lock',
-                        style: TextStyle(fontSize: 14),
-                      ),
+                      onPressed: _unlock,
+                      child: const Text('Continue without lock'),
                     ),
                   ],
                 ],
@@ -203,6 +164,48 @@ class _LockScreenState extends State<LockScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Soft, on-brand unlock affordance: a gradient fingerprint badge with a
+/// gentle glow plus a helper label below.
+class _UnlockButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _UnlockButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Column(
+        children: [
+          Container(
+            width: 76,
+            height: 76,
+            decoration: BoxDecoration(
+              gradient: AppColors.primaryGradient,
+              shape: BoxShape.circle,
+              boxShadow: AppShadows.glow(AppColors.primary, opacity: 0.45),
+            ),
+            child: const Icon(
+              Icons.fingerprint,
+              size: 40,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'Tap to authenticate',
+            style: AppTheme.body(
+              size: 14,
+              weight: FontWeight.w600,
+              color: AppColors.textSecondaryOn(context),
+            ),
+          ),
+        ],
       ),
     );
   }
