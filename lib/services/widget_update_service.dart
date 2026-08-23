@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:home_widget/home_widget.dart';
 
 import '../core/utils/currency_formatter.dart';
@@ -27,6 +28,10 @@ class WidgetUpdateService {
     required double gainLossPct,
     required String baseCurrency,
   }) async {
+    // There is no home-screen widget on web, and home_widget has no web
+    // implementation — the first call would throw MissingPluginException.
+    if (kIsWeb) return;
+
     await HomeWidget.setAppGroupId(_kIosAppGroup);
 
     final valueStr = CurrencyFormatter.formatCurrency(totalValue, baseCurrency);

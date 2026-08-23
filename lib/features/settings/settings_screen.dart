@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -94,31 +95,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ref.invalidate(portfolioSummaryProvider);
               },
             ),
-            SwitchListTile(
-              secondary: _tileIcon(Icons.lock_outline),
-              title: Text(
-                'Require Authentication',
-                style: AppTheme.body(
-                  size: 15,
-                  weight: FontWeight.w700,
-                  color: Theme.of(context).colorScheme.onSurface,
+            // Browsers expose no biometric/PIN API to local_auth, so the
+            // lock can never actually engage on web — don't offer it.
+            if (!kIsWeb)
+              SwitchListTile(
+                secondary: _tileIcon(Icons.lock_outline),
+                title: Text(
+                  'Require Authentication',
+                  style: AppTheme.body(
+                    size: 15,
+                    weight: FontWeight.w700,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
                 ),
-              ),
-              subtitle: Text(
-                'Use biometrics or device PIN to unlock the app',
-                style: AppTheme.body(
-                  size: 12.5,
-                  weight: FontWeight.w500,
-                  color: AppColors.textTertiaryOn(context),
+                subtitle: Text(
+                  'Use biometrics or device PIN to unlock the app',
+                  style: AppTheme.body(
+                    size: 12.5,
+                    weight: FontWeight.w500,
+                    color: AppColors.textTertiaryOn(context),
+                  ),
                 ),
+                value: _appLockEnabled,
+                activeThumbColor: AppColors.primary,
+                activeTrackColor: AppColors.primary.withValues(alpha: 0.4),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                onChanged: _toggleAppLock,
               ),
-              value: _appLockEnabled,
-              activeThumbColor: AppColors.primary,
-              activeTrackColor: AppColors.primary.withValues(alpha: 0.4),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              onChanged: _toggleAppLock,
-            ),
             SwitchListTile(
               secondary: _tileIcon(Icons.bug_report_outlined),
               title: Text(
