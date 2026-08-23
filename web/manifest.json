@@ -1,11 +1,11 @@
 {
-    "name": "kashu",
-    "short_name": "kashu",
+    "name": "KashU",
+    "short_name": "KashU",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#15131F",
+    "theme_color": "#6366F1",
+    "description": "Private, offline-first portfolio tracker for stocks, mutual funds, gold, crypto, deposits and more. Your data never leaves your device.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

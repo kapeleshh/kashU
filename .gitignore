@@ -109,3 +109,6 @@ coverage/
 # Secrets
 secrets.dart
 api_keys.dart
+
+# Vercel
+.vercel/
