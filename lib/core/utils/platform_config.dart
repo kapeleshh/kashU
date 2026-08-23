@@ -8,8 +8,9 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 /// - Services have no direct dependency on `kIsWeb`.
 /// - Testing services is cleaner (no Flutter platform detection needed).
 abstract final class PlatformConfig {
-  /// Base URL for the local CORS proxy (web only).
-  static const String _proxyBase = 'http://localhost:8080/proxy?url=';
+  /// Same-origin path of the CORS proxy (web only) — served by
+  /// `api/proxy.py` on Vercel and by `proxy_server.py` in local dev.
+  static const String _proxyPath = '/api/proxy';
 
   /// Whether the app is running in a browser.
   static bool get isWeb => kIsWeb;
@@ -17,10 +18,14 @@ abstract final class PlatformConfig {
   /// Build the [Uri] to use for [directUrl].
   ///
   /// On mobile/desktop: returns [directUrl] as-is.
-  /// On web:          routes through the local CORS proxy.
+  /// On web:          routes through the same-origin CORS proxy.
   static Uri buildUrl(String directUrl) {
     if (isWeb) {
-      return Uri.parse('$_proxyBase${Uri.encodeComponent(directUrl)}');
+      // Uri.base is the page URL on web, so this resolves against the
+      // current origin and works unchanged on localhost, Vercel
+      // previews, and production.
+      return Uri.base
+          .resolve('$_proxyPath?url=${Uri.encodeComponent(directUrl)}');
     }
     return Uri.parse(directUrl);
   }

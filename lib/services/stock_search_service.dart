@@ -1,6 +1,7 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
+
+import '../core/utils/platform_config.dart';
 
 /// A single stock/ETF/fund result from the Yahoo Finance search API.
 class StockSearchResult {
@@ -78,26 +79,15 @@ class StockSearchResult {
 /// Searches for stocks, ETFs, and mutual funds using the Yahoo Finance
 /// search API. Results include symbol, name, and exchange.
 ///
-/// On web, requests are routed through the local CORS proxy.
+/// On web, requests are routed through the same-origin CORS proxy.
 class StockSearchService {
   static const String _searchUrl =
       'https://query1.finance.yahoo.com/v1/finance/search';
-
-  /// Local proxy base URL (used on web to bypass CORS)
-  static const String _proxyBase = 'http://localhost:8080/proxy?url=';
 
   final http.Client _client;
 
   StockSearchService({http.Client? client})
       : _client = client ?? http.Client();
-
-  /// Build the request URL — uses proxy on web, direct on mobile/desktop
-  Uri _buildUrl(String directUrl) {
-    if (kIsWeb) {
-      return Uri.parse('$_proxyBase${Uri.encodeComponent(directUrl)}');
-    }
-    return Uri.parse(directUrl);
-  }
 
   /// Search for stocks/ETFs/funds matching [query].
   ///
@@ -117,7 +107,7 @@ class StockSearchService {
       'enableCb': 'false',
     }).toString();
 
-    final url = _buildUrl(directUrl);
+    final url = PlatformConfig.buildUrl(directUrl);
 
     try {
       final response = await _client.get(
