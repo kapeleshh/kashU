@@ -112,3 +112,5 @@ api_keys.dart
 
 # Vercel
 .vercel/
+.vercel
+.env*
