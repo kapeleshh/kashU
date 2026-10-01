@@ -1,10 +1,10 @@
-﻿import 'dart:io';
+﻿import 'dart:convert';
+import 'dart:typed_data';
 import 'package:csv/csv.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-import 'package:share_plus/share_plus.dart';
+import '../core/utils/file_saver.dart';
 import '../data/models/asset.dart';
 import '../data/models/asset_type.dart';
 import '../data/models/transaction.dart';
@@ -112,14 +112,10 @@ abstract final class ExportService {
       ),
     );
 
-    final bytes = await doc.save();
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File(
-        '${dir.path}/kashu_tax_report_${now.year}.pdf');
-    await file.writeAsBytes(bytes);
-
-    await Share.shareXFiles(
-      [XFile(file.path)],
+    await saveAndShare(
+      bytes: await doc.save(),
+      filename: 'kashu_tax_report_${now.year}.pdf',
+      mimeType: 'application/pdf',
       subject: 'KashU Tax Report ${now.year}',
     );
   }
@@ -472,11 +468,13 @@ abstract final class ExportService {
     String ext,
     String subject,
   ) async {
-    final dir = await getApplicationDocumentsDirectory();
     final ts = DateTime.now().millisecondsSinceEpoch;
-    final file = File('${dir.path}/${baseName}_$ts.$ext');
-    await file.writeAsString(content);
-    await Share.shareXFiles([XFile(file.path)], subject: subject);
+    await saveAndShare(
+      bytes: Uint8List.fromList(utf8.encode(content)),
+      filename: '${baseName}_$ts.$ext',
+      mimeType: ext == 'csv' ? 'text/csv' : 'text/plain',
+      subject: subject,
+    );
   }
 }
 

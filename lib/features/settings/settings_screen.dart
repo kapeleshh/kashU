@@ -1,17 +1,16 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/config/crash_reporting_consent.dart';
 import '../../core/constants/app_strings.dart';
 import '../../core/theme/app_decorations.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/file_saver.dart';
 import '../../core/utils/import_validator.dart';
 import '../../services/auth_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
@@ -340,13 +339,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       };
 
       final jsonString = const JsonEncoder.withIndent('  ').convert(exportData);
-      final directory = await getApplicationDocumentsDirectory();
-      final file = File(
-          '${directory.path}/kashu_backup_${DateTime.now().millisecondsSinceEpoch}.json');
-      await file.writeAsString(jsonString);
-
-      await Share.shareXFiles(
-        [XFile(file.path)],
+      await saveAndShare(
+        bytes: Uint8List.fromList(utf8.encode(jsonString)),
+        filename:
+            'kashu_backup_${DateTime.now().millisecondsSinceEpoch}.json',
+        mimeType: 'application/json',
         subject: 'KashU Portfolio Backup',
       );
 

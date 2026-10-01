@@ -40,6 +40,9 @@ dependencies:
   # Networking (for price tracking)
   http: ^1.2.0
 
+  # Browser download path for exports (see core/utils/file_saver_web.dart)
+  web: ^1.1.1
+
   # Home screen widget (Android AppWidget + iOS WidgetKit bridge)
   home_widget: ^0.6.0
   # Export (CSV + PDF)
