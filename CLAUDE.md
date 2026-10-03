@@ -132,6 +132,22 @@ After each successful refresh the dashboard (`features/dashboard/dashboard_scree
 
 `main()` → `_bootstrap()`: error handlers → Hive init + register adapters → load/create cipher → open boxes (or error screen) → run migrations → finish interrupted cross-box writes → read settings flags → `runApp`. `KashUApp` chooses the home screen by priority: onboarding > lock screen (biometric/PIN auth) > dashboard.
 
+## Release packaging
+
+- **Play requires an `.aab`**: `flutter build appbundle --release`. `android/app/build.gradle.kts`
+  **throws at configuration time** if `android/key.properties` is absent, because an unsigned bundle
+  is only ever destined for an upload that would be rejected. A release *APK* still builds with the
+  debug key (CI smoke-builds one) but logs a loud warning — never ship that artifact.
+- Store graphics come from `tool/generate_store_assets.py`, which imports the gradient and coin from
+  `tool/generate_app_icon.py`, so the listing cannot drift from the shipped icon. Output lands in
+  `store/play/` and is not bundled into the app.
+- The privacy policy is a plain static page at `web/privacy.html`; `flutter build web` copies it into
+  `build/web/`, and Vercel's filesystem phase serves it before the SPA rewrite, so `/privacy.html`
+  works without touching `vercel.json`.
+- **Lock files are tracked** (`pubspec.lock`, `ios/Podfile.lock`, `macos/Podfile.lock`). `.gitignore`
+  has a blanket `*.lock` for Hive's box locks with explicit `!` exceptions — don't drop them, or
+  release builds stop being reproducible and CI silently re-resolves dependencies every run.
+
 ## Conventions
 
 - Tests use `mocktail` and live under `test/`, mirroring the `lib/` layout. Service tests inject fake HTTP clients / dependencies via the constructor params; Hive-backed services take a `Box?` override for the same reason.
