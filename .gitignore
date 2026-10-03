@@ -105,6 +105,12 @@ coverage/
 # Hive local database files
 *.hive
 *.lock
+# ...but dependency lock files must be tracked: without them a release
+# build is not reproducible from a clean checkout and CI re-resolves
+# every run, so a transitive update can change a shipped artifact.
+!pubspec.lock
+!ios/Podfile.lock
+!macos/Podfile.lock
 
 # Secrets
 secrets.dart
