@@ -86,4 +86,11 @@ class AppStrings {
   static const String errorRequired = 'This field is required';
   static const String errorInvalidNumber = 'Please enter a valid number';
   static const String errorImport = 'Failed to import data';
+
+  // Device authentication (lock screen + app-lock toggle)
+  static const String authLockedOut =
+      'Too many attempts. Wait about 30 seconds, then try again.';
+  static const String authPermanentlyLockedOut =
+      'Biometrics are disabled after too many attempts. Lock your phone and '
+      'unlock it with its PIN, pattern or password, then try again.';
 }

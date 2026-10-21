@@ -26,6 +26,10 @@ class SettingsScreen extends ConsumerStatefulWidget {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _appLockEnabled = false;
+
+  /// True while the app-lock toggle waits on the authentication prompt, so
+  /// a second tap can't stack another prompt or race the first save.
+  bool _appLockBusy = false;
   bool _crashReportingEnabled = false;
 
   @override
@@ -45,29 +49,60 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _toggleAppLock(bool value) async {
-    if (value) {
-      // Verify device supports authentication before enabling
-      final authService = AuthService();
-      final available = await authService.isAvailable();
-      final enrolled = await authService.isEnrolled();
+    if (_appLockBusy) return;
+    setState(() => _appLockBusy = true);
+    try {
+      final result = await ref.read(authServiceProvider).authenticate(
+            reason: value
+                ? 'Confirm to turn on app lock'
+                : 'Confirm to turn off app lock',
+          );
+      if (!mounted) return;
 
-      if (!available || !enrolled) {
-        if (!mounted) return;
+      // Turning the lock on must prove this device can actually unlock it —
+      // saving the flag on faith is how an Android setup that could never
+      // authenticate locked people out of their data. Turning it off needs
+      // proof too (anyone holding the unlocked phone could flip it), except
+      // when the device can't authenticate at all: the lock is inert then,
+      // and refusing would leave the setting stuck on.
+      final allowed = result == AuthResult.success ||
+          (!value && result.deviceCannotAuthenticate);
+      if (!allowed) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'No biometrics or PIN set up on this device. '
-              'Please configure device security in your system Settings first.',
-            ),
-          ),
+          SnackBar(content: Text(_appLockRefusal(result, enabling: value))),
         );
         return;
       }
-    }
 
-    await Hive.box(AppConstants.settingsBox)
-        .put(AppConstants.keyAppLockEnabled, value);
-    if (mounted) setState(() => _appLockEnabled = value);
+      await Hive.box(AppConstants.settingsBox)
+          .put(AppConstants.keyAppLockEnabled, value);
+      if (mounted) setState(() => _appLockEnabled = value);
+    } finally {
+      if (mounted) setState(() => _appLockBusy = false);
+    }
+  }
+
+  /// Why the app-lock switch did not move, for a non-success [result].
+  String _appLockRefusal(AuthResult result, {required bool enabling}) {
+    switch (result) {
+      case AuthResult.notAvailable:
+      case AuthResult.notEnrolled:
+        return 'No screen lock is set up on this device. Add a PIN, pattern, '
+            'password or fingerprint in your device Settings first.';
+      case AuthResult.lockedOut:
+        return AppStrings.authLockedOut;
+      case AuthResult.permanentlyLockedOut:
+        return AppStrings.authPermanentlyLockedOut;
+      case AuthResult.error:
+        return 'This device could not run authentication, so app lock '
+            'was not turned on.';
+      case AuthResult.success:
+      case AuthResult.failure:
+      case AuthResult.cancelled:
+        return enabling
+            ? 'App lock was not turned on — authentication was not completed.'
+            : 'App lock is still on — authentication was not completed.';
+    }
   }
 
   @override
@@ -120,7 +155,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 activeTrackColor: AppColors.primary.withValues(alpha: 0.4),
                 contentPadding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                onChanged: _toggleAppLock,
+                onChanged: _appLockBusy ? null : _toggleAppLock,
               ),
             SwitchListTile(
               secondary: _tileIcon(Icons.bug_report_outlined),

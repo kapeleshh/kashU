@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 
 import 'package:kashu/core/constants/app_constants.dart';
+import 'package:kashu/core/constants/app_strings.dart';
 import 'package:kashu/data/models/asset.dart';
 import 'package:kashu/data/models/asset_type.dart';
 import 'package:kashu/data/models/transaction.dart';
@@ -167,6 +168,38 @@ void main() {
       (tester) async {
     await pumpApp(tester, authResult: AuthResult.cancelled, startLocked: true);
     expect(find.byType(LockScreen), findsOneWidget);
+  });
+
+  testWidgets('a lock-out is explained and offers no way around the lock',
+      (tester) async {
+    await pumpApp(tester, authResult: AuthResult.lockedOut, startLocked: true);
+
+    expect(find.byType(LockScreen), findsOneWidget);
+    expect(find.text(AppStrings.authLockedOut), findsOneWidget);
+    expect(find.text('Continue without lock'), findsNothing);
+  });
+
+  testWidgets(
+      'a permanent lock-out tells the user to unlock the device with its PIN',
+      (tester) async {
+    await pumpApp(tester,
+        authResult: AuthResult.permanentlyLockedOut, startLocked: true);
+
+    expect(find.text(AppStrings.authPermanentlyLockedOut), findsOneWidget);
+    expect(find.text('Continue without lock'), findsNothing);
+  });
+
+  testWidgets(
+      'a platform error never traps the user — they can continue without '
+      'the lock', (tester) async {
+    await pumpApp(tester, authResult: AuthResult.error, startLocked: true);
+
+    expect(find.textContaining('could not start authentication'),
+        findsOneWidget);
+    await tester.tap(find.text('Continue without lock'));
+    await pumpFrames(tester);
+
+    expect(find.byType(LockScreen), findsNothing);
   });
 
   testWidgets('app snackbars cannot paint above the lock overlay',

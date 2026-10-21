@@ -36,7 +36,7 @@ Project slash commands live in `.claude/commands/` (`/regen`, `/hive-migration`,
 ### Running on each platform
 
 - **Web**: requires a CORS proxy — browsers block direct calls to Yahoo Finance / CoinGecko / MFAPI.in / open.er-api.com. Locally: `flutter build web`, then `python3 proxy_server.py`, which serves `build/web` and proxies at `http://localhost:8080`. Deployed: Vercel (see below). Both expose the **same** contract, `/api/proxy?url=<encoded absolute https URL>` (`proxy_server.py` also still answers the legacy `/proxy?` path).
-- **Android**: `flutter build apk --debug` on macOS/Linux. On Windows use `build_apk.bat` (the Android build tools are Windows `.exe` and cannot run from WSL2).
+- **Android**: `flutter build apk --debug` on macOS/Linux. On Windows use `build_apk.bat` (the Android build tools are Windows `.exe` and cannot run from WSL2). `MainActivity` must stay a `FlutterFragmentActivity` and the launch/normal themes must keep an AppCompat parent: `local_auth`'s BiometricPrompt needs both, and with a plain `FlutterActivity` every unlock fails with `no_fragment_activity`.
 - **iOS/macOS**: `flutter build ios --debug` / standard Flutter. Podfiles for ios/macos may be untracked locally.
 
 ### Web deployment (Vercel)
