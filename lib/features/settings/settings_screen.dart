@@ -506,6 +506,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (replaced > 0)
         '${_count(replaced, 'asset')} already in KashU will be replaced by '
             "the backup's version.",
+      if (backup.historyOnlyTransactions == 1)
+        '1 transaction belongs to a holding that was deleted earlier; it is '
+            'kept as history.'
+      else if (backup.historyOnlyTransactions > 1)
+        '${backup.historyOnlyTransactions} transactions belong to holdings '
+            'that were deleted earlier; they are kept as history.',
       'Nothing else is changed or deleted.',
     ].join('\n\n');
 

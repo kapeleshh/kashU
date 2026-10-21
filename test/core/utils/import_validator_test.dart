@@ -91,8 +91,8 @@ void main() {
       expect(
           ImportValidator.validateAssets(envelope['assets'] as List), isNull);
       expect(
-          ImportValidator.validateTransactions(envelope['transactions'] as List,
-              knownAssetIds: {'a1'}),
+          ImportValidator.validateTransactions(
+              envelope['transactions'] as List),
           isNull);
     });
 
@@ -144,9 +144,8 @@ void main() {
   });
 
   group('ImportValidator.validateTransactions', () {
-    String? validate(Map<String, dynamic> t,
-            {Set<String> known = const {'a1'}}) =>
-        ImportValidator.validateTransactions([t], knownAssetIds: known);
+    String? validate(Map<String, dynamic> t) =>
+        ImportValidator.validateTransactions([t]);
 
     test('accepts every TransactionType and nothing past it', () {
       for (var type = 0; type <= 3; type++) {
@@ -170,16 +169,18 @@ void main() {
           contains('"createdAt"'));
     });
 
-    test('rejects an assetId that is neither in the backup nor on device', () {
-      expect(validate(validTransaction()..['assetId'] = 'ghost'),
-          contains('belongs to an asset that is neither'));
+    test(
+        'accepts an assetId that matches no asset — the history of a '
+        'holding deleted earlier', () {
+      expect(validate(validTransaction()..['assetId'] = 'deleted-long-ago'),
+          isNull);
     });
 
-    test('accepts an assetId that already exists on the device', () {
-      expect(
-          validate(validTransaction()..['assetId'] = 'on-device',
-              known: {'on-device'}),
-          isNull);
+    test('still requires a non-empty assetId', () {
+      expect(validate(validTransaction()..['assetId'] = ''),
+          contains('"assetId" must be a non-empty string'));
+      expect(validate(validTransaction()..remove('assetId')),
+          contains('"assetId" must be a non-empty string'));
     });
 
     test('rejects NaN and infinite amounts', () {
@@ -192,8 +193,7 @@ void main() {
     test('rejects a repeated transaction id', () {
       expect(
           ImportValidator.validateTransactions(
-              [validTransaction(), validTransaction()],
-              knownAssetIds: {'a1'}),
+              [validTransaction(), validTransaction()]),
           contains('Transaction[1]."id" appears more than once'));
     });
   });

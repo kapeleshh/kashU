@@ -207,6 +207,67 @@ void main() {
 
     expect(snapshot(), after);
   });
+
+  group('history of holdings deleted earlier (no matching asset)', () {
+    test('a failed import rolls it back like any other record', () async {
+      // The device already holds history for a deleted holding.
+      await txRepo.addTransaction(makeTransaction('h1', 'deleted', amount: 10));
+      final before = snapshot();
+
+      final service = serviceWith(
+          transactions: FailingTransactionRepository(failOnCall: 2));
+      await expectLater(
+        service.importBackup(assets: const [], transactions: [
+          makeTransaction('h1', 'deleted', amount: 99), // replaces h1
+          makeTransaction('h2', 'deleted'), // fails
+        ]),
+        throwsA(isA<HiveError>()),
+      );
+
+      expect(snapshot(), before);
+    });
+
+    test('an interrupted import of it is rolled back at the next launch',
+        () async {
+      await txRepo.addTransaction(makeTransaction('h1', 'deleted', amount: 10));
+      final before = snapshot();
+
+      final dying = PortfolioWriteService(
+        assetRepository: assetRepo,
+        transactionRepository: _AlwaysFailingAfter(1),
+        settingsBox: settings,
+      );
+      await expectLater(
+        dying.importBackup(assets: const [], transactions: [
+          makeTransaction('h1', 'deleted', amount: 99),
+          makeTransaction('h2', 'deleted'),
+        ]),
+        throwsA(isA<HiveError>()),
+      );
+
+      await Hive.close();
+      await openBoxes();
+      await serviceWith().completeInterruptedWrites();
+
+      expect(snapshot(), before);
+    });
+
+    test(
+        'importing it drops the delete tombstone of its holding, so startup '
+        "can't delete what was just restored", () async {
+      await settings.put(AppConstants.keyPendingAssetDeletes, ['deleted']);
+
+      await serviceWith().importBackup(assets: const [], transactions: [
+        makeTransaction('h1', 'deleted'),
+        makeTransaction('h2', 'deleted'),
+      ]);
+      expect(settings.get(AppConstants.keyPendingAssetDeletes), isEmpty);
+
+      expect(await serviceWith().completeInterruptedWrites(), 0);
+      expect(txRepo.getAllTransactions().map((t) => t.id),
+          unorderedEquals(['h1', 'h2']));
+    });
+  });
 }
 
 /// Lets the first [okCalls] transaction writes through, then fails every

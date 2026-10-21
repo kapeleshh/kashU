@@ -13,6 +13,7 @@ import 'package:kashu/data/repositories/asset_repository.dart';
 import 'package:kashu/data/repositories/portfolio_write_service.dart';
 import 'package:kashu/data/repositories/transaction_repository.dart';
 import 'package:kashu/services/backup_service.dart';
+import 'package:kashu/services/export_service.dart';
 
 /// One device's Hive storage, in its own temp directory.
 class _Device {
@@ -204,16 +205,6 @@ void main() {
       expect(phone.assets.getAssetById('brand-new'), isNull);
     });
 
-    test('a transaction for an asset that exists nowhere', () async {
-      final json = jsonDecode(utf8.decode(goodFile)) as Map<String, dynamic>;
-      (json['assets'] as List).clear();
-      ((json['transactions'] as List).first
-          as Map<String, dynamic>)['assetId'] = 'ghost';
-
-      expect(await importExpectingRejection(utf8.encode(jsonEncode(json))),
-          contains('belongs to an asset'));
-    });
-
     test('an empty backup', () async {
       final empty = utf8.encode(BackupService.encode(
           BackupService.buildEnvelope(assets: [], transactions: [])));
@@ -242,7 +233,94 @@ void main() {
         BackupService.parse(transactionsOnly, existingAssetIds: phone.assetIds);
     expect(backup.assets, isEmpty);
     expect(backup.transactions, isNotEmpty);
+    expect(backup.historyOnlyTransactions, 0);
+
+    // On a device without that asset the same transactions are history.
+    final elsewhere =
+        BackupService.parse(transactionsOnly, existingAssetIds: const {});
+    expect(elsewhere.historyOnlyTransactions, elsewhere.transactions.length);
     await phone.close();
+  });
+
+  group('history of holdings deleted earlier', () {
+    /// Transactions left behind by the old delete path: their asset is gone.
+    Future<void> addOrphanedHistory(_Device device) async {
+      for (final (id, type) in [
+        ('gone-buy', TransactionType.buy),
+        ('gone-sell', TransactionType.sell),
+      ]) {
+        await device.transactions.addTransaction(Transaction(
+          id: id,
+          assetId: 'deleted-holding',
+          type: type,
+          quantity: 4,
+          price: 150,
+          amount: 600,
+          currency: 'INR',
+          date: DateTime(2022, 6, type == TransactionType.buy ? 1 : 30),
+          createdAt: DateTime(2022, 6, 30),
+        ));
+      }
+    }
+
+    test('an export containing it imports in full and is reported', () async {
+      final phoneA = await _Device.open('f');
+      await seedPortfolio(phoneA);
+      await addOrphanedHistory(phoneA);
+      final file = phoneA.exportFile();
+      final original = phoneA.contents();
+      await phoneA.close();
+
+      final phoneB = await _Device.open('g');
+      final backup =
+          BackupService.parseBytes(file, existingAssetIds: phoneB.assetIds);
+      expect(backup.historyOnlyTransactions, 2);
+
+      await phoneB.writer.importBackup(
+          assets: backup.assets, transactions: backup.transactions);
+      expect(phoneB.contents(), original);
+
+      // Startup repair never touches unmarked history.
+      expect(await phoneB.writer.completeInterruptedWrites(), 0);
+      expect(phoneB.contents(), original);
+      await phoneB.close();
+    });
+
+    test('reports that need a cost basis skip it instead of crashing',
+        () async {
+      final phone = await _Device.open('h');
+      await seedPortfolio(phone);
+      final backup = BackupService.parse(
+        jsonEncode({
+          ...jsonDecode(utf8.decode(phone.exportFile())) as Map,
+          'transactions': [
+            for (final t in phone.transactions.exportToJson())
+              {...t, 'id': 'copy-${t['id']}', 'assetId': 'deleted-holding'},
+          ],
+        }),
+        existingAssetIds: const {},
+      );
+      await phone.writer.importBackup(
+          assets: backup.assets, transactions: backup.transactions);
+
+      final assets = phone.assets.getAllAssets();
+      final transactions = phone.transactions.getAllTransactions();
+      final names = {for (final a in assets) a.id: a.name};
+
+      // Capital gains: the orphaned sell has no cost basis and is skipped;
+      // the original sell of a held asset is still reported.
+      final gains =
+          ExportService.computeCapitalGains(assets, transactions, names);
+      expect(gains, hasLength(1));
+      expect(gains.single.assetName, 'Reliance Industries');
+
+      // Activity / CSV list every transaction, falling back to the id.
+      final rows = ExportService.transactionsCsvRows(transactions, names);
+      expect(rows, hasLength(transactions.length + 1));
+      expect(rows.where((r) => r[1] == 'deleted-holding'),
+          hasLength(TransactionType.values.length));
+      await phone.close();
+    });
   });
 
   test('a leading byte-order mark is tolerated', () async {

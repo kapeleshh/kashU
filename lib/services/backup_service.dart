@@ -13,10 +13,17 @@ class ParsedBackup {
   /// When the backup was exported, if the file says.
   final DateTime? exportedAt;
 
+  /// How many [transactions] belong to no asset — neither one in this
+  /// backup nor one already on the device. They are the history of holdings
+  /// deleted earlier and are imported as such (Activity, tax exports); the
+  /// capital-gains report skips them, as it does for any orphan.
+  final int historyOnlyTransactions;
+
   const ParsedBackup({
     required this.assets,
     required this.transactions,
     this.exportedAt,
+    this.historyOnlyTransactions = 0,
   });
 }
 
@@ -74,8 +81,9 @@ class BackupService {
   /// Nothing is written: a file that fails any check throws a
   /// [FormatException] whose message is safe to show the user, so an
   /// import either has every record in hand or touches nothing.
-  /// [existingAssetIds] are the assets already on this device, which a
-  /// backup's transactions may also belong to.
+  /// [existingAssetIds] are the assets already on this device; transactions
+  /// belonging to neither them nor the backup's assets are accepted and
+  /// counted in [ParsedBackup.historyOnlyTransactions].
   static ParsedBackup parse(
     String text, {
     required Set<String> existingAssetIds,
@@ -104,13 +112,7 @@ class BackupService {
     final assetErr = ImportValidator.validateAssets(rawAssets);
     if (assetErr != null) throw FormatException(assetErr);
 
-    final txErr = ImportValidator.validateTransactions(
-      rawTransactions,
-      knownAssetIds: {
-        ...existingAssetIds,
-        for (final a in rawAssets) (a as Map<String, dynamic>)['id'] as String,
-      },
-    );
+    final txErr = ImportValidator.validateTransactions(rawTransactions);
     if (txErr != null) throw FormatException(txErr);
 
     if (rawAssets.isEmpty && rawTransactions.isEmpty) {
@@ -120,22 +122,34 @@ class BackupService {
 
     // The validators cover every cast fromJson makes; a throw here means a
     // gap between the two, and must still not reach the database.
+    final List<Asset> assets;
+    final List<Transaction> transactions;
     try {
-      return ParsedBackup(
-        assets: [
-          for (final a in rawAssets) Asset.fromJson(a as Map<String, dynamic>),
-        ],
-        transactions: [
-          for (final t in rawTransactions)
-            Transaction.fromJson(t as Map<String, dynamic>),
-        ],
-        exportedAt: decoded['exportedAt'] is String
-            ? DateTime.tryParse(decoded['exportedAt'] as String)
-            : null,
-      );
+      assets = [
+        for (final a in rawAssets) Asset.fromJson(a as Map<String, dynamic>),
+      ];
+      transactions = [
+        for (final t in rawTransactions)
+          Transaction.fromJson(t as Map<String, dynamic>),
+      ];
     } catch (_) {
       throw const FormatException(
           'This backup contains a record KashU cannot read.');
     }
+
+    final knownAssetIds = {
+      ...existingAssetIds,
+      for (final a in assets) a.id,
+    };
+    return ParsedBackup(
+      assets: assets,
+      transactions: transactions,
+      exportedAt: decoded['exportedAt'] is String
+          ? DateTime.tryParse(decoded['exportedAt'] as String)
+          : null,
+      historyOnlyTransactions: transactions
+          .where((t) => !knownAssetIds.contains(t.assetId))
+          .length,
+    );
   }
 }

@@ -62,22 +62,19 @@ class ImportValidator {
 
   /// Validate a list of raw transaction maps.
   ///
-  /// [knownAssetIds] are the assets a transaction may belong to: the ones in
-  /// the same backup plus the ones already on this device. A transaction
-  /// pointing anywhere else is rejected — it could only come from a damaged
-  /// or hand-edited file, and would surface as unattributed history in the
-  /// Activity screen and the tax export.
-  static String? validateTransactions(
-    List<dynamic> rawList, {
-    required Set<String> knownAssetIds,
-  }) {
+  /// A transaction's `assetId` need not match any asset: devices keep the
+  /// history of holdings deleted before deletes took their transactions
+  /// along, and that history (Activity screen, tax exports) has to survive
+  /// a move to a new phone. BackupService counts such transactions so the
+  /// import preview can say so.
+  static String? validateTransactions(List<dynamic> rawList) {
     final ids = <String>{};
     for (int i = 0; i < rawList.length; i++) {
       final item = rawList[i];
       if (item is! Map<String, dynamic>) {
         return 'Transaction[$i] is not an object.';
       }
-      final err = _validateTransaction(item, i, knownAssetIds);
+      final err = _validateTransaction(item, i);
       if (err != null) return err;
       if (!ids.add(item['id'] as String)) {
         return 'Transaction[$i]."id" appears more than once in this backup.';
@@ -147,16 +144,11 @@ class ImportValidator {
     return null;
   }
 
-  static String? _validateTransaction(
-      Map<String, dynamic> t, int idx, Set<String> knownAssetIds) {
+  static String? _validateTransaction(Map<String, dynamic> t, int idx) {
     for (final key in ['id', 'assetId', 'currency']) {
       if (t[key] is! String || (t[key] as String).isEmpty) {
         return 'Transaction[$idx]."$key" must be a non-empty string.';
       }
-    }
-    if (!knownAssetIds.contains(t['assetId'])) {
-      return 'Transaction[$idx] belongs to an asset that is neither in this '
-          'backup nor in KashU.';
     }
     if (t['notes'] != null && t['notes'] is! String) {
       return 'Transaction[$idx]."notes" must be text.';

@@ -55,10 +55,9 @@ void main() {
   setUp(() async {
     // In-memory boxes: writes complete inside the widget test's fake-async
     // zone without real file I/O.
-    assets = await Hive.openBox<Asset>(AppConstants.assetsBox,
-        bytes: Uint8List(0));
-    transactions = await Hive.openBox<Transaction>(
-        AppConstants.transactionsBox,
+    assets =
+        await Hive.openBox<Asset>(AppConstants.assetsBox, bytes: Uint8List(0));
+    transactions = await Hive.openBox<Transaction>(AppConstants.transactionsBox,
         bytes: Uint8List(0));
     await Hive.openBox(AppConstants.settingsBox, bytes: Uint8List(0));
   });
@@ -126,6 +125,35 @@ void main() {
     expect(assets.keys, unorderedEquals(['a1', 'a2']));
     expect(transactions.keys, unorderedEquals(['t1', 't2']));
     expect(find.text('Imported 2 assets and 2 transactions.'), findsOneWidget);
+  });
+
+  testWidgets(
+      'history of deleted holdings is imported and called out in the preview',
+      (tester) async {
+    pickerReturns(utf8.encode(BackupService.encode(
+      BackupService.buildEnvelope(
+        assets: [_asset('a1')],
+        transactions: [
+          _transaction('t1', 'a1'),
+          _transaction('h1', 'deleted-holding'),
+          _transaction('h2', 'deleted-holding'),
+          _transaction('h3', 'another-deleted-holding'),
+        ],
+      ),
+    )));
+    await pumpSettings(tester);
+
+    await chooseBackupFile(tester);
+
+    expect(
+        find.textContaining('3 transactions belong to holdings that were '
+            'deleted earlier; they are kept as history.'),
+        findsOneWidget);
+
+    await tester.tap(find.text('Import'));
+    await tester.pumpAndSettle();
+
+    expect(transactions.keys, unorderedEquals(['t1', 'h1', 'h2', 'h3']));
   });
 
   testWidgets('cancelling the preview writes nothing', (tester) async {

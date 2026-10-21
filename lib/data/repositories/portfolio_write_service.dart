@@ -186,9 +186,15 @@ class PortfolioWriteService {
   /// import writes — null for new ids — and the delete tombstones. If any
   /// write throws, the journal is replayed so both boxes end up exactly as
   /// they were, and the error is rethrown; if the app dies mid-import,
-  /// [completeInterruptedWrites] replays it at the next launch. Imported
-  /// asset ids drop their tombstones too (see [removeTombstonesFor]) —
-  /// inside the journal, so a rolled-back import restores them.
+  /// [completeInterruptedWrites] replays it at the next launch.
+  ///
+  /// Transactions whose asset is in neither the backup nor the device are
+  /// written like any other — they are the history of holdings deleted
+  /// earlier, which this service never cleans up. Every asset id the import
+  /// touches, through an asset or a transaction, drops its delete tombstone
+  /// (see [removeTombstonesFor]) so the next launch can't delete what was
+  /// just restored; that happens inside the journal, so a rolled-back import
+  /// restores the tombstones.
   Future<void> importBackup({
     required List<Asset> assets,
     required List<Transaction> transactions,
@@ -218,7 +224,10 @@ class PortfolioWriteService {
       for (final transaction in transactions) {
         await _transactionRepository.addTransaction(transaction);
       }
-      await removeTombstonesFor(assets.map((a) => a.id));
+      await removeTombstonesFor({
+        for (final a in assets) a.id,
+        for (final t in transactions) t.assetId,
+      });
       await _settings.delete(AppConstants.keyPendingImport);
     } catch (_) {
       try {
