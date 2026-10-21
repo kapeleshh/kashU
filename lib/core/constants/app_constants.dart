@@ -57,6 +57,12 @@ class AppConstants {
   /// when the structure of exported JSON changes.
   static const int backupFormatVersion = 2;
 
+  /// The public privacy policy (served from web/privacy.html) and the support
+  /// address it, Settings and the Play listing all point to.
+  static const String privacyPolicyUrl =
+      'https://kash-u.vercel.app/privacy.html';
+  static const String contactEmail = 'onelunchdev@gmail.com';
+
   // Animation Durations
   static const Duration animationFast = Duration(milliseconds: 200);
   static const Duration animationNormal = Duration(milliseconds: 300);

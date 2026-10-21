@@ -53,6 +53,7 @@ dependencies:
   sentry_flutter: ^9.0.0
   # Backup import: pick the exported .json file (bytes, so it works on web)
   file_picker: ^11.0.3
+  url_launcher: ^6.3.3
 
 dev_dependencies:
   flutter_test:

@@ -68,6 +68,7 @@ KashU does not provide investment advice and does not execute trades. It is a tr
 | Field | Answer |
 |---|---|
 | Privacy policy URL | `https://kash-u.vercel.app/privacy.html` |
+| Contact email (public) | `onelunchdev@gmail.com` (also in the privacy policy and Settings › About) |
 | Ads | **No ads** |
 | Content rating | Everyone (finance/utility; no user content, no ads) |
 | Target audience | 18+ (financial tool; not directed at children) |

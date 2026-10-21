@@ -1,11 +1,12 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/config/crash_reporting_consent.dart';
@@ -243,6 +244,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ]),
 
+          const SizedBox(height: 22),
+
+          // About Section
+          _buildSectionHeader(context, 'About'),
+          const SizedBox(height: 11),
+          _buildSettingsCard([
+            _SettingsTile(
+              icon: Icons.privacy_tip_outlined,
+              title: 'Privacy Policy',
+              subtitle: 'What KashU stores, and what it never collects',
+              onTap: () => _openOrCopy(
+                Uri.parse(AppConstants.privacyPolicyUrl),
+                AppConstants.privacyPolicyUrl,
+              ),
+            ),
+            _SettingsTile(
+              icon: Icons.mail_outline,
+              title: 'Contact',
+              subtitle: AppConstants.contactEmail,
+              onTap: () => _openOrCopy(
+                Uri(
+                  scheme: 'mailto',
+                  path: AppConstants.contactEmail,
+                  query: 'subject=KashU',
+                ),
+                AppConstants.contactEmail,
+              ),
+            ),
+          ]),
+
           const SizedBox(height: 32),
 
           // App Info
@@ -399,6 +430,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         );
       }
     }
+  }
+
+  /// Open [uri] in the browser or mail app. Where nothing can handle it (no
+  /// mail app set up, a locked-down browser), copy [fallback] instead so the
+  /// tap is never a dead end.
+  Future<void> _openOrCopy(Uri uri, String fallback) async {
+    var opened = false;
+    try {
+      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      debugPrint('[KashU] Could not open $uri: $e');
+    }
+    if (opened || !mounted) return;
+    await Clipboard.setData(ClipboardData(text: fallback));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Copied $fallback')),
+    );
   }
 
   /// Import Data: read a backup (the exported file, or pasted text), check
