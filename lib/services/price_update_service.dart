@@ -9,6 +9,7 @@ import 'gold_price_service.dart';
 import 'mutual_fund_service.dart';
 import 'price_cache_service.dart';
 import 'price_service.dart';
+import 'quote_currency.dart';
 import 'stooq_service.dart';
 import 'yahoo_finance_service.dart';
 
@@ -157,6 +158,8 @@ class PriceUpdateService {
     );
     final mfStats = await _refreshMutualFundAssets(
       trackable.where((a) => a.type == AssetType.mutualFund).toList(),
+      baseCurrency,
+      exchangeRates,
     );
     // Stocks and bonds share the equity path (Yahoo → Stooq); mutual funds
     // and the other typed buckets are handled separately above.
@@ -214,7 +217,7 @@ class PriceUpdateService {
       return _refreshSingleMetal(asset, baseCurrency);
     }
     if (asset.type == AssetType.mutualFund) {
-      return _refreshSingleMutualFund(asset, symbol);
+      return _refreshSingleMutualFund(asset, symbol, baseCurrency);
     }
     return _refreshSingleStockBond(asset, symbol, baseCurrency);
   }
@@ -223,16 +226,45 @@ class PriceUpdateService {
   // Per-type refresh handlers (bulk)
   // ─────────────────────────────────────────────────────────────────────────
 
+  /// Refresh crypto holdings, one batch per holding currency.
+  ///
+  /// A CoinGecko call quotes a single vs_currency, and each holding is stored
+  /// in its own currency — fetching everything in the base currency handed a
+  /// USD-held coin its INR price.
   Future<_RefreshStats> _refreshCryptoAssets(
     List<Asset> assets,
     String baseCurrency,
+  ) async {
+    final byCurrency = <String, List<Asset>>{};
+    for (final asset in assets) {
+      final currency =
+          asset.currency.isNotEmpty ? asset.currency : baseCurrency;
+      byCurrency.putIfAbsent(currency, () => []).add(asset);
+    }
+
+    var updated = 0;
+    var failed = 0;
+    final errors = <String>[];
+    for (final entry in byCurrency.entries) {
+      final stats = await _refreshCryptoBatch(entry.value, entry.key);
+      updated += stats.updated;
+      failed += stats.failed;
+      errors.addAll(stats.errors);
+    }
+    return (updated: updated, failed: failed, errors: errors);
+  }
+
+  /// Refresh crypto [assets] that are all held in [vsCurrency].
+  Future<_RefreshStats> _refreshCryptoBatch(
+    List<Asset> assets,
+    String vsCurrency,
   ) async {
     if (assets.isEmpty) return (updated: 0, failed: 0, errors: <String>[]);
 
     final symbols =
         assets.map(_getSymbol).where((s) => s != null).cast<String>().toList();
 
-    final cryptoService = _makeCoinGecko(baseCurrency);
+    final cryptoService = _makeCoinGecko(vsCurrency);
     final results = await cryptoService.fetchMultiplePrices(symbols);
 
     // Secondary provider: retry only the symbols CoinGecko failed, in one
@@ -242,7 +274,7 @@ class PriceUpdateService {
         if (!results[i].success && i < symbols.length) symbols[i],
     ];
     if (failedSymbols.isNotEmpty) {
-      final fallbackService = _makeCryptoFallback(baseCurrency);
+      final fallbackService = _makeCryptoFallback(vsCurrency);
       final fallbackResults =
           await fallbackService.fetchMultiplePrices(failedSymbols);
       final bySymbol = {
@@ -286,6 +318,42 @@ class PriceUpdateService {
 
     return (updated: updated, failed: failed, errors: errors);
   }
+
+  /// [quote]'s price in [assetCurrency], or null when it cannot be converted
+  /// honestly (no live rate for one side). Quotes come in the listing's
+  /// currency — and London in pence — while each holding is stored in its
+  /// own; a price written unconverted would be off by the exchange rate.
+  /// A quote with no currency at all is taken to be in the holding's.
+  static double? _priceInAssetCurrency(
+    PriceResult quote,
+    String assetCurrency,
+    ExchangeRateResult? rates,
+  ) {
+    if (quote.currency.isEmpty) return quote.price;
+    return QuoteCurrency.convert(
+        quote.price, quote.currency, assetCurrency, rates);
+  }
+
+  /// [quote] restated as [price] in [currency] — what gets cached, so the
+  /// offline fallback hands back a figure already in the holding's currency.
+  static PriceResult _inCurrency(
+          PriceResult quote, double price, String currency) =>
+      PriceResult(
+        symbol: quote.symbol,
+        price: price,
+        currency: currency,
+        fetchedAt: quote.fetchedAt,
+        success: true,
+      );
+
+  static String _noRateError(PriceResult quote, String assetCurrency) =>
+      'No live exchange rate to convert ${quote.currency} to $assetCurrency';
+
+  /// Whether [quote] has to go through forex to land in [assetCurrency].
+  static bool _needsForex(PriceResult quote, String assetCurrency) =>
+      quote.currency.isNotEmpty &&
+      QuoteCurrency.normalize(quote.price, quote.currency).currency !=
+          assetCurrency;
 
   /// Cache key for a metal price.
   ///
@@ -378,7 +446,11 @@ class PriceUpdateService {
     return (updated: updated, failed: failed, errors: errors);
   }
 
-  Future<_RefreshStats> _refreshMutualFundAssets(List<Asset> assets) async {
+  Future<_RefreshStats> _refreshMutualFundAssets(
+    List<Asset> assets,
+    String baseCurrency,
+    ExchangeRateResult exchangeRates,
+  ) async {
     if (assets.isEmpty) return (updated: 0, failed: 0, errors: <String>[]);
 
     int updated = 0;
@@ -389,10 +461,16 @@ class PriceUpdateService {
       final symbol = _getSymbol(asset);
       if (symbol == null) continue;
 
+      final assetCurrency =
+          asset.currency.isNotEmpty ? asset.currency : baseCurrency;
       final result = await _fetchMutualFundNav(symbol);
-      if (result.success) {
-        await _priceCache.cachePrice(result);
-        await _assetRepository.updateAssetPrice(asset.id, result.price);
+      final price = result.success
+          ? _priceInAssetCurrency(result, assetCurrency, exchangeRates)
+          : null;
+      if (price != null) {
+        await _priceCache.cachePrice(
+            _inCurrency(result, price, assetCurrency));
+        await _assetRepository.updateAssetPrice(asset.id, price);
         updated++;
       } else {
         final cached = _priceCache.getCachedResult(symbol);
@@ -402,7 +480,8 @@ class PriceUpdateService {
           updated++;
         } else {
           failed++;
-          errors.add('${asset.name} ($symbol): ${result.error}');
+          errors.add('${asset.name} ($symbol): '
+              '${result.success ? _noRateError(result, assetCurrency) : result.error}');
         }
       }
 
@@ -430,18 +509,15 @@ class PriceUpdateService {
       }
 
       final result = await _fetchEquityPrice(symbol);
+      final assetCurrency =
+          asset.currency.isNotEmpty ? asset.currency : baseCurrency;
+      // Any quote currency, not just USD; without a live rate the quote is
+      // treated like a failed fetch rather than stored unconverted.
+      final price = result.success
+          ? _priceInAssetCurrency(result, assetCurrency, exchangeRates)
+          : null;
 
-      if (result.success) {
-        double price = result.price;
-        final assetCurrency =
-            asset.currency.isNotEmpty ? asset.currency : baseCurrency;
-
-        if (result.currency == 'USD' &&
-            assetCurrency != 'USD' &&
-            exchangeRates.success) {
-          price = exchangeRates.convert(price, assetCurrency);
-        }
-
+      if (price != null) {
         final finalResult = PriceResult(
           symbol: symbol,
           price: price,
@@ -460,7 +536,8 @@ class PriceUpdateService {
           updated++;
         } else {
           failed++;
-          errors.add('${asset.name} ($symbol): ${result.error}');
+          errors.add('${asset.name} ($symbol): '
+              '${result.success ? _noRateError(result, assetCurrency) : result.error}');
         }
       }
 
@@ -558,12 +635,21 @@ class PriceUpdateService {
   }
 
   Future<PriceResult> _refreshSingleMutualFund(
-      Asset asset, String symbol) async {
+      Asset asset, String symbol, String baseCurrency) async {
     final result = await _fetchMutualFundNav(symbol);
-    if (result.success) {
-      await _priceCache.cachePrice(result);
-      await _assetRepository.updateAssetPrice(asset.id, result.price);
-      return result;
+    final assetCurrency =
+        asset.currency.isNotEmpty ? asset.currency : baseCurrency;
+    final rates = result.success && _needsForex(result, assetCurrency)
+        ? await _currencyConverter.fetchRates()
+        : null;
+    final price = result.success
+        ? _priceInAssetCurrency(result, assetCurrency, rates)
+        : null;
+    if (price != null) {
+      final stored = _inCurrency(result, price, assetCurrency);
+      await _priceCache.cachePrice(stored);
+      await _assetRepository.updateAssetPrice(asset.id, price);
+      return stored;
     }
 
     final cached = _priceCache.getCachedResult(symbol);
@@ -572,7 +658,10 @@ class PriceUpdateService {
           asOf: cached.fetchedAt);
       return cached;
     }
-    return result;
+    // A quote that could not be converted is not a usable price.
+    return result.success
+        ? PriceResult.failure(symbol, _noRateError(result, assetCurrency))
+        : result;
   }
 
   /// Fetch a mutual fund's latest NAV (INR) from MFAPI.in.
@@ -603,23 +692,20 @@ class PriceUpdateService {
   Future<PriceResult> _refreshSingleStockBond(
       Asset asset, String symbol, String baseCurrency) async {
     final result = await _fetchEquityPrice(symbol);
+    final assetCurrency =
+        asset.currency.isNotEmpty ? asset.currency : baseCurrency;
+    final rates = result.success && _needsForex(result, assetCurrency)
+        ? await _currencyConverter.fetchRates()
+        : null;
+    final price = result.success
+        ? _priceInAssetCurrency(result, assetCurrency, rates)
+        : null;
 
-    if (result.success) {
-      double price = result.price;
-      final assetCurrency =
-          asset.currency.isNotEmpty ? asset.currency : baseCurrency;
-
-      if (result.currency == 'USD' && assetCurrency != 'USD') {
-        final rates = await _currencyConverter.fetchRates();
-        if (rates.success) {
-          price = rates.convert(price, assetCurrency);
-        }
-      }
-
+    if (price != null) {
       final finalResult = PriceResult(
         symbol: symbol,
         price: price,
-        currency: asset.currency.isNotEmpty ? asset.currency : baseCurrency,
+        currency: assetCurrency,
         fetchedAt: DateTime.now(),
         success: true,
       );
@@ -634,7 +720,10 @@ class PriceUpdateService {
           asOf: cached.fetchedAt);
       return cached;
     }
-    return result;
+    // A quote that could not be converted is not a usable price.
+    return result.success
+        ? PriceResult.failure(symbol, _noRateError(result, assetCurrency))
+        : result;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

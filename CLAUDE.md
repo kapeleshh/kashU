@@ -104,14 +104,14 @@ Repositories (`AssetRepository`, `TransactionRepository`) are the only place tha
 `PriceService` (`services/price_service.dart`) is the abstract interface; `PriceSymbols` holds the per-`AssetType` routing rules (which types support auto-tracking, default symbols, input hints).
 
 `PriceUpdateService` (`services/price_update_service.dart`) orchestrates a full refresh, routing each asset by `AssetType` into four separate batches:
-- **crypto** → CoinGecko, then `CryptoCompareService` for whatever failed as **one batched call** (not per asset), then the cache. The app stores CoinGecko ids, so `CryptoCompareService._idToTicker` maps `bitcoin`→`BTC`; unmapped ids fail straight through to the cache. CryptoCompare reports errors as HTTP 200 with `{"Response": "Error"}`, so the body must be checked.
+- **crypto** → CoinGecko, then `CryptoCompareService` for whatever failed as **one batched call** (not per asset), then the cache — one such batch per holding currency, since a call quotes a single `vs_currency`. The app stores CoinGecko ids, so `CryptoCompareService._idToTicker` maps `bitcoin`→`BTC`; unmapped ids fail straight through to the cache. CryptoCompare reports errors as HTTP 200 with `{"Response": "Error"}`, so the body must be checked.
 - **metals** (`AssetType.gold`) → `GoldPriceService`, split again by stored symbol (see below). There is no `AssetType.silver`: silver is a gold-type asset carrying `SI=F`, so this bucket makes one COMEX call per metal, not per asset.
 - **mutual funds** → `MutualFundService` (MFAPI.in, keyed by AMFI scheme code — not Yahoo).
 - **everything else** (stocks, bonds) → Yahoo Finance with **Stooq as fallback**.
 
 Key behaviors to preserve when editing:
 - Exchange rates are pre-fetched once per refresh and reused (`CurrencyConverterService`, backed by live USD→INR forex from `open.er-api.com`).
-- Prices are converted into each asset's stored currency before saving. The metal batch fetches once in `assets.first.currency` and re-derives the others from `breakdown.usdPerGram` — the COMEX leg is currency-agnostic, so a second currency costs no extra round trip.
+- Prices are converted into each asset's stored currency before saving, whatever the quote's currency (`QuoteCurrency` in `services/quote_currency.dart`; London quotes arrive in pence, `GBp`). A quote that cannot be converted with a live rate is treated as a failed fetch, never stored as is. The add-asset autofill follows the same rules: a quote in another supported currency moves the currency field to it unless the user picked one. The metal batch fetches once in `assets.first.currency` and re-derives the others from `breakdown.usdPerGram` — the COMEX leg is currency-agnostic, so a second currency costs no extra round trip.
 - On API failure, it falls back to the last cached price (`PriceCacheService`, `price_cache_box`) before counting an asset as failed.
 - Stock/bond refreshes are throttled (300ms between calls) to avoid rate limiting.
 

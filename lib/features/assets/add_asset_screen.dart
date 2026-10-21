@@ -6,6 +6,7 @@ import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
 import '../../core/theme/app_decorations.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/currency_formatter.dart';
 import '../../data/models/asset.dart';
 import '../../data/models/asset_type.dart';
 import '../../shared/providers/portfolio_provider.dart';
@@ -14,8 +15,10 @@ import '../../shared/widgets/fd_bond_input_field.dart';
 import '../../shared/widgets/mutual_fund_search_field.dart';
 import '../../shared/widgets/stock_search_field.dart';
 import '../../services/coingecko_service.dart';
+import '../../services/currency_converter_service.dart';
 import '../../services/mutual_fund_service.dart';
 import '../../services/price_service.dart';
+import '../../services/quote_currency.dart';
 import '../../services/stock_search_service.dart';
 import '../../services/yahoo_finance_service.dart';
 
@@ -40,6 +43,20 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
   AssetType _selectedType = AssetType.stock;
   String _selectedCurrency = 'INR';
+
+  /// Whether the user picked the currency themselves. Until they do, an
+  /// autofilled quote may move the field to the quote's own currency.
+  bool _currencyChosenByUser = false;
+
+  /// The raw quote behind an autofilled stock / fund price, kept so a later
+  /// currency change re-derives the price instead of relabelling a number
+  /// that is in another currency.
+  ({double price, String currency})? _autofillQuote;
+
+  /// The current-price text an autofill wrote. A currency change re-derives
+  /// the price only while the field still holds it — never a typed price.
+  String? _autofilledPriceText;
+
   String? _selectedPlatform;
   DateTime _purchaseDate = DateTime.now();
 
@@ -110,9 +127,14 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
         TextEditingController(text: asset?.currentPrice.toString() ?? '');
     _notesController = TextEditingController(text: asset?.notes ?? '');
 
-    if (asset != null) {
+    if (asset == null) {
+      // New holdings start in the portfolio's base currency.
+      final base = ref.read(baseCurrencyProvider);
+      if (QuoteCurrency.isSupported(base)) _selectedCurrency = base;
+    } else {
       _selectedType = asset.type;
       _selectedCurrency = asset.currency;
+      _currencyChosenByUser = true;
       _selectedPlatform = asset.platform;
       _purchaseDate = asset.purchaseDate;
       // Gold and silver share AssetType.gold — the stored symbol is the only
@@ -240,6 +262,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
             if (_usesFdBondCalculator && !isEditing) ...[
               FdBondInputField(
                 isFd: _selectedType == AssetType.fixedDeposit,
+                currency: _selectedCurrency,
                 onChanged: (result) {
                   setState(() {
                     _fdBondResult = result;
@@ -510,6 +533,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
             // Currency Dropdown
             DropdownButtonFormField<String>(
+              // Keyed by value: an autofill can move the currency, and
+              // initialValue is only read when the field is created.
+              key: ValueKey('currency-$_selectedCurrency'),
               initialValue: _selectedCurrency,
               decoration: const InputDecoration(
                 labelText: AppStrings.selectCurrency,
@@ -520,8 +546,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                   child: Text('${entry.key} (${entry.value})'),
                 );
               }).toList(),
-              onChanged: (value) =>
-                  setState(() => _selectedCurrency = value ?? 'INR'),
+              onChanged: (value) => _onCurrencyChanged(value ?? 'INR'),
             ),
 
             const SizedBox(height: 16),
@@ -611,6 +636,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       _selectedStock = null;
       _selectedMf = null;
       _selectedCrypto = null;
+      _autofillQuote = null;
+      _autofilledPriceText = null;
       // Reset stock search widget
       _stockSearchKey = UniqueKey();
     });
@@ -645,14 +672,15 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       if (!mounted) return;
 
       if (priceResult.success && priceResult.price > 0) {
+        final status = await _applyQuote(
+          priceResult.price,
+          priceResult.currency,
+          label: 'Live price',
+        );
+        if (!mounted) return;
         setState(() {
           _isFetchingStockPrice = false;
-          _currentPriceController.text =
-              priceResult.price.toStringAsFixed(2);
-          _stockFetchStatus = _FetchStatus(
-            'Live price: ${priceResult.currency} ${priceResult.price.toStringAsFixed(2)}',
-            _FetchState.success,
-          );
+          _stockFetchStatus = status;
         });
       } else {
         setState(() {
@@ -694,14 +722,18 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
       if (navResult.isOk && navResult.valueOrNull?.nav != null) {
         final mf = navResult.valueOrNull!;
+        // MFAPI.in quotes NAV in INR.
+        final status = await _applyQuote(
+          mf.nav!,
+          'INR',
+          label: 'Latest NAV',
+          suffix: mf.navDate == null ? '' : ' (${mf.navDate})',
+          decimals: 4,
+        );
+        if (!mounted) return;
         setState(() {
           _isFetchingMfNav = false;
-          _currentPriceController.text =
-              mf.nav!.toStringAsFixed(4);
-          _mfFetchStatus = _FetchStatus(
-            'Latest NAV: ₹${mf.nav!.toStringAsFixed(4)} (${mf.navDate ?? ''})',
-            _FetchState.success,
-          );
+          _mfFetchStatus = status;
         });
       } else {
         setState(() {
@@ -725,30 +757,41 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   }
 
   /// Called when user selects a crypto from the search dropdown.
-  /// Auto-fills name, symbol (CoinGecko ID), and fetches live price in INR.
+  /// Auto-fills name, symbol (CoinGecko ID), and fetches the live price.
   Future<void> _onCryptoSelected(CryptoSearchResult result) async {
     setState(() {
       _selectedCrypto = result;
       _nameController.text = result.name;
       _symbolController.text = result.id; // CoinGecko ID (e.g. "bitcoin")
+    });
+    await _fetchCryptoPrice(result);
+  }
+
+  /// Fetch [coin]'s price directly in the selected currency — CoinGecko
+  /// quotes every currency the app offers, so no conversion is needed.
+  Future<void> _fetchCryptoPrice(CryptoSearchResult coin) async {
+    final currency = _selectedCurrency;
+    setState(() {
       _cryptoFetchStatus = null;
       _isFetchingCryptoPrice = true;
     });
 
     try {
-      // Fetch price in INR
-      final cryptoService = CoinGeckoService(vsCurrency: 'inr');
-      final priceResult = await cryptoService.fetchPrice(result.id);
+      final cryptoService =
+          CoinGeckoService(vsCurrency: currency.toLowerCase());
+      final priceResult = await cryptoService.fetchPrice(coin.id);
 
-      if (!mounted) return;
+      // A newer fetch (the currency changed meanwhile) owns the field now.
+      if (!mounted || currency != _selectedCurrency) return;
 
       if (priceResult.success && priceResult.price > 0) {
         setState(() {
           _isFetchingCryptoPrice = false;
           _currentPriceController.text =
               priceResult.price.toStringAsFixed(2);
+          _autofilledPriceText = _currentPriceController.text;
           _cryptoFetchStatus = _FetchStatus(
-            'Live price: ₹${priceResult.price.toStringAsFixed(2)} (${result.symbol})',
+            'Live price: ${CurrencyFormatter.formatCurrency(priceResult.price, currency)} (${coin.symbol})',
             _FetchState.success,
           );
         });
@@ -762,13 +805,129 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
         });
       }
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || currency != _selectedCurrency) return;
       setState(() {
         _isFetchingCryptoPrice = false;
         _cryptoFetchStatus = const _FetchStatus(
           'Could not fetch price — enter it manually.',
           _FetchState.failure,
         );
+      });
+    }
+  }
+
+  bool get _priceStillAutofilled =>
+      _autofilledPriceText != null &&
+      _currentPriceController.text == _autofilledPriceText;
+
+  /// Write a fetched quote into the current-price field so that the price
+  /// and the currency field always agree (rules in [QuoteCurrency.plan]):
+  /// a quote in another supported currency moves the field to it unless the
+  /// user chose the currency, anything else is converted with live rates,
+  /// and with no honest conversion the price is left to the user. Returns
+  /// the status line to show.
+  Future<_FetchStatus> _applyQuote(
+    double price,
+    String quoteCurrency, {
+    required String label,
+    String suffix = '',
+    int decimals = 2,
+  }) async {
+    _autofillQuote = (price: price, currency: quoteCurrency);
+    // Planned against the state as it is when called — after the forex
+    // await too, in case the user changed the currency meanwhile.
+    AutofillPlan planWith(ExchangeRateResult? rates) => QuoteCurrency.plan(
+          quotePrice: price,
+          quoteCurrency: quoteCurrency,
+          selectedCurrency: _selectedCurrency,
+          currencyChosenByUser: _currencyChosenByUser,
+          rates: rates,
+        );
+    var decision = planWith(null);
+    if (decision.action == AutofillAction.needsManualPrice &&
+        quoteCurrency.isNotEmpty) {
+      // Only now is a forex fetch worth it: the price must be converted.
+      decision = planWith(
+          await ref.read(currencyConverterServiceProvider).fetchRates());
+    }
+    if (!mounted) return const _FetchStatus('', _FetchState.pending);
+
+    final quoted = QuoteCurrency.normalize(price, quoteCurrency);
+    final quotedText =
+        CurrencyFormatter.formatCurrency(quoted.price, quoted.currency);
+    final filled = decision.price;
+    setState(() {
+      _selectedCurrency = decision.currency;
+      if (filled != null) {
+        _currentPriceController.text = filled.toStringAsFixed(decimals);
+        _autofilledPriceText = _currentPriceController.text;
+      } else if (_priceStillAutofilled) {
+        // The old figure is in a currency the field no longer says.
+        _currentPriceController.clear();
+        _autofilledPriceText = null;
+      }
+    });
+
+    switch (decision.action) {
+      case AutofillAction.asQuoted:
+        return _FetchStatus('$label: $quotedText$suffix', _FetchState.success);
+      case AutofillAction.adoptQuoteCurrency:
+        return _FetchStatus(
+          '$label: $quotedText$suffix — currency set to ${decision.currency}',
+          _FetchState.success,
+        );
+      case AutofillAction.converted:
+        return _FetchStatus(
+          '$label: $quotedText ≈ '
+          '${CurrencyFormatter.formatCurrency(filled!, decision.currency)}'
+          '$suffix',
+          _FetchState.success,
+        );
+      case AutofillAction.needsManualPrice:
+        return _FetchStatus(
+          'Quoted in ${quoted.currency} — enter the price in '
+          '${decision.currency} manually.',
+          _FetchState.failure,
+        );
+    }
+  }
+
+  /// The user picked a currency. An autofilled price is re-derived in it
+  /// (re-fetched for metals and crypto, converted for stocks and funds);
+  /// a price the user typed is theirs and stays as it is.
+  void _onCurrencyChanged(String currency) {
+    if (currency == _selectedCurrency) return;
+    setState(() {
+      _selectedCurrency = currency;
+      _currencyChosenByUser = true;
+    });
+    if (isEditing) return;
+
+    // A fetch still in flight ignores its result once the currency moved
+    // on, so it must be replaced, not just left to finish.
+    if (_selectedType == AssetType.gold) {
+      if (_priceStillAutofilled || _isFetchingGoldPrice) _fetchGoldPrice();
+    } else if (_usesCryptoSearch && _selectedCrypto != null) {
+      if (_priceStillAutofilled || _isFetchingCryptoPrice) {
+        _fetchCryptoPrice(_selectedCrypto!);
+      }
+    } else if (_autofillQuote != null && _priceStillAutofilled) {
+      final quote = _autofillQuote!;
+      final isMf = _usesMfSearch;
+      _applyQuote(
+        quote.price,
+        quote.currency,
+        label: isMf ? 'Latest NAV' : 'Live price',
+        decimals: isMf ? 4 : 2,
+      ).then((status) {
+        if (!mounted) return;
+        setState(() {
+          if (isMf) {
+            _mfFetchStatus = status;
+          } else {
+            _stockFetchStatus = status;
+          }
+        });
       });
     }
   }
@@ -895,6 +1054,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
   /// Fetches live metal (gold or silver) price and auto-fills the current price field
   Future<void> _fetchGoldPrice() async {
+    final currency = _selectedCurrency;
+    final isSilver = _isSilver;
     setState(() {
       _isFetchingGoldPrice = true;
       _goldFetchStatus = null;
@@ -903,13 +1064,16 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     try {
       final goldService = ref.read(goldPriceServiceProvider);
 
-      final breakdown = _isSilver
+      final breakdown = isSilver
           ? await goldService.fetchSilverPriceBreakdown(
-              targetCurrency: _selectedCurrency)
+              targetCurrency: currency)
           : await goldService.fetchGoldPriceBreakdown(
-              targetCurrency: _selectedCurrency);
+              targetCurrency: currency);
 
-      if (!mounted) return;
+      // A newer fetch (currency or metal changed meanwhile) owns the field.
+      if (!mounted || currency != _selectedCurrency || isSilver != _isSilver) {
+        return;
+      }
 
       if (breakdown == null) {
         setState(() {
@@ -923,17 +1087,21 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       }
 
       final price = breakdown.finalPerGram;
-      final metalName = _isSilver ? 'silver' : 'gold';
+      final metalName = isSilver ? 'silver' : 'gold';
       setState(() {
         _isFetchingGoldPrice = false;
         _currentPriceController.text = price.toStringAsFixed(2);
+        _autofilledPriceText = _currentPriceController.text;
         _goldFetchStatus = _FetchStatus(
-          'Live $metalName price: ₹${price.toStringAsFixed(2)}/gram',
+          'Live $metalName price: '
+          '${CurrencyFormatter.formatCurrency(price, currency)}/gram',
           _FetchState.success,
         );
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || currency != _selectedCurrency || isSilver != _isSilver) {
+        return;
+      }
       setState(() {
         _isFetchingGoldPrice = false;
         // Never surface the raw exception to the user.

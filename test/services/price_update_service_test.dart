@@ -767,4 +767,150 @@ void main() {
       verifyNever(() => mockMutualFund.fetchNav(any()));
     });
   });
+
+  // Each holding is stored in its own currency; a refreshed price has to be
+  // written in that currency whatever the quote came in.
+  group('prices land in the holding\'s own currency', () {
+    ExchangeRateResult fx() => ExchangeRateResult(
+          base: 'USD',
+          rates: const {'USD': 1.0, 'INR': 83.0, 'EUR': 0.9, 'GBP': 0.8},
+          fetchedAt: DateTime.now(),
+          success: true,
+        );
+
+    /// Records every price written, by asset id.
+    Map<String, double> recordWrites() {
+      final written = <String, double>{};
+      when(() => mockRepo.updateAssetPrice(any(), any()))
+          .thenAnswer((inv) async {
+        written[inv.positionalArguments[0] as String] =
+            inv.positionalArguments[1] as double;
+      });
+      return written;
+    }
+
+    test('crypto is fetched per holding currency, not all in the base',
+        () async {
+      final inrCoin = MockCoinGeckoService();
+      final usdCoin = MockCoinGeckoService();
+      final requested = <String>[];
+      final perCurrency = PriceUpdateService(
+        assetRepository: mockRepo,
+        yahooService: mockYahoo,
+        stooqService: mockStooq,
+        currencyConverter: mockFx,
+        goldPriceService: mockGold,
+        mutualFundService: mockMutualFund,
+        priceCache: mockCache,
+        coinGeckoFactory: (vs) {
+          requested.add(vs);
+          return vs == 'USD' ? usdCoin : inrCoin;
+        },
+        cryptoFallbackFactory: (_) => mockCryptoCompare,
+      );
+      when(() => mockRepo.getAllAssets()).thenReturn([
+        _makeAsset(id: 'inr', symbol: 'bitcoin', type: AssetType.crypto),
+        _makeAsset(
+            id: 'usd',
+            symbol: 'bitcoin',
+            type: AssetType.crypto,
+            currency: 'USD'),
+      ]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => fx());
+      when(() => inrCoin.fetchMultiplePrices(any())).thenAnswer(
+          (_) async => [_success('bitcoin', 5800000.0)]);
+      when(() => usdCoin.fetchMultiplePrices(any())).thenAnswer(
+          (_) async => [_success('bitcoin', 70000.0, currency: 'USD')]);
+      final written = recordWrites();
+
+      final result = await perCurrency.refreshAllPrices();
+
+      expect(result.updated, 2);
+      expect(requested, unorderedEquals(['INR', 'USD']));
+      expect(written, {'inr': 5800000.0, 'usd': 70000.0});
+    });
+
+    test('a EUR quote is converted for an INR holding (not only USD)',
+        () async {
+      when(() => mockRepo.getAllAssets()).thenReturn(
+          [_makeAsset(id: 's1', symbol: 'SAP.DE', currency: 'INR')]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => fx());
+      when(() => mockYahoo.fetchPrice('SAP.DE'))
+          .thenAnswer((_) async => _success('SAP.DE', 180.0, currency: 'EUR'));
+      final written = recordWrites();
+
+      await service.refreshAllPrices();
+
+      expect(written['s1'], closeTo(180.0 / 0.9 * 83.0, 1e-6));
+    });
+
+    test('a pence quote is stored in pounds for a GBP holding', () async {
+      when(() => mockRepo.getAllAssets()).thenReturn(
+          [_makeAsset(id: 's1', symbol: 'VOD.L', currency: 'GBP')]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => fx());
+      when(() => mockYahoo.fetchPrice('VOD.L'))
+          .thenAnswer((_) async => _success('VOD.L', 72.5, currency: 'GBp'));
+      final written = recordWrites();
+
+      await service.refreshAllPrices();
+
+      expect(written['s1'], closeTo(0.725, 1e-9));
+    });
+
+    test('without live forex a USD quote is never stored as INR', () async {
+      when(() => mockRepo.getAllAssets()).thenReturn(
+          [_makeAsset(id: 's1', symbol: 'AAPL', currency: 'INR')]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer(
+          (_) async => ExchangeRateResult.failure('offline'));
+      when(() => mockYahoo.fetchPrice('AAPL'))
+          .thenAnswer((_) async => _success('AAPL', 200.0, currency: 'USD'));
+      final written = recordWrites();
+
+      final result = await service.refreshAllPrices();
+
+      // Treated like a failed fetch: no cache here, so it counts as failed.
+      expect(written, isEmpty);
+      expect(result.failed, 1);
+      expect(result.errors.single, contains('exchange rate'));
+    });
+
+    test('single refresh converts an INR listing for a USD holding',
+        () async {
+      final asset =
+          _makeAsset(id: 's1', symbol: 'TCS.NS', currency: 'USD');
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => fx());
+      when(() => mockYahoo.fetchPrice('TCS.NS'))
+          .thenAnswer((_) async => _success('TCS.NS', 4150.0));
+      final written = recordWrites();
+
+      final result = await service.refreshSinglePrice(asset);
+
+      expect(result.currency, 'USD');
+      expect(written['s1'], closeTo(4150.0 / 83.0, 1e-9));
+    });
+
+    test('a fund NAV is converted for a holding kept outside INR', () async {
+      when(() => mockRepo.getAllAssets()).thenReturn([
+        _makeAsset(
+            id: 'mf1',
+            symbol: '120503',
+            type: AssetType.mutualFund,
+            currency: 'USD'),
+      ]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => fx());
+      when(() => mockMutualFund.fetchNav(120503))
+          .thenAnswer((_) async => Ok(_mf(120503, 830.0)));
+      final written = recordWrites();
+
+      await service.refreshAllPrices();
+
+      expect(written['mf1'], closeTo(10.0, 1e-9));
+    });
+  });
 }
