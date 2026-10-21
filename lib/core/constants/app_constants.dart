@@ -46,6 +46,12 @@ class AppConstants {
   /// cleared, removed after the last) — finished at startup if interrupted.
   static const String keyPendingClearAll = 'pending_clear_all';
 
+  /// Journal of a backup import in flight: the previous value of every
+  /// asset/transaction id it writes (null for new ids) plus the delete
+  /// tombstones. Written before the first box write, removed once the import
+  /// is complete; a leftover journal is rolled back at startup.
+  static const String keyPendingImport = 'pending_import';
+
   /// Version of the backup/export JSON file format. Independent of the Hive
   /// on-disk schema version tracked by HiveMigrationService — bump this only
   /// when the structure of exported JSON changes.

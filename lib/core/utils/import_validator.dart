@@ -1,10 +1,14 @@
+import '../../data/models/asset_type.dart';
+import '../../data/models/transaction_type.dart';
 import '../constants/app_constants.dart';
 
 /// Validates KashU backup JSON before it is written to the database.
 ///
 /// Returns null on success, or a human-readable error message on failure.
-/// Call this before passing data to [AssetRepository.importFromJson] or
-/// [TransactionRepository.importFromJson].
+/// Every check that [Asset.fromJson] / [Transaction.fromJson] relies on lives
+/// here, so a backup that passes can be decoded into model objects without
+/// throwing — which is what lets an import parse the whole file before it
+/// writes anything (see BackupService.parse).
 ///
 /// The version checked here is the backup *file format* version
 /// ([AppConstants.backupFormatVersion]) — not the Hive on-disk schema
@@ -39,6 +43,7 @@ class ImportValidator {
   /// Returns null if all items are valid, or an error describing the first
   /// invalid item (with its index).
   static String? validateAssets(List<dynamic> rawList) {
+    final ids = <String>{};
     for (int i = 0; i < rawList.length; i++) {
       final item = rawList[i];
       if (item is! Map<String, dynamic>) {
@@ -46,19 +51,37 @@ class ImportValidator {
       }
       final err = _validateAsset(item, i);
       if (err != null) return err;
+      // A repeated id would silently overwrite its twin and make the
+      // import's "N assets" preview a lie.
+      if (!ids.add(item['id'] as String)) {
+        return 'Asset[$i]."id" appears more than once in this backup.';
+      }
     }
     return null;
   }
 
   /// Validate a list of raw transaction maps.
-  static String? validateTransactions(List<dynamic> rawList) {
+  ///
+  /// [knownAssetIds] are the assets a transaction may belong to: the ones in
+  /// the same backup plus the ones already on this device. A transaction
+  /// pointing anywhere else is rejected — it could only come from a damaged
+  /// or hand-edited file, and would surface as unattributed history in the
+  /// Activity screen and the tax export.
+  static String? validateTransactions(
+    List<dynamic> rawList, {
+    required Set<String> knownAssetIds,
+  }) {
+    final ids = <String>{};
     for (int i = 0; i < rawList.length; i++) {
       final item = rawList[i];
       if (item is! Map<String, dynamic>) {
         return 'Transaction[$i] is not an object.';
       }
-      final err = _validateTransaction(item, i);
+      final err = _validateTransaction(item, i, knownAssetIds);
       if (err != null) return err;
+      if (!ids.add(item['id'] as String)) {
+        return 'Transaction[$i]."id" appears more than once in this backup.';
+      }
     }
     return null;
   }
@@ -86,26 +109,35 @@ class ImportValidator {
         return 'Asset[$idx]."$key" must be a non-empty string.';
       }
     }
+    // Optional string fields
+    for (final key in ['symbol', 'platform', 'notes']) {
+      if (a[key] != null && a[key] is! String) {
+        return 'Asset[$idx]."$key" must be text.';
+      }
+    }
     // Required numeric fields
     for (final key in ['quantity', 'purchasePrice', 'currentPrice']) {
-      if (a[key] is! num) {
-        return 'Asset[$idx]."$key" must be a number, got ${a[key].runtimeType}.';
-      }
-      final v = (a[key] as num).toDouble();
-      if (v < 0) {
+      final err = _checkNumber(a[key], 'Asset[$idx]."$key"');
+      if (err != null) return err;
+      if ((a[key] as num) < 0) {
         return 'Asset[$idx]."$key" must not be negative.';
       }
     }
     // type index
     final typeIdx = a['type'];
-    if (typeIdx is! int || typeIdx < 0 || typeIdx > 7) {
-      return 'Asset[$idx]."type" must be an integer 0–7.';
+    final maxType = AssetType.values.length - 1;
+    if (typeIdx is! int || typeIdx < 0 || typeIdx > maxType) {
+      return 'Asset[$idx]."type" must be an integer 0–$maxType.';
     }
     // date fields
     for (final key in ['purchaseDate', 'createdAt', 'updatedAt']) {
       if (!_isValidDate(a[key])) {
         return 'Asset[$idx]."$key" must be a valid ISO-8601 date string.';
       }
+    }
+    if (a['priceUpdatedAt'] != null && !_isValidDate(a['priceUpdatedAt'])) {
+      return 'Asset[$idx]."priceUpdatedAt" must be a valid ISO-8601 date '
+          'string.';
     }
     // purchaseDate must not be in the future
     final purchaseDate = DateTime.tryParse(a['purchaseDate'] as String? ?? '');
@@ -115,24 +147,45 @@ class ImportValidator {
     return null;
   }
 
-  static String? _validateTransaction(Map<String, dynamic> t, int idx) {
+  static String? _validateTransaction(
+      Map<String, dynamic> t, int idx, Set<String> knownAssetIds) {
     for (final key in ['id', 'assetId', 'currency']) {
       if (t[key] is! String || (t[key] as String).isEmpty) {
         return 'Transaction[$idx]."$key" must be a non-empty string.';
       }
     }
+    if (!knownAssetIds.contains(t['assetId'])) {
+      return 'Transaction[$idx] belongs to an asset that is neither in this '
+          'backup nor in KashU.';
+    }
+    if (t['notes'] != null && t['notes'] is! String) {
+      return 'Transaction[$idx]."notes" must be text.';
+    }
     for (final key in ['quantity', 'price', 'amount']) {
-      if (t[key] is! num) {
-        return 'Transaction[$idx]."$key" must be a number.';
-      }
+      final err = _checkNumber(t[key], 'Transaction[$idx]."$key"');
+      if (err != null) return err;
     }
     final typeIdx = t['type'];
-    if (typeIdx is! int || typeIdx < 0 || typeIdx > 6) {
-      return 'Transaction[$idx]."type" must be an integer 0–6.';
+    final maxType = TransactionType.values.length - 1;
+    if (typeIdx is! int || typeIdx < 0 || typeIdx > maxType) {
+      return 'Transaction[$idx]."type" must be an integer 0–$maxType.';
     }
-    if (!_isValidDate(t['date'])) {
-      return 'Transaction[$idx]."date" must be a valid ISO-8601 date string.';
+    for (final key in ['date', 'createdAt']) {
+      if (!_isValidDate(t[key])) {
+        return 'Transaction[$idx]."$key" must be a valid ISO-8601 date '
+            'string.';
+      }
     }
+    return null;
+  }
+
+  /// Null if [value] is a finite number. `jsonDecode` turns an overflowing
+  /// literal such as 1e999 into infinity, so "is a num" alone is not enough.
+  static String? _checkNumber(dynamic value, String label) {
+    if (value is! num) {
+      return '$label must be a number, got ${value.runtimeType}.';
+    }
+    if (!value.isFinite) return '$label must be a finite number.';
     return null;
   }
 
