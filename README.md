@@ -63,7 +63,7 @@
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Flutter SDK **3.41.6** (the version CI pins — matching it locally avoids analyzer drift)
+- Flutter SDK **3.44.1** (the version CI pins and release builds use — matching it locally avoids analyzer drift)
 - Dart SDK 3.4+
 
 ### Installation
@@ -152,6 +152,28 @@ keyPassword=<key password>
 Both the keystore and `key.properties` are gitignored. Keep backups — a lost
 keystore means you cannot update a published app.
 
+### Publishing to Google Play
+
+```bash
+flutter build appbundle --release    # requires android/key.properties
+```
+
+Play needs an **App Bundle** (`.aab`), not an APK. The build deliberately
+**fails** if `android/key.properties` is missing, rather than quietly producing
+a debug-signed bundle that Play would reject. A debug-signed *APK* is still
+allowed, since that is what CI smoke-builds.
+
+Listing graphics are generated from the app icon so they cannot drift from it:
+
+```bash
+python3 tool/generate_store_assets.py   # -> store/play/
+```
+
+Privacy policy: `web/privacy.html`, published at
+<https://kash-u.vercel.app/privacy.html> (Vercel serves real files before the
+SPA rewrite, so no routing change is needed). A hosted policy URL is mandatory
+for both stores.
+
 ---
 
 ## 📁 Project Structure
@@ -216,7 +238,7 @@ kashU/
 
 | Layer | Technology |
 |-------|-----------|
-| Framework | Flutter 3.41.6 |
+| Framework | Flutter 3.44.1 |
 | State Management | Riverpod 2.x |
 | Local Database | Hive — offline-first, AES-256 encrypted |
 | Charts | fl_chart |

@@ -9,6 +9,7 @@ import 'gold_price_service.dart';
 import 'mutual_fund_service.dart';
 import 'price_cache_service.dart';
 import 'price_service.dart';
+import 'quote_currency.dart';
 import 'stooq_service.dart';
 import 'yahoo_finance_service.dart';
 
@@ -43,11 +44,14 @@ typedef _RefreshStats = ({int updated, int failed, List<String> errors});
 /// Routes each asset to the correct API based on AssetType.
 /// Converts prices to the asset's stored currency automatically.
 ///
-/// Gold price strategy:
-///   1. Fetch COMEX GC=F (USD/troy oz) via Yahoo Finance — always reliable.
+/// Metal price strategy (gold and silver):
+///   1. Fetch the COMEX contract (USD/troy oz) via Yahoo Finance — GC=F for
+///      gold, SI=F for silver, chosen from the asset's stored symbol because
+///      both share [AssetType.gold].
 ///   2. Convert USD/oz → USD/gram (÷ 31.1035).
 ///   3. Convert USD/gram → INR/gram via live forex (open.er-api.com).
-///   4. Apply Indian taxes: BCD 5% + AIDC 1% + GST 3% ≈ 9.18% effective.
+///   4. Apply the Indian duties for that metal: gold BCD 5% + AIDC 1% + GST 3%
+///      ≈ 9.18%; silver BCD 10% + GST 3% ≈ 13.30%.
 ///
 /// Cache strategy:
 ///   On success, prices are stored in [PriceCacheService].
@@ -136,13 +140,26 @@ class PriceUpdateService {
       trackable.where((a) => a.type == AssetType.crypto).toList(),
       baseCurrency,
     );
-    final goldStats = await _refreshGoldAssets(
-      trackable.where((a) => a.type == AssetType.gold).toList(),
+    // Silver has no AssetType of its own: it is a gold-type asset carrying
+    // SI=F. Split the bucket by stored symbol so each metal is priced against
+    // its own COMEX contract and its own duty set.
+    final metals = trackable.where((a) => a.type == AssetType.gold).toList();
+    final goldStats = await _refreshMetalAssets(
+      metals.where((a) => !PriceSymbols.isComexSilver(a.symbol)).toList(),
+      PriceSymbols.goldComex,
+      baseCurrency,
+      exchangeRates,
+    );
+    final silverStats = await _refreshMetalAssets(
+      metals.where((a) => PriceSymbols.isComexSilver(a.symbol)).toList(),
+      PriceSymbols.silverComex,
       baseCurrency,
       exchangeRates,
     );
     final mfStats = await _refreshMutualFundAssets(
       trackable.where((a) => a.type == AssetType.mutualFund).toList(),
+      baseCurrency,
+      exchangeRates,
     );
     // Stocks and bonds share the equity path (Yahoo → Stooq); mutual funds
     // and the other typed buckets are handled separately above.
@@ -161,16 +178,19 @@ class PriceUpdateService {
       total: assets.length,
       updated: cryptoStats.updated +
           goldStats.updated +
+          silverStats.updated +
           mfStats.updated +
           stockStats.updated,
       skipped: skipped,
       failed: cryptoStats.failed +
           goldStats.failed +
+          silverStats.failed +
           mfStats.failed +
           stockStats.failed,
       errors: <String>[
         ...cryptoStats.errors,
         ...goldStats.errors,
+        ...silverStats.errors,
         ...mfStats.errors,
         ...stockStats.errors,
       ],
@@ -194,10 +214,10 @@ class PriceUpdateService {
       return _refreshSingleCrypto(asset, symbol, baseCurrency);
     }
     if (asset.type == AssetType.gold) {
-      return _refreshSingleGold(asset, baseCurrency);
+      return _refreshSingleMetal(asset, baseCurrency);
     }
     if (asset.type == AssetType.mutualFund) {
-      return _refreshSingleMutualFund(asset, symbol);
+      return _refreshSingleMutualFund(asset, symbol, baseCurrency);
     }
     return _refreshSingleStockBond(asset, symbol, baseCurrency);
   }
@@ -206,16 +226,45 @@ class PriceUpdateService {
   // Per-type refresh handlers (bulk)
   // ─────────────────────────────────────────────────────────────────────────
 
+  /// Refresh crypto holdings, one batch per holding currency.
+  ///
+  /// A CoinGecko call quotes a single vs_currency, and each holding is stored
+  /// in its own currency — fetching everything in the base currency handed a
+  /// USD-held coin its INR price.
   Future<_RefreshStats> _refreshCryptoAssets(
     List<Asset> assets,
     String baseCurrency,
+  ) async {
+    final byCurrency = <String, List<Asset>>{};
+    for (final asset in assets) {
+      final currency =
+          asset.currency.isNotEmpty ? asset.currency : baseCurrency;
+      byCurrency.putIfAbsent(currency, () => []).add(asset);
+    }
+
+    var updated = 0;
+    var failed = 0;
+    final errors = <String>[];
+    for (final entry in byCurrency.entries) {
+      final stats = await _refreshCryptoBatch(entry.value, entry.key);
+      updated += stats.updated;
+      failed += stats.failed;
+      errors.addAll(stats.errors);
+    }
+    return (updated: updated, failed: failed, errors: errors);
+  }
+
+  /// Refresh crypto [assets] that are all held in [vsCurrency].
+  Future<_RefreshStats> _refreshCryptoBatch(
+    List<Asset> assets,
+    String vsCurrency,
   ) async {
     if (assets.isEmpty) return (updated: 0, failed: 0, errors: <String>[]);
 
     final symbols =
         assets.map(_getSymbol).where((s) => s != null).cast<String>().toList();
 
-    final cryptoService = _makeCoinGecko(baseCurrency);
+    final cryptoService = _makeCoinGecko(vsCurrency);
     final results = await cryptoService.fetchMultiplePrices(symbols);
 
     // Secondary provider: retry only the symbols CoinGecko failed, in one
@@ -225,7 +274,7 @@ class PriceUpdateService {
         if (!results[i].success && i < symbols.length) symbols[i],
     ];
     if (failedSymbols.isNotEmpty) {
-      final fallbackService = _makeCryptoFallback(baseCurrency);
+      final fallbackService = _makeCryptoFallback(vsCurrency);
       final fallbackResults =
           await fallbackService.fetchMultiplePrices(failedSymbols);
       final bySymbol = {
@@ -270,8 +319,64 @@ class PriceUpdateService {
     return (updated: updated, failed: failed, errors: errors);
   }
 
-  Future<_RefreshStats> _refreshGoldAssets(
+  /// [quote]'s price in [assetCurrency], or null when it cannot be converted
+  /// honestly (no live rate for one side). Quotes come in the listing's
+  /// currency — and London in pence — while each holding is stored in its
+  /// own; a price written unconverted would be off by the exchange rate.
+  /// A quote with no currency at all is taken to be in the holding's.
+  static double? _priceInAssetCurrency(
+    PriceResult quote,
+    String assetCurrency,
+    ExchangeRateResult? rates,
+  ) {
+    if (quote.currency.isEmpty) return quote.price;
+    return QuoteCurrency.convert(
+        quote.price, quote.currency, assetCurrency, rates);
+  }
+
+  /// [quote] restated as [price] in [currency] — what gets cached, so the
+  /// offline fallback hands back a figure already in the holding's currency.
+  static PriceResult _inCurrency(
+          PriceResult quote, double price, String currency) =>
+      PriceResult(
+        symbol: quote.symbol,
+        price: price,
+        currency: currency,
+        fetchedAt: quote.fetchedAt,
+        success: true,
+      );
+
+  static String _noRateError(PriceResult quote, String assetCurrency) =>
+      'No live exchange rate to convert ${quote.currency} to $assetCurrency';
+
+  /// Whether [quote] has to go through forex to land in [assetCurrency].
+  static bool _needsForex(PriceResult quote, String assetCurrency) =>
+      quote.currency.isNotEmpty &&
+      QuoteCurrency.normalize(quote.price, quote.currency).currency !=
+          assetCurrency;
+
+  /// Cache key for a metal price.
+  ///
+  /// The cached number is a per-gram price **in a particular currency**, so
+  /// the COMEX symbol alone is not a key: gold held in INR and gold held in
+  /// USD would overwrite each other, and the offline fallback would then hand
+  /// one of them the other's number with no conversion.
+  static String _metalCacheKey(String comexSymbol, String currency) =>
+      '$comexSymbol:$currency';
+
+  /// Human name for [comexSymbol], for error messages.
+  static String _metalName(String comexSymbol) =>
+      PriceSymbols.isComexSilver(comexSymbol) ? 'silver' : 'gold';
+
+  /// Refresh every asset priced against a single COMEX metal contract.
+  ///
+  /// One network fetch covers the batch: the COMEX leg is currency-agnostic
+  /// (USD/troy oz), so assets held in another currency are re-derived from
+  /// [GoldPriceBreakdown.usdPerGram] with that currency's forex rate and duty
+  /// set rather than costing a second round trip.
+  Future<_RefreshStats> _refreshMetalAssets(
     List<Asset> assets,
+    String comexSymbol,
     String baseCurrency,
     ExchangeRateResult exchangeRates,
   ) async {
@@ -280,17 +385,23 @@ class PriceUpdateService {
     final primaryCurrency =
         assets.first.currency.isNotEmpty ? assets.first.currency : baseCurrency;
 
-    final breakdown = await _goldPriceService.fetchGoldPriceBreakdown(
+    final breakdown = await _goldPriceService.fetchMetalPriceBreakdown(
+      comexSymbol: comexSymbol,
       targetCurrency: primaryCurrency,
+      taxConfig: GoldTaxConfig.forMetal(comexSymbol, primaryCurrency),
     );
 
     int updated = 0;
     int failed = 0;
     final errors = <String>[];
 
-    if (breakdown == null) {
-      for (final asset in assets) {
-        final cached = _priceCache.getCachedResult(PriceSymbols.goldComex);
+    for (final asset in assets) {
+      final targetCurrency =
+          asset.currency.isNotEmpty ? asset.currency : baseCurrency;
+      final cacheKey = _metalCacheKey(comexSymbol, targetCurrency);
+
+      if (breakdown == null) {
+        final cached = _priceCache.getCachedResult(cacheKey);
         if (cached.success) {
           await _assetRepository.updateAssetPrice(asset.id, cached.price,
               asOf: cached.fetchedAt);
@@ -298,17 +409,12 @@ class PriceUpdateService {
         } else {
           failed++;
           errors.add(
-            '${asset.name}: Could not fetch COMEX gold price (GC=F). '
-            'Check internet connection.',
+            '${asset.name}: Could not fetch COMEX ${_metalName(comexSymbol)} '
+            'price ($comexSymbol). Check internet connection.',
           );
         }
+        continue;
       }
-      return (updated: updated, failed: failed, errors: errors);
-    }
-
-    for (final asset in assets) {
-      final targetCurrency =
-          asset.currency.isNotEmpty ? asset.currency : baseCurrency;
 
       double pricePerGram;
       if (targetCurrency == primaryCurrency) {
@@ -321,13 +427,13 @@ class PriceUpdateService {
           errors.add('Warning: using approximate forex rate for ${asset.name}');
         }
         final basePerGramInTarget = breakdown.usdPerGram * targetRate;
-        final taxConfig =
-            targetCurrency == 'INR' ? GoldTaxConfig.india : GoldTaxConfig.none;
-        pricePerGram = basePerGramInTarget * taxConfig.totalTaxMultiplier;
+        pricePerGram = basePerGramInTarget *
+            GoldTaxConfig.forMetal(comexSymbol, targetCurrency)
+                .totalTaxMultiplier;
       }
 
       await _priceCache.cachePrice(PriceResult(
-        symbol: PriceSymbols.goldComex,
+        symbol: cacheKey,
         price: pricePerGram,
         currency: targetCurrency,
         fetchedAt: DateTime.now(),
@@ -340,7 +446,11 @@ class PriceUpdateService {
     return (updated: updated, failed: failed, errors: errors);
   }
 
-  Future<_RefreshStats> _refreshMutualFundAssets(List<Asset> assets) async {
+  Future<_RefreshStats> _refreshMutualFundAssets(
+    List<Asset> assets,
+    String baseCurrency,
+    ExchangeRateResult exchangeRates,
+  ) async {
     if (assets.isEmpty) return (updated: 0, failed: 0, errors: <String>[]);
 
     int updated = 0;
@@ -351,10 +461,16 @@ class PriceUpdateService {
       final symbol = _getSymbol(asset);
       if (symbol == null) continue;
 
+      final assetCurrency =
+          asset.currency.isNotEmpty ? asset.currency : baseCurrency;
       final result = await _fetchMutualFundNav(symbol);
-      if (result.success) {
-        await _priceCache.cachePrice(result);
-        await _assetRepository.updateAssetPrice(asset.id, result.price);
+      final price = result.success
+          ? _priceInAssetCurrency(result, assetCurrency, exchangeRates)
+          : null;
+      if (price != null) {
+        await _priceCache.cachePrice(
+            _inCurrency(result, price, assetCurrency));
+        await _assetRepository.updateAssetPrice(asset.id, price);
         updated++;
       } else {
         final cached = _priceCache.getCachedResult(symbol);
@@ -364,7 +480,8 @@ class PriceUpdateService {
           updated++;
         } else {
           failed++;
-          errors.add('${asset.name} ($symbol): ${result.error}');
+          errors.add('${asset.name} ($symbol): '
+              '${result.success ? _noRateError(result, assetCurrency) : result.error}');
         }
       }
 
@@ -392,18 +509,15 @@ class PriceUpdateService {
       }
 
       final result = await _fetchEquityPrice(symbol);
+      final assetCurrency =
+          asset.currency.isNotEmpty ? asset.currency : baseCurrency;
+      // Any quote currency, not just USD; without a live rate the quote is
+      // treated like a failed fetch rather than stored unconverted.
+      final price = result.success
+          ? _priceInAssetCurrency(result, assetCurrency, exchangeRates)
+          : null;
 
-      if (result.success) {
-        double price = result.price;
-        final assetCurrency =
-            asset.currency.isNotEmpty ? asset.currency : baseCurrency;
-
-        if (result.currency == 'USD' &&
-            assetCurrency != 'USD' &&
-            exchangeRates.success) {
-          price = exchangeRates.convert(price, assetCurrency);
-        }
-
+      if (price != null) {
         final finalResult = PriceResult(
           symbol: symbol,
           price: price,
@@ -422,7 +536,8 @@ class PriceUpdateService {
           updated++;
         } else {
           failed++;
-          errors.add('${asset.name} ($symbol): ${result.error}');
+          errors.add('${asset.name} ($symbol): '
+              '${result.success ? _noRateError(result, assetCurrency) : result.error}');
         }
       }
 
@@ -465,47 +580,76 @@ class PriceUpdateService {
     return cached.success ? cached : result;
   }
 
-  Future<PriceResult> _refreshSingleGold(
+  Future<PriceResult> _refreshSingleMetal(
       Asset asset, String baseCurrency) async {
+    final comexSymbol = PriceSymbols.metalSymbolFor(asset.symbol);
     final targetCurrency =
         asset.currency.isNotEmpty ? asset.currency : baseCurrency;
+    final cacheKey = _metalCacheKey(comexSymbol, targetCurrency);
 
-    final breakdown = await _goldPriceService.fetchGoldPriceBreakdown(
+    final breakdown = await _goldPriceService.fetchMetalPriceBreakdown(
+      comexSymbol: comexSymbol,
       targetCurrency: targetCurrency,
+      taxConfig: GoldTaxConfig.forMetal(comexSymbol, targetCurrency),
     );
 
     if (breakdown == null) {
-      final cached = _priceCache.getCachedResult(PriceSymbols.goldComex);
+      final cached = _priceCache.getCachedResult(cacheKey);
       if (cached.success) {
         await _assetRepository.updateAssetPrice(asset.id, cached.price,
             asOf: cached.fetchedAt);
-        return cached;
+        // Re-label with the bare COMEX symbol: the composite cache key is an
+        // internal detail and would otherwise surface in the UI.
+        return PriceResult(
+          symbol: comexSymbol,
+          price: cached.price,
+          currency: cached.currency,
+          fetchedAt: cached.fetchedAt,
+          success: true,
+          isStale: cached.isStale,
+        );
       }
       return PriceResult.failure(
         asset.name,
-        'Could not fetch COMEX gold price (GC=F). Check internet connection.',
+        'Could not fetch COMEX ${_metalName(comexSymbol)} price '
+        '($comexSymbol). Check internet connection.',
       );
     }
 
-    final liveResult = PriceResult(
-      symbol: PriceSymbols.goldComex,
+    final fetchedAt = DateTime.now();
+    await _priceCache.cachePrice(PriceResult(
+      symbol: cacheKey,
       price: breakdown.finalPerGram,
       currency: targetCurrency,
-      fetchedAt: DateTime.now(),
+      fetchedAt: fetchedAt,
+      success: true,
+    ));
+    await _assetRepository.updateAssetPrice(asset.id, breakdown.finalPerGram);
+    return PriceResult(
+      symbol: comexSymbol,
+      price: breakdown.finalPerGram,
+      currency: targetCurrency,
+      fetchedAt: fetchedAt,
       success: true,
     );
-    await _priceCache.cachePrice(liveResult);
-    await _assetRepository.updateAssetPrice(asset.id, breakdown.finalPerGram);
-    return liveResult;
   }
 
   Future<PriceResult> _refreshSingleMutualFund(
-      Asset asset, String symbol) async {
+      Asset asset, String symbol, String baseCurrency) async {
     final result = await _fetchMutualFundNav(symbol);
-    if (result.success) {
-      await _priceCache.cachePrice(result);
-      await _assetRepository.updateAssetPrice(asset.id, result.price);
-      return result;
+    final assetCurrency =
+        asset.currency.isNotEmpty ? asset.currency : baseCurrency;
+    final rates = result.success && _needsForex(result, assetCurrency)
+        ? await _currencyConverter.fetchRates()
+        : null;
+    final price = result.success
+        ? _priceInAssetCurrency(result, assetCurrency, rates)
+        : null;
+    if (price != null) {
+      final stored = _inCurrency(result, price, assetCurrency);
+      await _priceCache.cachePrice(stored);
+      await _assetRepository.updateAssetPrice(asset.id, price);
+      return stored;
     }
 
     final cached = _priceCache.getCachedResult(symbol);
@@ -514,7 +658,10 @@ class PriceUpdateService {
           asOf: cached.fetchedAt);
       return cached;
     }
-    return result;
+    // A quote that could not be converted is not a usable price.
+    return result.success
+        ? PriceResult.failure(symbol, _noRateError(result, assetCurrency))
+        : result;
   }
 
   /// Fetch a mutual fund's latest NAV (INR) from MFAPI.in.
@@ -545,23 +692,20 @@ class PriceUpdateService {
   Future<PriceResult> _refreshSingleStockBond(
       Asset asset, String symbol, String baseCurrency) async {
     final result = await _fetchEquityPrice(symbol);
+    final assetCurrency =
+        asset.currency.isNotEmpty ? asset.currency : baseCurrency;
+    final rates = result.success && _needsForex(result, assetCurrency)
+        ? await _currencyConverter.fetchRates()
+        : null;
+    final price = result.success
+        ? _priceInAssetCurrency(result, assetCurrency, rates)
+        : null;
 
-    if (result.success) {
-      double price = result.price;
-      final assetCurrency =
-          asset.currency.isNotEmpty ? asset.currency : baseCurrency;
-
-      if (result.currency == 'USD' && assetCurrency != 'USD') {
-        final rates = await _currencyConverter.fetchRates();
-        if (rates.success) {
-          price = rates.convert(price, assetCurrency);
-        }
-      }
-
+    if (price != null) {
       final finalResult = PriceResult(
         symbol: symbol,
         price: price,
-        currency: asset.currency.isNotEmpty ? asset.currency : baseCurrency,
+        currency: assetCurrency,
         fetchedAt: DateTime.now(),
         success: true,
       );
@@ -576,7 +720,10 @@ class PriceUpdateService {
           asOf: cached.fetchedAt);
       return cached;
     }
-    return result;
+    // A quote that could not be converted is not a usable price.
+    return result.success
+        ? PriceResult.failure(symbol, _noRateError(result, assetCurrency))
+        : result;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

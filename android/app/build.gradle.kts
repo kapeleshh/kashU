@@ -43,6 +43,18 @@ android {
         versionName = flutter.versionName
     }
 
+    // An .aab exists only to be uploaded, so refuse to build one that Play
+    // would reject. Checked against the requested tasks rather than the task
+    // graph so the failure happens at configuration time, before any work.
+    if (!keystorePropertiesFile.exists() &&
+        gradle.startParameter.taskNames.any { it.contains("bundleRelease", ignoreCase = true) }) {
+        throw GradleException(
+            "Cannot build a release App Bundle without android/key.properties - " +
+            "it would be debug-signed and rejected by Google Play. " +
+            "See README > Generating your release keystore (Android)."
+        )
+    }
+
     signingConfigs {
         if (keystorePropertiesFile.exists()) {
             create("release") {
@@ -59,6 +71,15 @@ android {
             signingConfig = if (keystorePropertiesFile.exists()) {
                 signingConfigs.getByName("release")
             } else {
+                // Debug-signed release APKs stay buildable so CI's smoke build
+                // and local testing keep working without secrets...
+                // The "WARNING:" prefix matters: `flutter build` filters Gradle
+                // output and only surfaces lines matching known patterns.
+                logger.warn(
+                    "\nWARNING: KashU - android/key.properties not found, so this " +
+                    "release build is DEBUG-SIGNED and cannot be uploaded to " +
+                    "Google Play. See README > Generating your release keystore.\n"
+                )
                 signingConfigs.getByName("debug")
             }
         }
@@ -67,4 +88,11 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // LaunchTheme/NormalTheme (res/values*/styles.xml) extend Theme.AppCompat,
+    // which local_auth requires alongside FlutterFragmentActivity. Declared
+    // here rather than relying on a plugin to pull AppCompat in transitively.
+    implementation("androidx.appcompat:appcompat:1.7.1")
 }

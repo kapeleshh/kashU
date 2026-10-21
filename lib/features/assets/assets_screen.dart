@@ -57,7 +57,9 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _Header(
-              count: assets.length,
+              // Open positions only — a fully sold holding (quantity 0) is
+              // still listed, for its history, but is no longer held.
+              count: assets.where((a) => a.quantity > 0).length,
               totalValue: totalValue,
               baseCurrency: base,
             ),
@@ -65,6 +67,14 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
             if (assets.isNotEmpty) ...[
               const SizedBox(height: 6),
               _FilterPills(
+                // Only types the user actually holds: an empty pill is a dead
+                // end, and Bond is hidden from Add Asset but can still arrive
+                // through an imported backup. The selected type stays listed
+                // so it can be cleared after its last asset is deleted.
+                types: AssetType.values
+                    .where((t) =>
+                        t == _selectedFilter || assets.any((a) => a.type == t))
+                    .toList(),
                 selected: _selectedFilter,
                 onSelected: (t) => setState(() => _selectedFilter = t),
               ),
@@ -298,7 +308,8 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
   void _navigateToAssetDetail(Asset asset) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => AssetDetailScreen(asset: asset)),
+      MaterialPageRoute(
+          builder: (context) => AssetDetailScreen(assetId: asset.id)),
     ).then((_) => ref.invalidate(allAssetsProvider));
   }
 }
@@ -393,8 +404,13 @@ class _TypeTabBar extends StatelessWidget {
 class _FilterPills extends StatelessWidget {
   final AssetType? selected;
   final ValueChanged<AssetType?> onSelected;
+  final List<AssetType> types;
 
-  const _FilterPills({required this.selected, required this.onSelected});
+  const _FilterPills({
+    required this.types,
+    required this.selected,
+    required this.onSelected,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -408,7 +424,7 @@ class _FilterPills extends StatelessWidget {
             HapticFeedback.selectionClick();
             onSelected(null);
           }),
-          for (final type in AssetType.values) ...[
+          for (final type in types) ...[
             const SizedBox(width: 8),
             _pill(
               context,
@@ -622,11 +638,16 @@ class _AssetTile extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '${isProfit ? '▲' : '▼'} ${CurrencyFormatter.formatPercentage(asset.gainLossPercentage.abs(), showSign: false)}',
+                    // Nothing held, so no open gain to show.
+                    asset.quantity <= 0
+                        ? 'Sold'
+                        : '${isProfit ? '▲' : '▼'} ${CurrencyFormatter.formatPercentage(asset.gainLossPercentage.abs(), showSign: false)}',
                     style: AppTheme.body(
                       size: 11.5,
                       weight: FontWeight.w800,
-                      color: changeColor,
+                      color: asset.quantity <= 0
+                          ? AppColors.textTertiaryOn(context)
+                          : changeColor,
                     ),
                   ),
                 ],

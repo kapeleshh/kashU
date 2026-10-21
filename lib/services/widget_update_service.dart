@@ -3,9 +3,12 @@ import 'package:home_widget/home_widget.dart';
 
 import '../core/utils/currency_formatter.dart';
 
-/// Identifier used in AndroidManifest.xml and AppWidgetProvider.
+/// Fully-qualified AppWidgetProvider, matching the class registered in
+/// AndroidManifest.xml. Passed as `qualifiedAndroidName`, which home_widget
+/// uses verbatim; the plain `androidName` form would be prefixed with the
+/// applicationId and so breaks under a flavor suffix.
 const String _kAndroidWidgetName =
-    'com.kashu.app.widget.PortfolioWidgetProvider';
+    'com.kashu.kashu.PortfolioWidgetProvider';
 
 /// App group ID for iOS WidgetKit data sharing.
 const String _kIosAppGroup = 'group.com.kashu.app.widget';
@@ -49,7 +52,7 @@ class WidgetUpdateService {
     ]);
 
     await HomeWidget.updateWidget(
-      androidName: _kAndroidWidgetName,
+      qualifiedAndroidName: _kAndroidWidgetName,
       iOSName: 'PortfolioWidget',
     );
   }

@@ -298,8 +298,8 @@ class _FeaturesPage extends StatelessWidget {
     (
       Icons.savings,
       AppColors.fdColor,
-      'FDs, Bonds & More',
-      'Track deposits with compound interest calculator',
+      'FDs, RDs & More',
+      'Deposits with a compound interest calculator, plus property and cash',
     ),
   ];
 }
@@ -425,7 +425,7 @@ class _PrivacyPage extends StatelessWidget {
 
   static const _privacyPoints = [
     (Icons.no_accounts_outlined, 'No account or login required'),
-    (Icons.cloud_off_outlined, 'No data sent to any server'),
+    (Icons.cloud_off_outlined, 'Your portfolio never leaves your phone'),
     (Icons.enhanced_encryption_outlined, 'All data encrypted on device'),
     (Icons.file_download_outlined, 'Export & backup at any time'),
   ];

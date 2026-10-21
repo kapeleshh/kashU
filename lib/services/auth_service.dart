@@ -1,12 +1,41 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:local_auth/error_codes.dart' as auth_error;
 import 'package:local_auth/local_auth.dart';
 
 /// Result of an authentication attempt.
 enum AuthResult {
   success,
+
+  /// The prompt ran but the user did not authenticate (dismissed it, or the
+  /// check failed). Android reports a dismissed prompt this way too.
   failure,
   notAvailable,
   notEnrolled,
   cancelled,
+
+  /// Too many failed attempts — biometrics are disabled for a short while
+  /// (about 30 seconds on Android).
+  lockedOut,
+
+  /// Biometrics are disabled until the device is unlocked with its PIN,
+  /// pattern or password.
+  permanentlyLockedOut,
+
+  /// Authentication could not run at all because of a platform or
+  /// configuration problem (e.g. `no_fragment_activity`) — nothing the user
+  /// did, and retrying will usually fail the same way.
+  error,
+}
+
+extension AuthResultX on AuthResult {
+  /// True when the device cannot authenticate the user at all, so an app
+  /// lock could not protect anything — the lock screen lets the user in
+  /// (or offers to) in these states.
+  bool get deviceCannotAuthenticate =>
+      this == AuthResult.notAvailable ||
+      this == AuthResult.notEnrolled ||
+      this == AuthResult.error;
 }
 
 /// Wraps `local_auth` for biometric / device-credential authentication.
@@ -62,8 +91,39 @@ class AuthService {
       );
 
       return authenticated ? AuthResult.success : AuthResult.failure;
-    } on Exception {
-      return AuthResult.failure;
+    } on PlatformException catch (e) {
+      debugPrint('[KashU] Authentication error: ${e.code}');
+      return resultForPlatformCode(e.code);
+    } on Exception catch (e) {
+      debugPrint('[KashU] Authentication error: $e');
+      return AuthResult.error;
+    }
+  }
+
+  /// Map a `local_auth` [PlatformException] code to an [AuthResult].
+  ///
+  /// The codes come from `local_auth/error_codes.dart` plus the
+  /// platform-specific ones the Android and Darwin implementations throw.
+  /// Anything unrecognised is a platform [AuthResult.error], never a user
+  /// [AuthResult.failure] — "tap to try again" cannot fix a broken setup.
+  @visibleForTesting
+  static AuthResult resultForPlatformCode(String code) {
+    switch (code) {
+      case auth_error.notAvailable:
+        return AuthResult.notAvailable;
+      case auth_error.notEnrolled:
+      case auth_error.passcodeNotSet:
+        return AuthResult.notEnrolled;
+      case auth_error.lockedOut:
+        return AuthResult.lockedOut;
+      case auth_error.permanentlyLockedOut:
+        return AuthResult.permanentlyLockedOut;
+      case 'UserCancelled': // iOS/macOS: the sheet was dismissed
+      case 'UserFallback':
+      case 'auth_in_progress': // a prompt is already on screen
+        return AuthResult.cancelled;
+      default: // no_fragment_activity, no_activity, BiometricNotAvailable…
+        return AuthResult.error;
     }
   }
 }

@@ -78,14 +78,6 @@ class TransactionRepository {
     return box.values.map((t) => t.toJson()).toList();
   }
 
-  /// Import transactions from JSON
-  Future<void> importFromJson(List<Map<String, dynamic>> jsonList) async {
-    for (final json in jsonList) {
-      final transaction = Transaction.fromJson(json);
-      await addTransaction(transaction);
-    }
-  }
-
   /// Clear all transactions
   Future<void> clearAll() async {
     await box.clear();
