@@ -115,6 +115,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       _selectedCurrency = asset.currency;
       _selectedPlatform = asset.platform;
       _purchaseDate = asset.purchaseDate;
+      // Gold and silver share AssetType.gold — the stored symbol is the only
+      // thing that tells them apart, so the chip has to be restored from it.
+      _isSilver = PriceSymbols.isComexSilver(asset.symbol);
     }
   }
 
@@ -612,10 +615,12 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       _stockSearchKey = UniqueKey();
     });
     if (type == AssetType.gold) {
-      _symbolController.text = PriceSymbols.goldComex;
+      _symbolController.text =
+          _isSilver ? PriceSymbols.silverComex : PriceSymbols.goldComex;
       _fetchGoldPrice();
     } else {
-      if (_symbolController.text == PriceSymbols.goldComex) {
+      if (_symbolController.text == PriceSymbols.goldComex ||
+          _symbolController.text == PriceSymbols.silverComex) {
         _symbolController.clear();
       }
     }

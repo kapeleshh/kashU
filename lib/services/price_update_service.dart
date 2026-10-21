@@ -43,11 +43,14 @@ typedef _RefreshStats = ({int updated, int failed, List<String> errors});
 /// Routes each asset to the correct API based on AssetType.
 /// Converts prices to the asset's stored currency automatically.
 ///
-/// Gold price strategy:
-///   1. Fetch COMEX GC=F (USD/troy oz) via Yahoo Finance — always reliable.
+/// Metal price strategy (gold and silver):
+///   1. Fetch the COMEX contract (USD/troy oz) via Yahoo Finance — GC=F for
+///      gold, SI=F for silver, chosen from the asset's stored symbol because
+///      both share [AssetType.gold].
 ///   2. Convert USD/oz → USD/gram (÷ 31.1035).
 ///   3. Convert USD/gram → INR/gram via live forex (open.er-api.com).
-///   4. Apply Indian taxes: BCD 5% + AIDC 1% + GST 3% ≈ 9.18% effective.
+///   4. Apply the Indian duties for that metal: gold BCD 5% + AIDC 1% + GST 3%
+///      ≈ 9.18%; silver BCD 10% + GST 3% ≈ 13.30%.
 ///
 /// Cache strategy:
 ///   On success, prices are stored in [PriceCacheService].
@@ -136,8 +139,19 @@ class PriceUpdateService {
       trackable.where((a) => a.type == AssetType.crypto).toList(),
       baseCurrency,
     );
-    final goldStats = await _refreshGoldAssets(
-      trackable.where((a) => a.type == AssetType.gold).toList(),
+    // Silver has no AssetType of its own: it is a gold-type asset carrying
+    // SI=F. Split the bucket by stored symbol so each metal is priced against
+    // its own COMEX contract and its own duty set.
+    final metals = trackable.where((a) => a.type == AssetType.gold).toList();
+    final goldStats = await _refreshMetalAssets(
+      metals.where((a) => !PriceSymbols.isComexSilver(a.symbol)).toList(),
+      PriceSymbols.goldComex,
+      baseCurrency,
+      exchangeRates,
+    );
+    final silverStats = await _refreshMetalAssets(
+      metals.where((a) => PriceSymbols.isComexSilver(a.symbol)).toList(),
+      PriceSymbols.silverComex,
       baseCurrency,
       exchangeRates,
     );
@@ -161,16 +175,19 @@ class PriceUpdateService {
       total: assets.length,
       updated: cryptoStats.updated +
           goldStats.updated +
+          silverStats.updated +
           mfStats.updated +
           stockStats.updated,
       skipped: skipped,
       failed: cryptoStats.failed +
           goldStats.failed +
+          silverStats.failed +
           mfStats.failed +
           stockStats.failed,
       errors: <String>[
         ...cryptoStats.errors,
         ...goldStats.errors,
+        ...silverStats.errors,
         ...mfStats.errors,
         ...stockStats.errors,
       ],
@@ -194,7 +211,7 @@ class PriceUpdateService {
       return _refreshSingleCrypto(asset, symbol, baseCurrency);
     }
     if (asset.type == AssetType.gold) {
-      return _refreshSingleGold(asset, baseCurrency);
+      return _refreshSingleMetal(asset, baseCurrency);
     }
     if (asset.type == AssetType.mutualFund) {
       return _refreshSingleMutualFund(asset, symbol);
@@ -270,8 +287,28 @@ class PriceUpdateService {
     return (updated: updated, failed: failed, errors: errors);
   }
 
-  Future<_RefreshStats> _refreshGoldAssets(
+  /// Cache key for a metal price.
+  ///
+  /// The cached number is a per-gram price **in a particular currency**, so
+  /// the COMEX symbol alone is not a key: gold held in INR and gold held in
+  /// USD would overwrite each other, and the offline fallback would then hand
+  /// one of them the other's number with no conversion.
+  static String _metalCacheKey(String comexSymbol, String currency) =>
+      '$comexSymbol:$currency';
+
+  /// Human name for [comexSymbol], for error messages.
+  static String _metalName(String comexSymbol) =>
+      PriceSymbols.isComexSilver(comexSymbol) ? 'silver' : 'gold';
+
+  /// Refresh every asset priced against a single COMEX metal contract.
+  ///
+  /// One network fetch covers the batch: the COMEX leg is currency-agnostic
+  /// (USD/troy oz), so assets held in another currency are re-derived from
+  /// [GoldPriceBreakdown.usdPerGram] with that currency's forex rate and duty
+  /// set rather than costing a second round trip.
+  Future<_RefreshStats> _refreshMetalAssets(
     List<Asset> assets,
+    String comexSymbol,
     String baseCurrency,
     ExchangeRateResult exchangeRates,
   ) async {
@@ -280,17 +317,23 @@ class PriceUpdateService {
     final primaryCurrency =
         assets.first.currency.isNotEmpty ? assets.first.currency : baseCurrency;
 
-    final breakdown = await _goldPriceService.fetchGoldPriceBreakdown(
+    final breakdown = await _goldPriceService.fetchMetalPriceBreakdown(
+      comexSymbol: comexSymbol,
       targetCurrency: primaryCurrency,
+      taxConfig: GoldTaxConfig.forMetal(comexSymbol, primaryCurrency),
     );
 
     int updated = 0;
     int failed = 0;
     final errors = <String>[];
 
-    if (breakdown == null) {
-      for (final asset in assets) {
-        final cached = _priceCache.getCachedResult(PriceSymbols.goldComex);
+    for (final asset in assets) {
+      final targetCurrency =
+          asset.currency.isNotEmpty ? asset.currency : baseCurrency;
+      final cacheKey = _metalCacheKey(comexSymbol, targetCurrency);
+
+      if (breakdown == null) {
+        final cached = _priceCache.getCachedResult(cacheKey);
         if (cached.success) {
           await _assetRepository.updateAssetPrice(asset.id, cached.price,
               asOf: cached.fetchedAt);
@@ -298,17 +341,12 @@ class PriceUpdateService {
         } else {
           failed++;
           errors.add(
-            '${asset.name}: Could not fetch COMEX gold price (GC=F). '
-            'Check internet connection.',
+            '${asset.name}: Could not fetch COMEX ${_metalName(comexSymbol)} '
+            'price ($comexSymbol). Check internet connection.',
           );
         }
+        continue;
       }
-      return (updated: updated, failed: failed, errors: errors);
-    }
-
-    for (final asset in assets) {
-      final targetCurrency =
-          asset.currency.isNotEmpty ? asset.currency : baseCurrency;
 
       double pricePerGram;
       if (targetCurrency == primaryCurrency) {
@@ -321,13 +359,13 @@ class PriceUpdateService {
           errors.add('Warning: using approximate forex rate for ${asset.name}');
         }
         final basePerGramInTarget = breakdown.usdPerGram * targetRate;
-        final taxConfig =
-            targetCurrency == 'INR' ? GoldTaxConfig.india : GoldTaxConfig.none;
-        pricePerGram = basePerGramInTarget * taxConfig.totalTaxMultiplier;
+        pricePerGram = basePerGramInTarget *
+            GoldTaxConfig.forMetal(comexSymbol, targetCurrency)
+                .totalTaxMultiplier;
       }
 
       await _priceCache.cachePrice(PriceResult(
-        symbol: PriceSymbols.goldComex,
+        symbol: cacheKey,
         price: pricePerGram,
         currency: targetCurrency,
         fetchedAt: DateTime.now(),
@@ -465,38 +503,58 @@ class PriceUpdateService {
     return cached.success ? cached : result;
   }
 
-  Future<PriceResult> _refreshSingleGold(
+  Future<PriceResult> _refreshSingleMetal(
       Asset asset, String baseCurrency) async {
+    final comexSymbol = PriceSymbols.metalSymbolFor(asset.symbol);
     final targetCurrency =
         asset.currency.isNotEmpty ? asset.currency : baseCurrency;
+    final cacheKey = _metalCacheKey(comexSymbol, targetCurrency);
 
-    final breakdown = await _goldPriceService.fetchGoldPriceBreakdown(
+    final breakdown = await _goldPriceService.fetchMetalPriceBreakdown(
+      comexSymbol: comexSymbol,
       targetCurrency: targetCurrency,
+      taxConfig: GoldTaxConfig.forMetal(comexSymbol, targetCurrency),
     );
 
     if (breakdown == null) {
-      final cached = _priceCache.getCachedResult(PriceSymbols.goldComex);
+      final cached = _priceCache.getCachedResult(cacheKey);
       if (cached.success) {
         await _assetRepository.updateAssetPrice(asset.id, cached.price,
             asOf: cached.fetchedAt);
-        return cached;
+        // Re-label with the bare COMEX symbol: the composite cache key is an
+        // internal detail and would otherwise surface in the UI.
+        return PriceResult(
+          symbol: comexSymbol,
+          price: cached.price,
+          currency: cached.currency,
+          fetchedAt: cached.fetchedAt,
+          success: true,
+          isStale: cached.isStale,
+        );
       }
       return PriceResult.failure(
         asset.name,
-        'Could not fetch COMEX gold price (GC=F). Check internet connection.',
+        'Could not fetch COMEX ${_metalName(comexSymbol)} price '
+        '($comexSymbol). Check internet connection.',
       );
     }
 
-    final liveResult = PriceResult(
-      symbol: PriceSymbols.goldComex,
+    final fetchedAt = DateTime.now();
+    await _priceCache.cachePrice(PriceResult(
+      symbol: cacheKey,
       price: breakdown.finalPerGram,
       currency: targetCurrency,
-      fetchedAt: DateTime.now(),
+      fetchedAt: fetchedAt,
+      success: true,
+    ));
+    await _assetRepository.updateAssetPrice(asset.id, breakdown.finalPerGram);
+    return PriceResult(
+      symbol: comexSymbol,
+      price: breakdown.finalPerGram,
+      currency: targetCurrency,
+      fetchedAt: fetchedAt,
       success: true,
     );
-    await _priceCache.cachePrice(liveResult);
-    await _assetRepository.updateAssetPrice(asset.id, breakdown.finalPerGram);
-    return liveResult;
   }
 
   Future<PriceResult> _refreshSingleMutualFund(

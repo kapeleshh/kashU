@@ -124,6 +124,19 @@ class GoldTaxConfig {
     gstRate: 0.03,
   );
 
+  /// The duty set that applies to [comexSymbol] when quoting in
+  /// [targetCurrency]. Import duty, AIDC and GST are Indian taxes levied on
+  /// physical import, so they only belong on an INR price — anything else
+  /// gets the raw international number.
+  ///
+  /// Gold and silver are taxed differently (gold carries AIDC, silver pays a
+  /// higher BCD), which is the whole reason a metal cannot be priced without
+  /// knowing which metal it is.
+  static GoldTaxConfig forMetal(String comexSymbol, String targetCurrency) {
+    if (targetCurrency != 'INR') return none;
+    return PriceSymbols.isComexSilver(comexSymbol) ? silver : india;
+  }
+
   double get totalTaxMultiplier => (1 + importDutyRate + aidcRate) * (1 + gstRate);
 
   double get effectiveTaxPercent => (totalTaxMultiplier - 1) * 100;
@@ -205,7 +218,8 @@ class GoldPriceService implements PriceService {
     return fetchMetalPriceBreakdown(
       comexSymbol: PriceSymbols.silverComex,
       targetCurrency: targetCurrency,
-      taxConfig: targetCurrency == 'INR' ? GoldTaxConfig.silver : GoldTaxConfig.none,
+      taxConfig:
+          GoldTaxConfig.forMetal(PriceSymbols.silverComex, targetCurrency),
     );
   }
 
