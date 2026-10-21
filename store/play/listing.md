@@ -34,8 +34,8 @@ WHAT YOU CAN TRACK
 • Fixed and recurring deposits — enter the principal and rate, or just the maturity amount and let KashU work backwards
 • Real estate, cash and anything else — tracked manually
 
-LIVE PRICES, AUTOMATICALLY
-Prices refresh from free public market data sources. When a source is unavailable KashU falls back to a second provider, then to the last known price, so your portfolio still adds up offline.
+LIVE PRICES, ONE TAP AWAY
+Tap refresh or pull down on the dashboard to update every price from free public market data sources. When a source is unavailable KashU falls back to a second provider, then to the last known price, so your portfolio still adds up offline.
 
 SEE HOW YOU ARE ACTUALLY DOING
 • Total value, total invested, and gain/loss at a glance
