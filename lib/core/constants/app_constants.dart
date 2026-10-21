@@ -9,6 +9,21 @@ class AppConstants {
   static const String priceCacheBox = 'price_cache_box';
   static const String priceHistoryBox = 'price_history_box';
 
+  /// Every AES-encrypted box. DatabaseKeyService uses the list to tell a
+  /// fresh install from data whose key went missing, and its reset deletes
+  /// all of them.
+  static const List<String> encryptedBoxes = [
+    settingsBox,
+    assetsBox,
+    transactionsBox,
+    priceCacheBox,
+    priceHistoryBox,
+  ];
+
+  /// Unencrypted box holding only a check value of the encryption key, so a
+  /// key that doesn't match the data is caught before any box is opened.
+  static const String keyCheckBox = 'key_check_box';
+
   // Settings Keys
   static const String keyBiometricEnabled = 'biometric_enabled';
   static const String keyPinEnabled = 'pin_enabled';
@@ -30,6 +45,12 @@ class AppConstants {
   /// True while a Clear All Data is in flight (set before the first box is
   /// cleared, removed after the last) — finished at startup if interrupted.
   static const String keyPendingClearAll = 'pending_clear_all';
+
+  /// Journal of a backup import in flight: the previous value of every
+  /// asset/transaction id it writes (null for new ids) plus the delete
+  /// tombstones. Written before the first box write, removed once the import
+  /// is complete; a leftover journal is rolled back at startup.
+  static const String keyPendingImport = 'pending_import';
 
   /// Version of the backup/export JSON file format. Independent of the Hive
   /// on-disk schema version tracked by HiveMigrationService — bump this only

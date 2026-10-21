@@ -140,14 +140,6 @@ class AssetRepository {
     return box.values.map((asset) => asset.toJson()).toList();
   }
 
-  /// Import assets from JSON
-  Future<void> importFromJson(List<Map<String, dynamic>> jsonList) async {
-    for (final json in jsonList) {
-      final asset = Asset.fromJson(json);
-      await addAsset(asset);
-    }
-  }
-
   /// Get base currency from settings
   String getBaseCurrency() {
     return _settingsBox().get(AppConstants.keyBaseCurrency, defaultValue: 'INR') as String;

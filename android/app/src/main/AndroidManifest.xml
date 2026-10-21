@@ -1,13 +1,23 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Required for price/forex fetching. The debug/profile manifests carry
          their own copy; without this one, release builds ship with no network
          access at all. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- No Auto Backup and no device-to-device transfer: the encrypted Hive
+         boxes and the secure-storage prefs would reach a new phone without the
+         Keystore key that decrypts them. allowBackup="false" covers Android 11
+         and lower; Android 12+ ignores it for device transfer, hence
+         dataExtractionRules. Users move data with the JSON export instead. -->
     <application
         android:label="@string/app_name"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round">
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:allowBackup="false"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        tools:targetApi="31">
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -22,7 +22,12 @@ class LockScreen extends ConsumerStatefulWidget {
 
 class _LockScreenState extends ConsumerState<LockScreen> {
   bool _isAuthenticating = false;
-  bool _notEnrolled = false;
+
+  /// True when the device cannot authenticate at all (no screen lock set up,
+  /// or a platform error) — the only states that offer "Continue without
+  /// lock", so a broken setup can never lock the user out of their data.
+  /// Lock-outs from too many attempts deliberately don't qualify.
+  bool _canBypass = false;
   String? _errorMessage;
 
   @override
@@ -42,6 +47,7 @@ class _LockScreenState extends ConsumerState<LockScreen> {
     if (_isAuthenticating) return;
     setState(() {
       _isAuthenticating = true;
+      _canBypass = false;
       _errorMessage = null;
     });
 
@@ -60,11 +66,20 @@ class _LockScreenState extends ConsumerState<LockScreen> {
       case AuthResult.notEnrolled:
         setState(() {
           _isAuthenticating = false;
-          _notEnrolled = true;
+          _canBypass = true;
           _errorMessage =
               'No biometrics or device PIN are set up. '
               'Go to your device Settings to add a PIN or fingerprint, '
               'or continue without lock protection.';
+        });
+      case AuthResult.error:
+        setState(() {
+          _isAuthenticating = false;
+          _canBypass = true;
+          _errorMessage =
+              'This device could not start authentication. Tap to try '
+              'again, or continue without the lock and turn it off in '
+              'Settings.';
         });
       case AuthResult.cancelled:
         setState(() {
@@ -74,6 +89,16 @@ class _LockScreenState extends ConsumerState<LockScreen> {
       case AuthResult.failure:
         setState(() {
           _errorMessage = 'Authentication failed. Tap to try again.';
+          _isAuthenticating = false;
+        });
+      case AuthResult.lockedOut:
+        setState(() {
+          _errorMessage = AppStrings.authLockedOut;
+          _isAuthenticating = false;
+        });
+      case AuthResult.permanentlyLockedOut:
+        setState(() {
+          _errorMessage = AppStrings.authPermanentlyLockedOut;
           _isAuthenticating = false;
         });
     }
@@ -152,7 +177,7 @@ class _LockScreenState extends ConsumerState<LockScreen> {
                       textAlign: TextAlign.center,
                     ),
                   ),
-                  if (_notEnrolled) ...[
+                  if (_canBypass) ...[
                     const SizedBox(height: 16),
                     TextButton(
                       onPressed: _unlock,

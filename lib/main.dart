@@ -1,10 +1,7 @@
-import 'dart:convert';
-import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 
@@ -15,6 +12,7 @@ import 'core/constants/app_strings.dart';
 import 'core/constants/app_constants.dart';
 import 'data/migration/hive_migration_service.dart';
 import 'data/repositories/portfolio_write_service.dart';
+import 'data/security/database_key_service.dart';
 import 'data/models/asset_type.dart';
 import 'data/models/transaction_type.dart';
 import 'data/models/asset.dart';
@@ -22,36 +20,36 @@ import 'data/models/transaction.dart';
 import 'features/auth/lock_screen.dart';
 import 'features/dashboard/dashboard_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
+import 'features/startup/database_error_app.dart';
 import 'shared/providers/portfolio_provider.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Hive encryption setup
+// Database recovery
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Secure storage key for the Hive AES encryption key.
-const _kHiveEncryptionKey = 'kashu_hive_aes_key';
+/// Replace the app with the recovery screen. Startup can be re-run from it
+/// ("Try again"), or the local database and key reset first.
+void _showDatabaseError(DatabaseErrorKind kind, Object? error) {
+  runApp(DatabaseErrorApp(
+    kind: kind,
+    detail: error?.toString(),
+    onRetry: () => _startApp(),
+    onReset: () async {
+      await DatabaseKeyService().reset();
+      // A clean slate opens like a fresh install: onboarding, then the
+      // user imports their backup file from Settings.
+      await _startApp();
+    },
+  ));
+}
 
-/// Retrieve the persisted Hive encryption key, or generate + store a new one.
-Future<HiveAesCipher> _loadOrCreateCipher() async {
-  const storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
-  );
-
-  final existing = await storage.read(key: _kHiveEncryptionKey);
-  List<int> keyBytes;
-
-  if (existing != null) {
-    keyBytes = base64Decode(existing);
-  } else {
-    final rng = Random.secure();
-    keyBytes = List<int>.generate(32, (_) => rng.nextInt(256));
-    await storage.write(
-      key: _kHiveEncryptionKey,
-      value: base64Encode(keyBytes),
-    );
-  }
-
-  return HiveAesCipher(keyBytes);
+void _registerAdapters() {
+  // Guarded: startup re-runs in-process after "Try again" / a reset.
+  if (Hive.isAdapterRegistered(AssetTypeAdapter().typeId)) return;
+  Hive.registerAdapter(AssetTypeAdapter());
+  Hive.registerAdapter(TransactionTypeAdapter());
+  Hive.registerAdapter(AssetAdapter());
+  Hive.registerAdapter(TransactionAdapter());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,23 +103,36 @@ Future<HiveAesCipher?> _preBootstrap() async {
 
   // Initialize Hive
   await Hive.initFlutter();
-
-  // Register Hive adapters
-  Hive.registerAdapter(AssetTypeAdapter());
-  Hive.registerAdapter(TransactionTypeAdapter());
-  Hive.registerAdapter(AssetAdapter());
-  Hive.registerAdapter(TransactionAdapter());
+  _registerAdapters();
 
   // Load (or create) the AES cipher backed by flutter_secure_storage.
   // All boxes are encrypted with the same key — the key itself never
   // touches disk unprotected (it lives in the platform keychain/keystore).
-  final cipher = await _loadOrCreateCipher();
+  // A key that can't be read, has gone missing while data exists (a phone
+  // backup restored without the keystore key), or doesn't match the data
+  // stops here: opening the boxes with a wrong key would wipe them.
+  final DatabaseKeyResult keyResult;
+  try {
+    keyResult = await DatabaseKeyService().loadOrCreate();
+  } catch (e, stack) {
+    debugPrint('[KashU] Loading the database key failed: $e\n$stack');
+    _showDatabaseError(DatabaseErrorKind.keyUnavailable, e);
+    return null;
+  }
+  final cipher = keyResult.cipher;
+  if (cipher == null) {
+    debugPrint('[KashU] Database key ${keyResult.problem?.name}: '
+        '${keyResult.error}');
+    _showDatabaseError(
+        DatabaseErrorKind.keyUnavailable, 'key ${keyResult.problem?.name}');
+    return null;
+  }
 
   try {
     await Hive.openBox(AppConstants.settingsBox, encryptionCipher: cipher);
   } catch (e, stack) {
     debugPrint('[KashU] Failed to open settings box: $e\n$stack');
-    runApp(_DatabaseErrorApp(error: e.toString()));
+    _showDatabaseError(DatabaseErrorKind.openFailed, e);
     return null;
   }
 
@@ -145,7 +156,7 @@ Future<void> _bootstrap(HiveAesCipher cipher) async {
     if (AppConfig.isSentryEnabled) {
       await Sentry.captureException(e, stackTrace: stack);
     }
-    runApp(_DatabaseErrorApp(error: e.toString()));
+    _showDatabaseError(DatabaseErrorKind.openFailed, e);
     return;
   }
 
@@ -160,7 +171,7 @@ Future<void> _bootstrap(HiveAesCipher cipher) async {
     if (AppConfig.isSentryEnabled) {
       await Sentry.captureException(e, stackTrace: stack);
     }
-    runApp(_DatabaseErrorApp(error: e.toString()));
+    _showDatabaseError(DatabaseErrorKind.openFailed, e);
     return;
   }
 
@@ -201,14 +212,26 @@ bool _readCrashReportingConsent() {
       settings.get(AppConstants.keyCrashReportingEnabled));
 }
 
-void main() async {
+/// Set once Sentry is initialised, so an in-process restart from the
+/// recovery screen doesn't initialise it a second time.
+bool _sentryStarted = false;
+
+void main() => _startApp();
+
+Future<void> _startApp() async {
   final cipher = await _preBootstrap();
-  if (cipher == null) return; // settings box unopenable — error screen shown
+  if (cipher == null) return; // key or settings box unusable — error shown
+
+  if (_sentryStarted) {
+    await _bootstrap(cipher);
+    return;
+  }
 
   // Sentry runs only when a DSN was baked in at build time AND the user
   // opted in via Settings. Consent is read from the encrypted settings box,
   // which is why Sentry initialises after _preBootstrap.
   if (AppConfig.isSentryEnabled && _readCrashReportingConsent()) {
+    _sentryStarted = true;
     await SentryFlutter.init(
       (options) {
         options.dsn = AppConfig.sentryDsn;
@@ -234,61 +257,6 @@ void main() async {
     );
   } else {
     await _bootstrap(cipher);
-  }
-}
-
-/// Shown when Hive boxes cannot be opened (corrupted data, storage full, etc.).
-/// Gives the user an actionable message rather than a blank crash.
-class _DatabaseErrorApp extends StatelessWidget {
-  final String error;
-  const _DatabaseErrorApp({required this.error});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      home: Scaffold(
-        backgroundColor: const Color(0xFF0D0D1A),
-        body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline,
-                    color: Color(0xFFEF5350), size: 64),
-                const SizedBox(height: 24),
-                const Text(
-                  'Unable to open database',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'KashU could not open its local database. This can happen '
-                  'if storage is full or the database file is corrupted.\n\n'
-                  'Try freeing up storage space and restarting the app. '
-                  'If the problem persists, reinstalling the app will clear '
-                  'the database (your data will be lost unless you have a backup).',
-                  style: TextStyle(color: Color(0xFFAAAAAA), fontSize: 14),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  error,
-                  style: const TextStyle(
-                      color: Color(0xFF666666), fontSize: 11),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
   }
 }
 

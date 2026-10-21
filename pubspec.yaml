@@ -51,6 +51,8 @@ dependencies:
   csv: ^6.0.0
   # Crash reporting
   sentry_flutter: ^9.0.0
+  # Backup import: pick the exported .json file (bytes, so it works on web)
+  file_picker: ^11.0.3
 
 dev_dependencies:
   flutter_test:

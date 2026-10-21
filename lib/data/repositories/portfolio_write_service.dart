@@ -145,6 +145,8 @@ class PortfolioWriteService {
   /// so a crash mid-loop never redoes finished work. Returns the number of
   /// transactions removed.
   Future<int> completeInterruptedWrites() async {
+    await _rollBackInterruptedImport();
+
     if (_settings.get(AppConstants.keyPendingClearAll) == true) {
       final removed = _transactionRepository.totalTransactions;
       await clearAllData();
@@ -294,6 +296,73 @@ class PortfolioWriteService {
     }
   }
 
+  // ───────────────────────────────────────────────────────────────────────
+  // Backup import — all or nothing
+  // ───────────────────────────────────────────────────────────────────────
+
+  /// Write a fully validated backup (see BackupService.parse) as one
+  /// all-or-nothing operation: every record is added, or replaces the
+  /// record with the same id; nothing else is touched.
+  ///
+  /// Before the first write a journal goes into the settings box
+  /// ([AppConstants.keyPendingImport]): the previous value of every id the
+  /// import writes — null for new ids — and the delete tombstones. If any
+  /// write throws, the journal is replayed so both boxes end up exactly as
+  /// they were, and the error is rethrown; if the app dies mid-import,
+  /// [completeInterruptedWrites] replays it at the next launch.
+  ///
+  /// Transactions whose asset is in neither the backup nor the device are
+  /// written like any other — they are the history of holdings deleted
+  /// earlier, which this service never cleans up. Every asset id the import
+  /// touches, through an asset or a transaction, drops its delete tombstone
+  /// (see [removeTombstonesFor]) so the next launch can't delete what was
+  /// just restored; that happens inside the journal, so a rolled-back import
+  /// restores the tombstones.
+  Future<void> importBackup({
+    required List<Asset> assets,
+    required List<Transaction> transactions,
+  }) async {
+    final currentAssets = {
+      for (final a in _assetRepository.getAllAssets()) a.id: a,
+    };
+    final currentTransactions = {
+      for (final t in _transactionRepository.getAllTransactions()) t.id: t,
+    };
+    final journal = <String, dynamic>{
+      'assets': <String, dynamic>{
+        for (final a in assets) a.id: currentAssets[a.id]?.toJson(),
+      },
+      'transactions': <String, dynamic>{
+        for (final t in transactions)
+          t.id: currentTransactions[t.id]?.toJson(),
+      },
+      'pendingDeletes': _pendingDeletes(),
+    };
+    await _settings.put(AppConstants.keyPendingImport, journal);
+
+    try {
+      for (final asset in assets) {
+        await _assetRepository.addAsset(asset);
+      }
+      for (final transaction in transactions) {
+        await _transactionRepository.addTransaction(transaction);
+      }
+      await removeTombstonesFor({
+        for (final a in assets) a.id,
+        for (final t in transactions) t.assetId,
+      });
+      await _settings.delete(AppConstants.keyPendingImport);
+    } catch (_) {
+      try {
+        await _rollBackImport(journal);
+      } catch (e) {
+        debugPrint('[KashU] Import rollback failed — it will be retried on '
+            'the next launch: $e');
+      }
+      rethrow;
+    }
+  }
+
   Asset _requireAsset(String assetId) {
     final asset = _assetRepository.getAssetById(assetId);
     if (asset == null) throw StateError('Asset $assetId no longer exists');
@@ -307,5 +376,50 @@ class PortfolioWriteService {
   static String? _cleanNotes(String? notes) {
     final trimmed = notes?.trim();
     return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+  /// Put back everything a journaled import wrote, then drop the journal.
+  /// Transactions go first, so even a partial rollback leaves no orphans.
+  Future<void> _rollBackImport(Map<dynamic, dynamic> journal) async {
+    final transactions = journal['transactions'];
+    if (transactions is Map) {
+      for (final entry in transactions.entries) {
+        final previous = entry.value;
+        if (previous is Map) {
+          await _transactionRepository.addTransaction(
+              Transaction.fromJson(Map<String, dynamic>.from(previous)));
+        } else {
+          await _transactionRepository.deleteTransaction(entry.key as String);
+        }
+      }
+    }
+    final assets = journal['assets'];
+    if (assets is Map) {
+      for (final entry in assets.entries) {
+        final previous = entry.value;
+        if (previous is Map) {
+          await _assetRepository
+              .addAsset(Asset.fromJson(Map<String, dynamic>.from(previous)));
+        } else {
+          await _assetRepository.deleteAsset(entry.key as String);
+        }
+      }
+    }
+    final pendingDeletes = journal['pendingDeletes'];
+    await _settings.put(
+      AppConstants.keyPendingAssetDeletes,
+      pendingDeletes is List
+          ? pendingDeletes.whereType<String>().toList()
+          : <String>[],
+    );
+    await _settings.delete(AppConstants.keyPendingImport);
+  }
+
+  /// Roll back an import the app died in the middle of.
+  Future<void> _rollBackInterruptedImport() async {
+    final journal = _settings.get(AppConstants.keyPendingImport);
+    if (journal is! Map) return;
+    await _rollBackImport(journal);
+    debugPrint('[KashU] Rolled back an interrupted backup import');
   }
 }
