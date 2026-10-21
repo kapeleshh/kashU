@@ -81,7 +81,9 @@ Layered structure under `lib/`:
 
 ### Persistence — Hive (encrypted)
 
-Five boxes, all opened in `main.dart` `_bootstrap()`: `assets_box`, `transactions_box`, `settings_box`, `price_cache_box`, `price_history_box` (names in `AppConstants`). All boxes are AES-encrypted with a 256-bit key generated once and stored in the platform keychain/keystore via `flutter_secure_storage` (`_loadOrCreateCipher`). If box opening fails (corruption/full disk), the app shows `_DatabaseErrorApp` instead of crashing.
+Five boxes, all opened in `main.dart` `_bootstrap()`: `assets_box`, `transactions_box`, `settings_box`, `price_cache_box`, `price_history_box` (names in `AppConstants`). All boxes are AES-encrypted with a 256-bit key generated once and stored in the platform keychain/keystore via `flutter_secure_storage` (`DatabaseKeyService`, `data/security/`). If the key can't be read, is missing while boxes exist, or fails the key check recorded in the unencrypted `key_check_box`, or a box fails to open (corruption/full disk), the app shows `DatabaseErrorApp` (`features/startup/`) — "Try again", or a confirmed reset that deletes the boxes and key — instead of crashing. **Never open a box with a key that hasn't passed that check**: Hive's crash recovery treats every frame encrypted with another key as corrupt and truncates the file, silently wiping the data.
+
+**Android backup is switched off on purpose.** `AndroidManifest.xml` sets `allowBackup="false"` plus `fullBackupContent` / `dataExtractionRules` (`res/xml/`) excluding all app data from cloud backup and device-to-device transfer: the boxes and the secure-storage prefs would arrive on a new phone without the Keystore key that decrypts them. The JSON export/import is the supported way to move a portfolio.
 
 **On web the storage story is weaker, and it is not guarded by `kIsWeb`.** `Hive.initFlutter()` has no web branch, so each box becomes its own **IndexedDB** database, and `flutter_secure_storage_web` keeps the AES key — plus the WebCrypto key that wraps it — in the same origin's `localStorage`. That is obfuscation at rest, not a keychain. Consequences worth knowing before touching web behaviour: clearing site data destroys the portfolio outright; iOS Safari evicts the storage of a site not visited for 7 days unless it was added to the Home Screen; and the app lock is inert (the Settings toggle is hidden and `AuthResult.notAvailable` simply unlocks). There is no server-side copy of anything, so an export is the only backup a web user has.
 
@@ -130,7 +132,7 @@ After each successful refresh the dashboard (`features/dashboard/dashboard_scree
 
 ### App startup flow
 
-`main()` → `_bootstrap()`: error handlers → Hive init + register adapters → load/create cipher → open boxes (or error screen) → run migrations → finish interrupted cross-box writes → read settings flags → `runApp`. `KashUApp` chooses the home screen by priority: onboarding > lock screen (biometric/PIN auth) > dashboard.
+`main()` → `_startApp()` (re-run in-process by the recovery screen) → `_preBootstrap()` / `_bootstrap()`: error handlers → Hive init + register adapters → load/create and verify the cipher → open boxes (or error screen) → run migrations → finish interrupted cross-box writes → read settings flags → `runApp`. `KashUApp` chooses the home screen by priority: onboarding > lock screen (biometric/PIN auth) > dashboard.
 
 ## Release packaging
 

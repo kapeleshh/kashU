@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 12+ (android:dataExtractionRules). allowBackup="false" no longer
+    stops device-to-device transfer on these versions, so everything app-private
+    is excluded from both cloud backup and device transfer explicitly.
+
+    Why: the portfolio lives in AES-encrypted Hive boxes (app_flutter/*.hive,
+    domain "root") whose key is kept in flutter_secure_storage's
+    EncryptedSharedPreferences (shared_prefs/FlutterSecureStorage.xml, domain
+    "sharedpref"), itself encrypted by an Android Keystore key that never
+    leaves the device. Restored onto another phone, the files arrive but the
+    Keystore key does not, so nothing can be decrypted. There is no server copy
+    by design: the JSON export (Settings > Export / Import Data) is the
+    supported way to move a portfolio.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+    </device-transfer>
+</data-extraction-rules>

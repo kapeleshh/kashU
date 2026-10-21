@@ -9,6 +9,21 @@ class AppConstants {
   static const String priceCacheBox = 'price_cache_box';
   static const String priceHistoryBox = 'price_history_box';
 
+  /// Every AES-encrypted box. DatabaseKeyService uses the list to tell a
+  /// fresh install from data whose key went missing, and its reset deletes
+  /// all of them.
+  static const List<String> encryptedBoxes = [
+    settingsBox,
+    assetsBox,
+    transactionsBox,
+    priceCacheBox,
+    priceHistoryBox,
+  ];
+
+  /// Unencrypted box holding only a check value of the encryption key, so a
+  /// key that doesn't match the data is caught before any box is opened.
+  static const String keyCheckBox = 'key_check_box';
+
   // Settings Keys
   static const String keyBiometricEnabled = 'biometric_enabled';
   static const String keyPinEnabled = 'pin_enabled';
