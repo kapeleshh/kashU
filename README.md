@@ -63,7 +63,7 @@
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Flutter SDK **3.41.6** (the version CI pins — matching it locally avoids analyzer drift)
+- Flutter SDK **3.44.1** (the version CI pins and release builds use — matching it locally avoids analyzer drift)
 - Dart SDK 3.4+
 
 ### Installation
@@ -238,7 +238,7 @@ kashU/
 
 | Layer | Technology |
 |-------|-----------|
-| Framework | Flutter 3.41.6 |
+| Framework | Flutter 3.44.1 |
 | State Management | Riverpod 2.x |
 | Local Database | Hive — offline-first, AES-256 encrypted |
 | Charts | fl_chart |

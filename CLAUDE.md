@@ -23,7 +23,7 @@ CI (`.github/workflows/ci.yml`) runs on push to `main`/`staging`/`p0-improvement
 1. `analyze-and-test` — pub get → build_runner → `flutter analyze --fatal-infos` → `flutter test --coverage`. `--fatal-infos` means even lint infos fail the build.
 2. `build-android` — runs only if the first passes; Java 17 + `flutter build apk --release` (debug-signed until a release keystore is wired in from secrets).
 
-CI pins **Flutter 3.41.6 (stable)** — match this locally to avoid analyzer drift.
+CI pins **Flutter 3.44.1 (stable)**, the same version release builds use — match it locally to avoid analyzer drift.
 
 ### Repo automation (`.claude/`)
 
