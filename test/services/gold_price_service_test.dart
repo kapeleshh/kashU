@@ -215,6 +215,70 @@ void main() {
     });
   });
 
+  // The asset detail screen reprices a stored holding through this. Silver
+  // is a gold-type asset carrying SI=F, so the stored symbol — not the asset
+  // type — must pick the COMEX contract and the duty set.
+  group('GoldPriceService.fetchBreakdownForSymbol', () {
+    const goldUsdPerOz = 2400.0;
+    const silverUsdPerOz = 30.0;
+    const inrPerUsd = 83.5;
+
+    setUp(() {
+      when(() => mockYahoo.fetchPrice(PriceSymbols.goldComex)).thenAnswer(
+          (_) async => _yahooSuccess(PriceSymbols.goldComex, goldUsdPerOz));
+      when(() => mockYahoo.fetchPrice(PriceSymbols.silverComex)).thenAnswer(
+          (_) async =>
+              _yahooSuccess(PriceSymbols.silverComex, silverUsdPerOz));
+      when(() => mockFx.fetchRates())
+          .thenAnswer((_) async => _fxSuccess({'INR': inrPerUsd}));
+    });
+
+    test('prices an SI=F holding against silver, with silver duties',
+        () async {
+      final breakdown =
+          await service.fetchBreakdownForSymbol('SI=F', targetCurrency: 'INR');
+
+      expect(breakdown, isNotNull);
+      expect(breakdown!.usdPerTroyOz, silverUsdPerOz);
+      expect(breakdown.importDutyRate, GoldTaxConfig.silver.importDutyRate);
+      expect(breakdown.aidcRate, GoldTaxConfig.silver.aidcRate);
+      final expected = silverUsdPerOz /
+          CurrencyConverterService.gramsPerTroyOz *
+          inrPerUsd *
+          GoldTaxConfig.silver.totalTaxMultiplier;
+      expect(breakdown.finalPerGram, closeTo(expected, 0.0001));
+      verify(() => mockYahoo.fetchPrice(PriceSymbols.silverComex)).called(1);
+      verifyNever(() => mockYahoo.fetchPrice(PriceSymbols.goldComex));
+    });
+
+    test('matches the silver symbol case-insensitively', () async {
+      final breakdown = await service.fetchBreakdownForSymbol(' si=f ',
+          targetCurrency: 'INR');
+
+      expect(breakdown!.usdPerTroyOz, silverUsdPerOz);
+    });
+
+    test('treats GC=F and a missing symbol as gold', () async {
+      for (final symbol in [PriceSymbols.goldComex, null]) {
+        final breakdown = await service.fetchBreakdownForSymbol(symbol,
+            targetCurrency: 'INR');
+
+        expect(breakdown!.usdPerTroyOz, goldUsdPerOz, reason: '$symbol');
+        expect(breakdown.aidcRate, GoldTaxConfig.india.aidcRate);
+      }
+    });
+
+    test('applies no Indian duty outside INR', () async {
+      final breakdown =
+          await service.fetchBreakdownForSymbol('SI=F', targetCurrency: 'USD');
+
+      expect(breakdown!.totalTaxMultiplier, closeTo(1.0, 1e-9));
+      expect(breakdown.finalPerGram,
+          closeTo(silverUsdPerOz / CurrencyConverterService.gramsPerTroyOz,
+              1e-9));
+    });
+  });
+
   group('GoldTaxConfig', () {
     test('india effective tax ≈ 9.18%', () {
       expect(GoldTaxConfig.india.effectiveTaxPercent, closeTo(9.18, 0.1));

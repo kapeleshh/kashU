@@ -223,6 +223,25 @@ class GoldPriceService implements PriceService {
     );
   }
 
+  /// Fetch the breakdown for a stored metal asset, keyed by its symbol.
+  ///
+  /// Silver is an [AssetType.gold] asset carrying SI=F, so the asset type
+  /// cannot pick the contract: [storedSymbol] is resolved through
+  /// [PriceSymbols.metalSymbolFor] (anything not explicitly silver is gold)
+  /// and priced with that metal's duty set. Use this — not
+  /// [fetchGoldPriceBreakdown] — wherever an existing asset is repriced.
+  Future<GoldPriceBreakdown?> fetchBreakdownForSymbol(
+    String? storedSymbol, {
+    required String targetCurrency,
+  }) {
+    final comexSymbol = PriceSymbols.metalSymbolFor(storedSymbol);
+    return fetchMetalPriceBreakdown(
+      comexSymbol: comexSymbol,
+      targetCurrency: targetCurrency,
+      taxConfig: GoldTaxConfig.forMetal(comexSymbol, targetCurrency),
+    );
+  }
+
   /// Overall cap on a single metal price fetch (COMEX + forex combined).
   static const _fetchTimeout = Duration(seconds: 25);
 

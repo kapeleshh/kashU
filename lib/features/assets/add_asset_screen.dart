@@ -823,8 +823,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
         ),
         const SizedBox(height: 4),
         if (_isFetchingGoldPrice)
-          const _FetchStatusLine(
-            text: 'Fetching live gold price...',
+          _FetchStatusLine(
+            text: 'Fetching live ${_isSilver ? 'silver' : 'gold'} price...',
             state: _FetchState.pending,
           )
         else if (_goldFetchStatus != null)
@@ -837,7 +837,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
             _selectedType != AssetType.mutualFund)
           Text(
             _selectedType == AssetType.gold
-                ? 'Live gold price will be fetched automatically'
+                ? 'Live ${_isSilver ? 'silver' : 'gold'} price will be fetched automatically'
                 : 'Use Yahoo Finance symbol (e.g. RELIANCE.NS for NSE)',
             style: TextStyle(
               fontSize: 11,

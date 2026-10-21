@@ -10,6 +10,7 @@ import '../../data/models/asset.dart';
 import '../../data/models/asset_type.dart';
 import '../../services/currency_converter_service.dart';
 import '../../services/gold_price_service.dart';
+import '../../services/price_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
 import 'add_asset_screen.dart';
 
@@ -686,7 +687,7 @@ class _SoftButton extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Update price (gold live fetch + manual) — restyled, behaviour preserved
+// Update price (metal live fetch + manual) — restyled, behaviour preserved
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _UpdatePriceCard extends ConsumerStatefulWidget {
@@ -718,16 +719,21 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
     super.dispose();
   }
 
-  bool get _isGold => widget.asset.type == AssetType.gold;
+  bool get _isMetal => widget.asset.type == AssetType.gold;
+
+  /// 'Gold' or 'Silver'. Both are [AssetType.gold] assets — only the stored
+  /// symbol tells them apart, so labels must not assume gold.
+  String get _metalName =>
+      PriceSymbols.isComexSilver(widget.asset.symbol) ? 'Silver' : 'Gold';
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Live fetch card for gold assets
-        if (_isGold) ...[
-          _buildGoldLivePriceCard(context),
+        // Live fetch card for metal (gold / silver) assets
+        if (_isMetal) ...[
+          _buildMetalLivePriceCard(context),
           const SizedBox(height: 12),
         ],
 
@@ -767,7 +773,7 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
     );
   }
 
-  Widget _buildGoldLivePriceCard(BuildContext context) {
+  Widget _buildMetalLivePriceCard(BuildContext context) {
     final goldTone = AppColors.goldColor;
     return Container(
       padding: const EdgeInsets.all(16),
@@ -788,7 +794,7 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
               Icon(Icons.auto_awesome, color: goldTone, size: 18),
               const SizedBox(width: 8),
               Text(
-                'Live Gold Price',
+                'Live $_metalName Price',
                 style: AppTheme.body(
                   size: 14,
                   weight: FontWeight.w700,
@@ -862,7 +868,7 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: _isFetchingLivePrice ? null : _fetchLiveGoldPrice,
+              onPressed: _isFetchingLivePrice ? null : _fetchLiveMetalPrice,
               icon: _isFetchingLivePrice
                   ? const SizedBox(
                       width: 16,
@@ -884,7 +890,7 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
     );
   }
 
-  Future<void> _fetchLiveGoldPrice() async {
+  Future<void> _fetchLiveMetalPrice() async {
     setState(() {
       _isFetchingLivePrice = true;
       _fetchError = null;
@@ -895,7 +901,10 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
       final targetCurrency =
           widget.asset.currency.isNotEmpty ? widget.asset.currency : 'INR';
 
-      final breakdown = await goldService.fetchGoldPriceBreakdown(
+      // Resolve the contract from the stored symbol: a silver holding
+      // priced through the gold path would be written ~100x too high.
+      final breakdown = await goldService.fetchBreakdownForSymbol(
+        widget.asset.symbol,
         targetCurrency: targetCurrency,
       );
 
@@ -903,8 +912,9 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
 
       if (breakdown == null) {
         setState(() {
-          _fetchError =
-              'Could not fetch gold price from COMEX (GC=F).\nCheck your internet connection.';
+          _fetchError = 'Could not fetch ${_metalName.toLowerCase()} price '
+              'from COMEX (${PriceSymbols.metalSymbolFor(widget.asset.symbol)}).'
+              '\nCheck your internet connection.';
           _isFetchingLivePrice = false;
         });
         return;
@@ -932,7 +942,7 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Gold price updated to '
+          '$_metalName price updated to '
           '${CurrencyFormatter.formatCurrency(price, widget.asset.currency)}/gram'
           '${widget.asset.currency == 'INR' ? ' (incl. Indian taxes)' : ''}',
         ),
