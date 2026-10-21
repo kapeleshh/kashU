@@ -65,6 +65,14 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
             if (assets.isNotEmpty) ...[
               const SizedBox(height: 6),
               _FilterPills(
+                // Only types the user actually holds: an empty pill is a dead
+                // end, and Bond is hidden from Add Asset but can still arrive
+                // through an imported backup. The selected type stays listed
+                // so it can be cleared after its last asset is deleted.
+                types: AssetType.values
+                    .where((t) =>
+                        t == _selectedFilter || assets.any((a) => a.type == t))
+                    .toList(),
                 selected: _selectedFilter,
                 onSelected: (t) => setState(() => _selectedFilter = t),
               ),
@@ -393,8 +401,13 @@ class _TypeTabBar extends StatelessWidget {
 class _FilterPills extends StatelessWidget {
   final AssetType? selected;
   final ValueChanged<AssetType?> onSelected;
+  final List<AssetType> types;
 
-  const _FilterPills({required this.selected, required this.onSelected});
+  const _FilterPills({
+    required this.types,
+    required this.selected,
+    required this.onSelected,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -408,7 +421,7 @@ class _FilterPills extends StatelessWidget {
             HapticFeedback.selectionClick();
             onSelected(null);
           }),
-          for (final type in AssetType.values) ...[
+          for (final type in types) ...[
             const SizedBox(width: 8),
             _pill(
               context,
