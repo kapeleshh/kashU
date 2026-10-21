@@ -40,6 +40,9 @@ dependencies:
   # Networking (for price tracking)
   http: ^1.2.0
 
+  # Browser download path for exports (see core/utils/file_saver_web.dart)
+  web: ^1.1.1
+
   # Home screen widget (Android AppWidget + iOS WidgetKit bridge)
   home_widget: ^0.6.0
   # Export (CSV + PDF)
@@ -48,6 +51,9 @@ dependencies:
   csv: ^6.0.0
   # Crash reporting
   sentry_flutter: ^9.0.0
+  # Backup import: pick the exported .json file (bytes, so it works on web)
+  file_picker: ^11.0.3
+  url_launcher: ^6.3.3
 
 dev_dependencies:
   flutter_test:

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KashU — Privacy Policy</title>
+<meta name="description" content="How KashU handles your data: it stays on your device.">
+<style>
+  :root {
+    --bg: #F1F0FA; --surface: #FFFFFF; --text: #221F2E; --muted: #6B6680;
+    --accent: #6366F1; --border: #E9E7F4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15131F; --surface: #211E2E; --text: #F3F1FB; --muted: #9A95AD;
+      --accent: #A78BFA; --border: #2C2A3A;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 48px 16px; background: var(--bg); color: var(--text);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 680px; margin: 0 auto; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 22px; padding: 32px 28px;
+  }
+  h1 { font-size: 1.9rem; margin: 0 0 4px; letter-spacing: -0.02em; }
+  h2 { font-size: 1.15rem; margin: 32px 0 8px; letter-spacing: -0.01em; }
+  .updated { color: var(--muted); font-size: 0.9rem; margin: 0 0 8px; }
+  .lede { font-size: 1.05rem; color: var(--text); }
+  ul { padding-left: 20px; }
+  li { margin: 6px 0; }
+  a { color: var(--accent); }
+  code {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 1px 6px; font-size: 0.9em;
+  }
+  footer { color: var(--muted); font-size: 0.875rem; margin-top: 28px; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>Privacy Policy</h1>
+    <p class="updated">KashU · Last updated 21 October 2026</p>
+
+    <p class="lede">
+      KashU does not have user accounts, does not have a server that stores your
+      information, and does not collect, sell or share personal data. Your portfolio
+      stays on your own device.
+    </p>
+
+    <h2>What KashU stores, and where</h2>
+    <ul>
+      <li><strong>On the mobile app:</strong> everything you enter — holdings,
+        transactions, settings — is saved only on your device, in a database
+        encrypted with AES-256. The encryption key is held in the iOS Keychain or
+        Android Keystore.</li>
+      <li><strong>On the web app:</strong> the same data is stored in your browser's
+        local storage (IndexedDB), encrypted with a key kept in that same browser.
+        Clearing your browser's site data permanently erases it.</li>
+      <li>None of this is ever uploaded. There is no copy of your portfolio anywhere
+        but your device.</li>
+      <li><strong>On Android</strong>, KashU's data is also kept out of Google's
+        automatic backups and phone-to-phone transfers: it is encrypted with a key
+        that never leaves the original phone, so a copy could not be read anyway.
+        To move your portfolio, use Settings › Export Data and import the file on
+        the new device.</li>
+    </ul>
+
+    <h2>Network requests</h2>
+    <p>
+      KashU connects to the internet for one purpose: fetching public market prices.
+      These are read-only requests to third-party services:
+    </p>
+    <ul>
+      <li>Yahoo Finance and Stooq — stock, ETF and metals prices</li>
+      <li>CoinGecko and CryptoCompare — cryptocurrency prices</li>
+      <li>MFAPI.in — Indian mutual fund NAVs</li>
+      <li>open.er-api.com — currency exchange rates</li>
+    </ul>
+    <p>
+      To be clear about what this means: when KashU refreshes a price, the symbol
+      being looked up (for example <code>RELIANCE.NS</code>) and your device's IP
+      address are visible to that provider, as with any web request. Those providers
+      have their own privacy policies. KashU sends them nothing else — no identifier,
+      no account, no portfolio quantities or values.
+    </p>
+    <p>
+      On the <strong>web version only</strong>, these requests pass through a proxy we
+      operate at <code>kash-u.vercel.app</code>, because browsers block direct calls to
+      those providers. The proxy forwards the request and the response, and can only
+      reach that fixed list of price services. It never receives your portfolio.
+    </p>
+
+    <h2>Crash reporting</h2>
+    <p>
+      KashU can optionally report crashes to help fix bugs. It is <strong>off by
+      default</strong> and only runs if you turn it on in Settings. Even when enabled,
+      network request details are deliberately stripped before sending, so the symbols
+      you track are not included.
+    </p>
+
+    <h2>What KashU does not do</h2>
+    <ul>
+      <li>No advertising, and no advertising identifiers</li>
+      <li>No analytics or usage tracking</li>
+      <li>No accounts, sign-in, email collection or newsletters</li>
+      <li>No selling or sharing of data, because none is collected</li>
+    </ul>
+
+    <h2>Your data, your control</h2>
+    <p>
+      You can export everything as a JSON file at any time from Settings, import that
+      file on another device, and deleting
+      the app (or clearing site data on web) removes it permanently. Because nothing is
+      stored on a server, there is no deletion request to make — and no way for us to
+      recover your data if you lose it, so keep a backup.
+    </p>
+
+    <h2>Children</h2>
+    <p>KashU is not directed at children under 13 and collects no data from anyone.</p>
+
+    <h2>Changes</h2>
+    <p>
+      If this policy changes, the updated version will be posted on this page with a new
+      date above.
+    </p>
+
+    <h2>Contact</h2>
+    <p>
+      Questions about this policy: <a href="mailto:onelunchdev@gmail.com">onelunchdev@gmail.com</a>
+    </p>
+  </div>
+  <footer>KashU — a privacy-focused, offline-first portfolio tracker.</footer>
+</main>
+</body>
+</html>

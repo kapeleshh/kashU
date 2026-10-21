@@ -1,18 +1,21 @@
 import 'dart:convert';
-import 'dart:io';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
+import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/config/crash_reporting_consent.dart';
 import '../../core/constants/app_strings.dart';
 import '../../core/theme/app_decorations.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/utils/import_validator.dart';
+import '../../core/utils/file_saver.dart';
 import '../../services/auth_service.dart';
+import '../../services/backup_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
 import '../rebalancing/rebalancing_screen.dart';
 import '../export/tax_export_screen.dart';
@@ -26,6 +29,10 @@ class SettingsScreen extends ConsumerStatefulWidget {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _appLockEnabled = false;
+
+  /// True while the app-lock toggle waits on the authentication prompt, so
+  /// a second tap can't stack another prompt or race the first save.
+  bool _appLockBusy = false;
   bool _crashReportingEnabled = false;
 
   @override
@@ -45,29 +52,60 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _toggleAppLock(bool value) async {
-    if (value) {
-      // Verify device supports authentication before enabling
-      final authService = AuthService();
-      final available = await authService.isAvailable();
-      final enrolled = await authService.isEnrolled();
+    if (_appLockBusy) return;
+    setState(() => _appLockBusy = true);
+    try {
+      final result = await ref.read(authServiceProvider).authenticate(
+            reason: value
+                ? 'Confirm to turn on app lock'
+                : 'Confirm to turn off app lock',
+          );
+      if (!mounted) return;
 
-      if (!available || !enrolled) {
-        if (!mounted) return;
+      // Turning the lock on must prove this device can actually unlock it —
+      // saving the flag on faith is how an Android setup that could never
+      // authenticate locked people out of their data. Turning it off needs
+      // proof too (anyone holding the unlocked phone could flip it), except
+      // when the device can't authenticate at all: the lock is inert then,
+      // and refusing would leave the setting stuck on.
+      final allowed = result == AuthResult.success ||
+          (!value && result.deviceCannotAuthenticate);
+      if (!allowed) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'No biometrics or PIN set up on this device. '
-              'Please configure device security in your system Settings first.',
-            ),
-          ),
+          SnackBar(content: Text(_appLockRefusal(result, enabling: value))),
         );
         return;
       }
-    }
 
-    await Hive.box(AppConstants.settingsBox)
-        .put(AppConstants.keyAppLockEnabled, value);
-    if (mounted) setState(() => _appLockEnabled = value);
+      await Hive.box(AppConstants.settingsBox)
+          .put(AppConstants.keyAppLockEnabled, value);
+      if (mounted) setState(() => _appLockEnabled = value);
+    } finally {
+      if (mounted) setState(() => _appLockBusy = false);
+    }
+  }
+
+  /// Why the app-lock switch did not move, for a non-success [result].
+  String _appLockRefusal(AuthResult result, {required bool enabling}) {
+    switch (result) {
+      case AuthResult.notAvailable:
+      case AuthResult.notEnrolled:
+        return 'No screen lock is set up on this device. Add a PIN, pattern, '
+            'password or fingerprint in your device Settings first.';
+      case AuthResult.lockedOut:
+        return AppStrings.authLockedOut;
+      case AuthResult.permanentlyLockedOut:
+        return AppStrings.authPermanentlyLockedOut;
+      case AuthResult.error:
+        return 'This device could not run authentication, so app lock '
+            'was not turned on.';
+      case AuthResult.success:
+      case AuthResult.failure:
+      case AuthResult.cancelled:
+        return enabling
+            ? 'App lock was not turned on — authentication was not completed.'
+            : 'App lock is still on — authentication was not completed.';
+    }
   }
 
   @override
@@ -94,31 +132,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ref.invalidate(portfolioSummaryProvider);
               },
             ),
-            SwitchListTile(
-              secondary: _tileIcon(Icons.lock_outline),
-              title: Text(
-                'Require Authentication',
-                style: AppTheme.body(
-                  size: 15,
-                  weight: FontWeight.w700,
-                  color: Theme.of(context).colorScheme.onSurface,
+            // Browsers expose no biometric/PIN API to local_auth, so the
+            // lock can never actually engage on web — don't offer it.
+            if (!kIsWeb)
+              SwitchListTile(
+                secondary: _tileIcon(Icons.lock_outline),
+                title: Text(
+                  'Require Authentication',
+                  style: AppTheme.body(
+                    size: 15,
+                    weight: FontWeight.w700,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
                 ),
-              ),
-              subtitle: Text(
-                'Use biometrics or device PIN to unlock the app',
-                style: AppTheme.body(
-                  size: 12.5,
-                  weight: FontWeight.w500,
-                  color: AppColors.textTertiaryOn(context),
+                subtitle: Text(
+                  'Use biometrics or device PIN to unlock the app',
+                  style: AppTheme.body(
+                    size: 12.5,
+                    weight: FontWeight.w500,
+                    color: AppColors.textTertiaryOn(context),
+                  ),
                 ),
+                value: _appLockEnabled,
+                activeThumbColor: AppColors.primary,
+                activeTrackColor: AppColors.primary.withValues(alpha: 0.4),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                onChanged: _appLockBusy ? null : _toggleAppLock,
               ),
-              value: _appLockEnabled,
-              activeThumbColor: AppColors.primary,
-              activeTrackColor: AppColors.primary.withValues(alpha: 0.4),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              onChanged: _toggleAppLock,
-            ),
             SwitchListTile(
               secondary: _tileIcon(Icons.bug_report_outlined),
               title: Text(
@@ -190,8 +231,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             _SettingsTile(
               icon: Icons.download_outlined,
               title: AppStrings.importData,
-              subtitle: 'Import portfolio data from JSON',
-              onTap: () => _showImportDialog(context, ref),
+              subtitle: 'Restore from a KashU backup file',
+              onTap: _importData,
             ),
             _SettingsTile(
               icon: Icons.delete_outline,
@@ -200,6 +241,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               iconColor: AppColors.lossOn(context),
               destructive: true,
               onTap: () => _showClearDataDialog(context, ref),
+            ),
+          ]),
+
+          const SizedBox(height: 22),
+
+          // About Section
+          _buildSectionHeader(context, 'About'),
+          const SizedBox(height: 11),
+          _buildSettingsCard([
+            _SettingsTile(
+              icon: Icons.privacy_tip_outlined,
+              title: 'Privacy Policy',
+              subtitle: 'What KashU stores, and what it never collects',
+              onTap: () => _openOrCopy(
+                Uri.parse(AppConstants.privacyPolicyUrl),
+                AppConstants.privacyPolicyUrl,
+              ),
+            ),
+            _SettingsTile(
+              icon: Icons.mail_outline,
+              title: 'Contact',
+              subtitle: AppConstants.contactEmail,
+              onTap: () => _openOrCopy(
+                Uri(
+                  scheme: 'mailto',
+                  path: AppConstants.contactEmail,
+                  query: 'subject=KashU',
+                ),
+                AppConstants.contactEmail,
+              ),
             ),
           ]),
 
@@ -328,21 +399,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       final assetRepo = ref.read(assetRepositoryProvider);
       final txRepo = ref.read(transactionRepositoryProvider);
 
-      final exportData = {
-        'schemaVersion': ImportValidator.currentSchemaVersion,
-        'exportedAt': DateTime.now().toIso8601String(),
-        'assets': assetRepo.exportToJson(),
-        'transactions': txRepo.exportToJson(),
-      };
-
-      final jsonString = const JsonEncoder.withIndent('  ').convert(exportData);
-      final directory = await getApplicationDocumentsDirectory();
-      final file = File(
-          '${directory.path}/kashu_backup_${DateTime.now().millisecondsSinceEpoch}.json');
-      await file.writeAsString(jsonString);
-
-      await Share.shareXFiles(
-        [XFile(file.path)],
+      final jsonString = BackupService.encode(BackupService.buildEnvelope(
+        assets: assetRepo.exportToJson(),
+        transactions: txRepo.exportToJson(),
+      ));
+      await saveAndShare(
+        bytes: Uint8List.fromList(utf8.encode(jsonString)),
+        filename:
+            'kashu_backup_${DateTime.now().millisecondsSinceEpoch}.json',
+        mimeType: 'application/json',
         subject: 'KashU Portfolio Backup',
       );
 
@@ -367,141 +432,166 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  void _showImportDialog(BuildContext context, WidgetRef ref) {
-    final textController = TextEditingController();
+  /// Open [uri] in the browser or mail app. Where nothing can handle it (no
+  /// mail app set up, a locked-down browser), copy [fallback] instead so the
+  /// tap is never a dead end.
+  Future<void> _openOrCopy(Uri uri, String fallback) async {
+    var opened = false;
+    try {
+      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      debugPrint('[KashU] Could not open $uri: $e');
+    }
+    if (opened || !mounted) return;
+    await Clipboard.setData(ClipboardData(text: fallback));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Copied $fallback')),
+    );
+  }
 
-    showDialog(
+  /// Import Data: read a backup (the exported file, or pasted text), check
+  /// all of it, show what it will change, and only then write it — as one
+  /// all-or-nothing import, so a bad file never leaves half its data behind.
+  Future<void> _importData() async {
+    // Captured up front: the writes and refreshes below must happen even if
+    // this screen is gone by the time the user has confirmed.
+    final container = ProviderScope.containerOf(context, listen: false);
+
+    final source = await showModalBottomSheet<_ImportSource>(
+      context: context,
+      builder: (context) => const _ImportSourceSheet(),
+    );
+    if (source == null || !mounted) return;
+
+    final existingAssetIds = container
+        .read(assetRepositoryProvider)
+        .getAllAssets()
+        .map((a) => a.id)
+        .toSet();
+
+    final ParsedBackup backup;
+    try {
+      final parsed = source == _ImportSource.file
+          ? await _readBackupFile(existingAssetIds)
+          : await _readPastedBackup(existingAssetIds);
+      if (parsed == null) return; // picker or dialog dismissed
+      backup = parsed;
+    } on FormatException catch (e) {
+      _showImportError('${e.message} Nothing was imported.');
+      return;
+    } catch (e) {
+      debugPrint('[KashU] Reading the backup failed: $e');
+      _showImportError("Couldn't read that file. Nothing was imported.");
+      return;
+    }
+    if (!mounted) return;
+
+    final confirmed = await _confirmImport(backup, existingAssetIds);
+    if (confirmed != true) return;
+
+    try {
+      await container.read(portfolioWriteServiceProvider).importBackup(
+            assets: backup.assets,
+            transactions: backup.transactions,
+          );
+    } catch (e) {
+      debugPrint('[KashU] Import write failed: $e');
+      _showImportError('Saving the backup failed, so nothing was changed. '
+          'Check that the device has free storage, then try again.');
+      return;
+    } finally {
+      // Providers don't observe Hive — refresh even after a rollback.
+      container.invalidate(allAssetsProvider);
+      container.invalidate(portfolioSummaryProvider);
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Imported ${_count(backup.assets.length, 'asset')} and '
+          '${_count(backup.transactions.length, 'transaction')}.'),
+    ));
+  }
+
+  Future<ParsedBackup?> _readBackupFile(Set<String> existingAssetIds) async {
+    // Bytes, never a path: web has no file paths, and on Android the picked
+    // document may be a content URI. Any file type rather than a .json
+    // filter, because file providers often label a downloaded or shared
+    // .json as text/plain and a filter would grey the backup out — the
+    // content is validated in full anyway.
+    final result = await FilePicker.pickFiles(
+      dialogTitle: 'Choose a KashU backup',
+      type: FileType.any,
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return null;
+    final bytes = result.files.single.bytes;
+    if (bytes == null) {
+      throw const FormatException("Couldn't read that file.");
+    }
+    return BackupService.parseBytes(bytes, existingAssetIds: existingAssetIds);
+  }
+
+  Future<ParsedBackup?> _readPastedBackup(Set<String> existingAssetIds) async {
+    final text = await showDialog<String>(
+      context: context,
+      builder: (context) => const _PasteBackupDialog(),
+    );
+    if (text == null || text.trim().isEmpty) return null;
+    return BackupService.parse(text, existingAssetIds: existingAssetIds);
+  }
+
+  Future<bool?> _confirmImport(
+      ParsedBackup backup, Set<String> existingAssetIds) {
+    final replaced =
+        backup.assets.where((a) => existingAssetIds.contains(a.id)).length;
+    final exportedAt = backup.exportedAt;
+    final summary = [
+      if (exportedAt != null)
+        'Backup from ${DateFormat.yMMMd().add_jm().format(exportedAt.toLocal())}.',
+      '${_count(backup.assets.length, 'asset')} and '
+          '${_count(backup.transactions.length, 'transaction')} will be '
+          'added or updated.',
+      if (replaced > 0)
+        '${_count(replaced, 'asset')} already in KashU will be replaced by '
+            "the backup's version.",
+      if (backup.historyOnlyTransactions == 1)
+        '1 transaction belongs to a holding that was deleted earlier; it is '
+            'kept as history.'
+      else if (backup.historyOnlyTransactions > 1)
+        '${backup.historyOnlyTransactions} transactions belong to holdings '
+            'that were deleted earlier; they are kept as history.',
+      'Nothing else is changed or deleted.',
+    ].join('\n\n');
+
+    return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text(AppStrings.importData),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Paste your KashU backup JSON below:',
-              style: AppTheme.body(
-                size: 13,
-                weight: FontWeight.w500,
-                color: AppColors.textSecondaryOn(context),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: textController,
-              maxLines: 6,
-              decoration: const InputDecoration(
-                // Must match the real export envelope (ImportValidator
-                // rejects a bare "version" key).
-                hintText:
-                    '{ "schemaVersion": ${AppConstants.backupFormatVersion}, "assets": [...] }',
-                border: OutlineInputBorder(),
-              ),
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-            ),
-          ],
-        ),
+        title: const Text('Import this backup?'),
+        content: Text(summary),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(context, false),
             child: const Text(AppStrings.cancel),
           ),
           ElevatedButton(
-            onPressed: () async {
-              final json = textController.text.trim();
-              if (json.isEmpty) return;
-
-              try {
-                final decoded = jsonDecode(json);
-                if (decoded is! Map<String, dynamic>) {
-                  throw const FormatException(
-                      'Top-level JSON must be an object.');
-                }
-                final data = decoded;
-
-                // Schema validation before touching the database
-                final envelopeErr =
-                    ImportValidator.validateEnvelope(data);
-                if (envelopeErr != null) throw FormatException(envelopeErr);
-
-                final rawAssets =
-                    data['assets'] != null ? data['assets'] as List : [];
-                final rawTx = data['transactions'] != null
-                    ? data['transactions'] as List
-                    : [];
-
-                final assetErr =
-                    ImportValidator.validateAssets(rawAssets);
-                if (assetErr != null) throw FormatException(assetErr);
-
-                final txErr =
-                    ImportValidator.validateTransactions(rawTx);
-                if (txErr != null) throw FormatException(txErr);
-
-                // All validated — write to database
-                final assetRepo = ref.read(assetRepositoryProvider);
-                final txRepo = ref.read(transactionRepositoryProvider);
-
-                if (rawAssets.isNotEmpty) {
-                  await assetRepo.importFromJson(
-                    rawAssets.cast<Map<String, dynamic>>(),
-                  );
-                  // A restored asset id must invalidate any pending-delete
-                  // tombstone for it — the import expresses the opposite
-                  // intent, and a stale tombstone would silently delete the
-                  // freshly imported asset at the next launch.
-                  await ref.read(portfolioWriteServiceProvider)
-                      .removeTombstonesFor(rawAssets
-                          .cast<Map<String, dynamic>>()
-                          .map((a) => a['id'])
-                          .whereType<String>());
-                }
-                if (rawTx.isNotEmpty) {
-                  await txRepo.importFromJson(
-                    rawTx.cast<Map<String, dynamic>>(),
-                  );
-                }
-
-                ref.invalidate(allAssetsProvider);
-                ref.invalidate(portfolioSummaryProvider);
-
-                if (context.mounted) {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        'Imported ${rawAssets.length} assets and '
-                        '${rawTx.length} transactions.',
-                      ),
-                    ),
-                  );
-                }
-              } on FormatException catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Import failed: ${e.message}'),
-                      backgroundColor: AppColors.error,
-                    ),
-                  );
-                }
-              } catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Import failed: $e'),
-                      backgroundColor: AppColors.error,
-                    ),
-                  );
-                }
-              }
-            },
+            onPressed: () => Navigator.pop(context, true),
             child: const Text('Import'),
           ),
         ],
       ),
     );
   }
+
+  void _showImportError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message),
+      backgroundColor: AppColors.lossOn(context),
+    ));
+  }
+
+  static String _count(int n, String noun) => '$n $noun${n == 1 ? '' : 's'}';
 
   void _showClearDataDialog(BuildContext context, WidgetRef ref) {
     showDialog(
@@ -732,6 +822,152 @@ class _SettingsTile extends StatelessWidget {
         color: AppColors.textTertiaryOn(context),
       ),
       onTap: onTap,
+    );
+  }
+}
+
+enum _ImportSource { file, paste }
+
+/// Where to import from: the exported backup file (primary), or its text
+/// pasted in (a fallback when the file can't be reached from this device).
+class _ImportSourceSheet extends StatelessWidget {
+  const _ImportSourceSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    Widget option({
+      required IconData icon,
+      required String title,
+      required String subtitle,
+      required _ImportSource source,
+    }) {
+      return ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+        leading: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: AppColors.primary.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(AppRadii.avatar),
+          ),
+          child: Icon(icon, color: AppColors.primary, size: 20),
+        ),
+        title: Text(
+          title,
+          style: AppTheme.body(
+            size: 15,
+            weight: FontWeight.w700,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
+        ),
+        subtitle: Text(
+          subtitle,
+          style: AppTheme.body(
+            size: 12.5,
+            weight: FontWeight.w500,
+            color: AppColors.textTertiaryOn(context),
+          ),
+        ),
+        onTap: () => Navigator.pop(context, source),
+      );
+    }
+
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 14),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: AppColors.textTertiaryOn(context).withValues(alpha: 0.4),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            AppStrings.importData,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 8),
+          option(
+            icon: Icons.file_open_outlined,
+            title: 'Choose backup file',
+            subtitle: 'The .json file saved by Export Data',
+            source: _ImportSource.file,
+          ),
+          option(
+            icon: Icons.content_paste,
+            title: 'Paste backup text',
+            subtitle: "If you can't reach the file from this device",
+            source: _ImportSource.paste,
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+}
+
+/// Collects pasted backup JSON; pops with the text, or null on cancel.
+class _PasteBackupDialog extends StatefulWidget {
+  const _PasteBackupDialog();
+
+  @override
+  State<_PasteBackupDialog> createState() => _PasteBackupDialogState();
+}
+
+class _PasteBackupDialogState extends State<_PasteBackupDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Paste backup text'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Paste the full contents of your KashU backup file:',
+            style: AppTheme.body(
+              size: 13,
+              weight: FontWeight.w500,
+              color: AppColors.textSecondaryOn(context),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _controller,
+            maxLines: 6,
+            decoration: const InputDecoration(
+              // Must match the real export envelope (ImportValidator
+              // rejects a bare "version" key).
+              hintText:
+                  '{ "schemaVersion": ${AppConstants.backupFormatVersion}, "assets": [...] }',
+              border: OutlineInputBorder(),
+            ),
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text(AppStrings.cancel),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(context, _controller.text),
+          child: const Text('Continue'),
+        ),
+      ],
     );
   }
 }

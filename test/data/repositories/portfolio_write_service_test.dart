@@ -355,4 +355,234 @@ void main() {
       expect(settings.get(AppConstants.keyPendingClearAll), isFalse);
     });
   });
+
+  group('recordSell', () {
+    late AssetRepository assetRepo;
+    late TransactionRepository txRepo;
+    late PortfolioWriteService service;
+
+    /// 10 units bought at 100 on 15 Jan 2024.
+    Asset holding({double quantity = 10}) =>
+        makeAsset(id: 'a1').copyWith(quantity: quantity, currency: 'USD');
+
+    setUp(() async {
+      assetRepo = AssetRepository();
+      txRepo = TransactionRepository();
+      service = PortfolioWriteService(
+        assetRepository: assetRepo,
+        transactionRepository: txRepo,
+        settingsBox: settings,
+      );
+      await assetRepo.addAsset(holding());
+    });
+
+    test('stores the SELL and lowers the quantity; average cost unchanged',
+        () async {
+      final sell = await service.recordSell(
+        assetId: 'a1',
+        quantity: 4,
+        pricePerUnit: 130,
+        date: DateTime(2024, 6, 1),
+        notes: '  partial exit  ',
+      );
+
+      final stored = txRepo.getAllTransactions().single;
+      expect(stored.id, sell.id);
+      expect(stored.type, TransactionType.sell);
+      expect(stored.quantity, 4);
+      expect(stored.price, 130);
+      expect(stored.amount, 520); // proceeds = 4 x 130
+      expect(stored.currency, 'USD'); // the holding's currency
+      expect(stored.date, DateTime(2024, 6, 1));
+      expect(stored.notes, 'partial exit');
+
+      final asset = assetRepo.getAssetById('a1')!;
+      expect(asset.quantity, 6);
+      expect(asset.purchasePrice, 100);
+    });
+
+    test('selling everything keeps the asset at quantity 0', () async {
+      // A rounding remainder must not survive as dust.
+      await assetRepo.addAsset(holding(quantity: 0.1 + 0.2));
+
+      await service.recordSell(
+        assetId: 'a1',
+        quantity: 0.3,
+        pricePerUnit: 130,
+        date: DateTime(2024, 6, 1),
+      );
+
+      final asset = assetRepo.getAssetById('a1');
+      expect(asset, isNotNull, reason: 'cost basis must stay available');
+      expect(asset!.quantity, 0);
+    });
+
+    test('rejects an over-sell and writes nothing', () async {
+      await expectLater(
+        () => service.recordSell(
+          assetId: 'a1',
+          quantity: 10.5,
+          pricePerUnit: 130,
+          date: DateTime(2024, 6, 1),
+        ),
+        throwsA(isA<ArgumentError>()
+            .having((e) => e.message, 'message', contains('You hold 10'))),
+      );
+
+      expect(txRepo.getAllTransactions(), isEmpty);
+      expect(assetRepo.getAssetById('a1')!.quantity, 10);
+    });
+
+    test('rejects non-finite or non-positive input and impossible dates',
+        () async {
+      Future<void> expectRejected(
+              {double quantity = 1,
+              double price = 130,
+              DateTime? date}) =>
+          expectLater(
+            () => service.recordSell(
+              assetId: 'a1',
+              quantity: quantity,
+              pricePerUnit: price,
+              date: date ?? DateTime(2024, 6, 1),
+            ),
+            throwsA(isA<ArgumentError>()),
+          );
+
+      await expectRejected(quantity: 0);
+      await expectRejected(quantity: double.nan);
+      await expectRejected(price: -5);
+      await expectRejected(price: double.infinity);
+      await expectRejected(date: DateTime(2023, 12, 31)); // before purchase
+      await expectRejected(
+          date: DateTime.now().add(const Duration(days: 2))); // future
+      expect(txRepo.getAllTransactions(), isEmpty);
+    });
+
+    test('rolls the SELL back when lowering the quantity fails', () async {
+      final mockAssets = MockAssetRepository();
+      final mockTx = MockTransactionRepository();
+      registerFallbackValue(makeTransaction(assetId: 'a1'));
+      when(() => mockAssets.getAssetById('a1')).thenReturn(holding());
+      when(() => mockTx.addTransaction(any())).thenAnswer((_) async {});
+      when(() => mockAssets.updateAsset(any()))
+          .thenThrow(HiveError('disk full'));
+      when(() => mockTx.deleteTransaction(any())).thenAnswer((_) async {});
+
+      final failing = PortfolioWriteService(
+        assetRepository: mockAssets,
+        transactionRepository: mockTx,
+        settingsBox: settings,
+      );
+
+      await expectLater(
+        () => failing.recordSell(
+          assetId: 'a1',
+          quantity: 4,
+          pricePerUnit: 130,
+          date: DateTime(2024, 6, 1),
+        ),
+        throwsA(isA<HiveError>()),
+      );
+
+      final added = verify(() => mockTx.addTransaction(captureAny()))
+          .captured
+          .single as Transaction;
+      verify(() => mockTx.deleteTransaction(added.id)).called(1);
+    });
+
+    test('refuses an asset that no longer exists', () async {
+      await expectLater(
+        () => service.recordSell(
+          assetId: 'gone',
+          quantity: 1,
+          pricePerUnit: 1,
+          date: DateTime(2024, 6, 1),
+        ),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test('deleting the SELL gives the units back', () async {
+      final sell = await service.recordSell(
+        assetId: 'a1',
+        quantity: 4,
+        pricePerUnit: 130,
+        date: DateTime(2024, 6, 1),
+      );
+
+      await service.deleteTransaction(txRepo.getAllTransactions().single);
+
+      expect(txRepo.getAllTransactions().where((t) => t.id == sell.id),
+          isEmpty);
+      expect(assetRepo.getAssetById('a1')!.quantity, 10);
+    });
+  });
+
+  group('recordIncome', () {
+    late AssetRepository assetRepo;
+    late TransactionRepository txRepo;
+    late PortfolioWriteService service;
+
+    setUp(() async {
+      assetRepo = AssetRepository();
+      txRepo = TransactionRepository();
+      service = PortfolioWriteService(
+        assetRepository: assetRepo,
+        transactionRepository: txRepo,
+        settingsBox: settings,
+      );
+      await assetRepo.addAsset(makeAsset(id: 'a1'));
+    });
+
+    test('stores a dividend without touching the holding', () async {
+      await service.recordIncome(
+        assetId: 'a1',
+        type: TransactionType.dividend,
+        amount: 42.5,
+        date: DateTime(2024, 3, 1),
+      );
+
+      final stored = txRepo.getAllTransactions().single;
+      expect(stored.type, TransactionType.dividend);
+      expect(stored.amount, 42.5);
+      expect(stored.quantity, 0);
+      expect(stored.currency, 'INR');
+      expect(assetRepo.getAssetById('a1')!.quantity, 1);
+    });
+
+    test('only dividend or interest, with a positive amount', () async {
+      await expectLater(
+        () => service.recordIncome(
+            assetId: 'a1',
+            type: TransactionType.sell,
+            amount: 10,
+            date: DateTime(2024, 3, 1)),
+        throwsA(isA<ArgumentError>()),
+      );
+      await expectLater(
+        () => service.recordIncome(
+            assetId: 'a1',
+            type: TransactionType.interest,
+            amount: 0,
+            date: DateTime(2024, 3, 1)),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(txRepo.getAllTransactions(), isEmpty);
+    });
+
+    test('deleting income only removes the record', () async {
+      await service.recordIncome(
+        assetId: 'a1',
+        type: TransactionType.interest,
+        amount: 12,
+        date: DateTime(2024, 3, 1),
+      );
+
+      await service.deleteTransaction(txRepo.getAllTransactions().single);
+
+      expect(txRepo.getAllTransactions(), isEmpty);
+      expect(assetRepo.getAssetById('a1')!.quantity, 1);
+    });
+  });
 }

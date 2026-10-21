@@ -82,6 +82,20 @@ class PriceSymbols {
     return symbol == goldComex;
   }
 
+  /// Returns true if [symbol] is the COMEX silver futures symbol.
+  ///
+  /// Silver has no [AssetType] of its own — it is stored as an
+  /// [AssetType.gold] asset carrying [silverComex]. Every metal code path
+  /// therefore has to branch on the stored symbol, not on the asset type.
+  static bool isComexSilver(String? symbol) =>
+      symbol?.trim().toUpperCase() == silverComex;
+
+  /// The COMEX contract a metal asset should be priced against. Anything in
+  /// the gold bucket that is not explicitly silver is gold — including an
+  /// asset with no symbol at all, which is what [defaultSymbol] hands out.
+  static String metalSymbolFor(String? symbol) =>
+      isComexSilver(symbol) ? silverComex : goldComex;
+
   /// Returns the default symbol for auto-tracking (if none entered by user)
   static String? defaultSymbol(AssetType type, {String baseCurrency = 'INR'}) {
     switch (type) {

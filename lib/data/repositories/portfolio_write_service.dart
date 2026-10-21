@@ -1,8 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../core/constants/app_constants.dart';
+import '../../core/utils/transaction_validator.dart';
 import '../models/asset.dart';
+import '../models/transaction.dart';
+import '../models/transaction_type.dart';
 import 'asset_repository.dart';
 import 'transaction_repository.dart';
 
@@ -141,6 +145,8 @@ class PortfolioWriteService {
   /// so a crash mid-loop never redoes finished work. Returns the number of
   /// transactions removed.
   Future<int> completeInterruptedWrites() async {
+    await _rollBackInterruptedImport();
+
     if (_settings.get(AppConstants.keyPendingClearAll) == true) {
       final removed = _transactionRepository.totalTransactions;
       await clearAllData();
@@ -168,5 +174,252 @@ class PortfolioWriteService {
     debugPrint('[KashU] Completed ${pending.length} interrupted delete(s), '
         'removed $removed transaction(s)');
     return removed;
+  }
+
+  // ─── Recording sells and income ───────────────────────────────────────────
+
+  /// Record selling [quantity] units of [assetId] at [pricePerUnit] on
+  /// [date], and lower the holding by [quantity] as one logical write.
+  ///
+  /// The SELL carries what ExportService's capital-gains rows read: the
+  /// quantity, the per-unit price, the proceeds (quantity x price) in the
+  /// holding's currency, and the trade date. The holding's average cost
+  /// (purchasePrice) is left unchanged — it is the cost basis of the units
+  /// still held as much as of the ones sold.
+  ///
+  /// Selling everything leaves the asset with quantity 0. It is kept, not
+  /// deleted: the capital-gains report looks the sell's cost basis and
+  /// purchase date up on the asset, and a deleted asset would drop the gain.
+  ///
+  /// The transaction is written first and removed again if lowering the
+  /// quantity throws (compensation), so a failed sale leaves neither half.
+  /// Throws [ArgumentError] for input the form would reject (see
+  /// [TransactionValidator]) and [StateError] if the asset no longer exists.
+  Future<Transaction> recordSell({
+    required String assetId,
+    required double quantity,
+    required double pricePerUnit,
+    required DateTime date,
+    String? notes,
+  }) async {
+    final asset = _requireAsset(assetId);
+    _check(TransactionValidator.sellQuantity(quantity, asset.quantity));
+    _check(TransactionValidator.positive(pricePerUnit));
+    _check(TransactionValidator.date(date, purchaseDate: asset.purchaseDate));
+
+    final now = DateTime.now();
+    final sell = Transaction(
+      id: const Uuid().v4(),
+      assetId: asset.id,
+      type: TransactionType.sell,
+      quantity: quantity,
+      price: pricePerUnit,
+      amount: quantity * pricePerUnit,
+      currency: asset.currency,
+      date: date,
+      notes: _cleanNotes(notes),
+      createdAt: now,
+    );
+
+    await _transactionRepository.addTransaction(sell);
+    try {
+      await _assetRepository.updateAsset(asset.copyWith(
+        quantity:
+            TransactionValidator.remainingAfterSell(asset.quantity, quantity),
+        updatedAt: now,
+      ));
+    } catch (_) {
+      await _transactionRepository.deleteTransaction(sell.id);
+      rethrow;
+    }
+    return sell;
+  }
+
+  /// Record a dividend or interest payment of [amount], in the holding's
+  /// currency, received on [date]. Only the transactions box is written:
+  /// income does not change the holding.
+  ///
+  /// Throws [ArgumentError] for any other [type] or invalid input, and
+  /// [StateError] if the asset no longer exists.
+  Future<Transaction> recordIncome({
+    required String assetId,
+    required TransactionType type,
+    required double amount,
+    required DateTime date,
+    String? notes,
+  }) async {
+    if (type != TransactionType.dividend && type != TransactionType.interest) {
+      throw ArgumentError.value(type, 'type', 'Must be dividend or interest');
+    }
+    final asset = _requireAsset(assetId);
+    _check(TransactionValidator.positive(amount));
+    _check(TransactionValidator.date(date, purchaseDate: asset.purchaseDate));
+
+    final income = Transaction(
+      id: const Uuid().v4(),
+      assetId: asset.id,
+      type: type,
+      quantity: 0,
+      price: 0,
+      amount: amount,
+      currency: asset.currency,
+      date: date,
+      notes: _cleanNotes(notes),
+      createdAt: DateTime.now(),
+    );
+    await _transactionRepository.addTransaction(income);
+    return income;
+  }
+
+  /// Delete [transaction]. Deleting a SELL also returns its units to the
+  /// holding (when the asset still exists), so undoing a mistaken sale
+  /// restores the quantity it took away. Other types only remove the record.
+  ///
+  /// Compensated like [recordSell]: if restoring the quantity throws, the
+  /// transaction is put back and the error rethrown.
+  Future<void> deleteTransaction(Transaction transaction) async {
+    final asset = transaction.type == TransactionType.sell
+        ? _assetRepository.getAssetById(transaction.assetId)
+        : null;
+
+    await _transactionRepository.deleteTransaction(transaction.id);
+    if (asset == null) return;
+    try {
+      await _assetRepository.updateAsset(asset.copyWith(
+        quantity: asset.quantity + transaction.quantity,
+        updatedAt: DateTime.now(),
+      ));
+    } catch (_) {
+      // A fresh copy: the deleted HiveObject is detached from its box.
+      await _transactionRepository.addTransaction(transaction.copyWith());
+      rethrow;
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Backup import — all or nothing
+  // ───────────────────────────────────────────────────────────────────────
+
+  /// Write a fully validated backup (see BackupService.parse) as one
+  /// all-or-nothing operation: every record is added, or replaces the
+  /// record with the same id; nothing else is touched.
+  ///
+  /// Before the first write a journal goes into the settings box
+  /// ([AppConstants.keyPendingImport]): the previous value of every id the
+  /// import writes — null for new ids — and the delete tombstones. If any
+  /// write throws, the journal is replayed so both boxes end up exactly as
+  /// they were, and the error is rethrown; if the app dies mid-import,
+  /// [completeInterruptedWrites] replays it at the next launch.
+  ///
+  /// Transactions whose asset is in neither the backup nor the device are
+  /// written like any other — they are the history of holdings deleted
+  /// earlier, which this service never cleans up. Every asset id the import
+  /// touches, through an asset or a transaction, drops its delete tombstone
+  /// (see [removeTombstonesFor]) so the next launch can't delete what was
+  /// just restored; that happens inside the journal, so a rolled-back import
+  /// restores the tombstones.
+  Future<void> importBackup({
+    required List<Asset> assets,
+    required List<Transaction> transactions,
+  }) async {
+    final currentAssets = {
+      for (final a in _assetRepository.getAllAssets()) a.id: a,
+    };
+    final currentTransactions = {
+      for (final t in _transactionRepository.getAllTransactions()) t.id: t,
+    };
+    final journal = <String, dynamic>{
+      'assets': <String, dynamic>{
+        for (final a in assets) a.id: currentAssets[a.id]?.toJson(),
+      },
+      'transactions': <String, dynamic>{
+        for (final t in transactions)
+          t.id: currentTransactions[t.id]?.toJson(),
+      },
+      'pendingDeletes': _pendingDeletes(),
+    };
+    await _settings.put(AppConstants.keyPendingImport, journal);
+
+    try {
+      for (final asset in assets) {
+        await _assetRepository.addAsset(asset);
+      }
+      for (final transaction in transactions) {
+        await _transactionRepository.addTransaction(transaction);
+      }
+      await removeTombstonesFor({
+        for (final a in assets) a.id,
+        for (final t in transactions) t.assetId,
+      });
+      await _settings.delete(AppConstants.keyPendingImport);
+    } catch (_) {
+      try {
+        await _rollBackImport(journal);
+      } catch (e) {
+        debugPrint('[KashU] Import rollback failed — it will be retried on '
+            'the next launch: $e');
+      }
+      rethrow;
+    }
+  }
+
+  Asset _requireAsset(String assetId) {
+    final asset = _assetRepository.getAssetById(assetId);
+    if (asset == null) throw StateError('Asset $assetId no longer exists');
+    return asset;
+  }
+
+  static void _check(String? error) {
+    if (error != null) throw ArgumentError(error);
+  }
+
+  static String? _cleanNotes(String? notes) {
+    final trimmed = notes?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+  /// Put back everything a journaled import wrote, then drop the journal.
+  /// Transactions go first, so even a partial rollback leaves no orphans.
+  Future<void> _rollBackImport(Map<dynamic, dynamic> journal) async {
+    final transactions = journal['transactions'];
+    if (transactions is Map) {
+      for (final entry in transactions.entries) {
+        final previous = entry.value;
+        if (previous is Map) {
+          await _transactionRepository.addTransaction(
+              Transaction.fromJson(Map<String, dynamic>.from(previous)));
+        } else {
+          await _transactionRepository.deleteTransaction(entry.key as String);
+        }
+      }
+    }
+    final assets = journal['assets'];
+    if (assets is Map) {
+      for (final entry in assets.entries) {
+        final previous = entry.value;
+        if (previous is Map) {
+          await _assetRepository
+              .addAsset(Asset.fromJson(Map<String, dynamic>.from(previous)));
+        } else {
+          await _assetRepository.deleteAsset(entry.key as String);
+        }
+      }
+    }
+    final pendingDeletes = journal['pendingDeletes'];
+    await _settings.put(
+      AppConstants.keyPendingAssetDeletes,
+      pendingDeletes is List
+          ? pendingDeletes.whereType<String>().toList()
+          : <String>[],
+    );
+    await _settings.delete(AppConstants.keyPendingImport);
+  }
+
+  /// Roll back an import the app died in the middle of.
+  Future<void> _rollBackInterruptedImport() async {
+    final journal = _settings.get(AppConstants.keyPendingImport);
+    if (journal is! Map) return;
+    await _rollBackImport(journal);
+    debugPrint('[KashU] Rolled back an interrupted backup import');
   }
 }

@@ -37,21 +37,28 @@ Future<void> _doRefreshPrices(WidgetRef ref, BuildContext context) async {
 
     // Update home screen widget with latest portfolio figures, and record a
     // daily price snapshot (drives today's-change + the detail sparkline).
-    // Both use the summary's base-currency total; both are best-effort.
+    // Both use the summary's base-currency total; both are best-effort, but
+    // a widget failure must never suppress the snapshot (on platforms
+    // without the widget plugin it throws before the snapshot would run).
     try {
       final summary = await ref.read(portfolioSummaryProvider.future);
-      await WidgetUpdateService.updatePortfolioWidget(
-        totalValue: summary.totalValue,
-        totalGainLoss: summary.totalGainLoss,
-        gainLossPct: summary.totalGainLossPercentage,
-        baseCurrency: ref.read(baseCurrencyProvider),
-      );
+      try {
+        await WidgetUpdateService.updatePortfolioWidget(
+          totalValue: summary.totalValue,
+          totalGainLoss: summary.totalGainLoss,
+          gainLossPct: summary.totalGainLossPercentage,
+          baseCurrency: ref.read(baseCurrencyProvider),
+        );
+      } catch (_) {
+        // Widget update is best-effort.
+      }
 
       final assets = ref.read(allAssetsProvider);
       if (assets.isNotEmpty) {
         await ref.read(priceHistoryServiceProvider).recordDailySnapshot(
               total: summary.totalValue,
               assetValues: {for (final a in assets) a.id: a.currentValue},
+              assetQuantities: {for (final a in assets) a.id: a.quantity},
             );
       }
     } catch (_) {
@@ -255,7 +262,6 @@ class _DashboardContent extends ConsumerWidget {
             portfolioAsync.when(
               data: (summary) => AssetAllocationChart(
                 allocation: summary.assetAllocation,
-                totalValue: summary.totalValue,
                 assetCount: summary.totalAssets,
               ),
               loading: () => const AssetAllocationChart.loading(),

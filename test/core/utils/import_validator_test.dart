@@ -25,6 +25,7 @@ void main() {
         'amount': 24000.0,
         'type': 0,
         'date': '2024-01-15T00:00:00.000',
+        'createdAt': '2024-01-15T00:00:00.000',
       };
 
   group('ImportValidator.validateEnvelope', () {
@@ -99,6 +100,101 @@ void main() {
       final asset = validAsset()..['quantity'] = -5;
       expect(ImportValidator.validateAssets([asset]),
           contains('Asset[0]."quantity"'));
+    });
+  });
+
+  group('ImportValidator.validateAssets', () {
+    test('rejects a type index beyond AssetType', () {
+      expect(ImportValidator.validateAssets([validAsset()..['type'] = 8]),
+          contains('"type" must be an integer 0–7'));
+    });
+
+    test('rejects non-finite numbers', () {
+      // jsonDecode turns an overflowing literal (1e999) into infinity.
+      expect(
+          ImportValidator.validateAssets(
+              [validAsset()..['currentPrice'] = double.infinity]),
+          contains('finite'));
+      expect(
+          ImportValidator.validateAssets(
+              [validAsset()..['quantity'] = double.nan]),
+          contains('finite'));
+    });
+
+    test('rejects a non-text optional field', () {
+      expect(ImportValidator.validateAssets([validAsset()..['symbol'] = 42]),
+          contains('"symbol" must be text'));
+    });
+
+    test('rejects an unparseable priceUpdatedAt but accepts null', () {
+      expect(
+          ImportValidator.validateAssets(
+              [validAsset()..['priceUpdatedAt'] = 'yesterday']),
+          contains('"priceUpdatedAt"'));
+      expect(
+          ImportValidator.validateAssets(
+              [validAsset()..['priceUpdatedAt'] = null]),
+          isNull);
+    });
+
+    test('rejects a repeated asset id', () {
+      expect(ImportValidator.validateAssets([validAsset(), validAsset()]),
+          contains('Asset[1]."id" appears more than once'));
+    });
+  });
+
+  group('ImportValidator.validateTransactions', () {
+    String? validate(Map<String, dynamic> t) =>
+        ImportValidator.validateTransactions([t]);
+
+    test('accepts every TransactionType and nothing past it', () {
+      for (var type = 0; type <= 3; type++) {
+        expect(validate(validTransaction()..['type'] = type), isNull,
+            reason: 'type $type');
+      }
+      // The old validator accepted 0–6; TransactionType.values[4] throws.
+      for (final type in [4, 6, -1]) {
+        expect(validate(validTransaction()..['type'] = type),
+            contains('"type" must be an integer 0–3'),
+            reason: 'type $type');
+      }
+    });
+
+    test('rejects a missing or invalid createdAt', () {
+      expect(validate(validTransaction()..remove('createdAt')),
+          contains('"createdAt"'));
+      expect(validate(validTransaction()..['createdAt'] = 'not a date'),
+          contains('"createdAt"'));
+      expect(validate(validTransaction()..['createdAt'] = '1970-01-01'),
+          contains('"createdAt"'));
+    });
+
+    test(
+        'accepts an assetId that matches no asset — the history of a '
+        'holding deleted earlier', () {
+      expect(validate(validTransaction()..['assetId'] = 'deleted-long-ago'),
+          isNull);
+    });
+
+    test('still requires a non-empty assetId', () {
+      expect(validate(validTransaction()..['assetId'] = ''),
+          contains('"assetId" must be a non-empty string'));
+      expect(validate(validTransaction()..remove('assetId')),
+          contains('"assetId" must be a non-empty string'));
+    });
+
+    test('rejects NaN and infinite amounts', () {
+      expect(validate(validTransaction()..['amount'] = double.nan),
+          contains('"amount" must be a finite number'));
+      expect(validate(validTransaction()..['price'] = double.negativeInfinity),
+          contains('"price" must be a finite number'));
+    });
+
+    test('rejects a repeated transaction id', () {
+      expect(
+          ImportValidator.validateTransactions(
+              [validTransaction(), validTransaction()]),
+          contains('Transaction[1]."id" appears more than once'));
     });
   });
 }

@@ -82,6 +82,30 @@ PriceResult _success(String symbol, double price,
   );
 }
 
+/// A metal breakdown as GoldPriceService would return it: the COMEX leg in
+/// USD, converted at [forexRate], with the duty set the caller asked for.
+GoldPriceBreakdown _breakdown({
+  double usdPerTroyOz = 2400.0,
+  String currency = 'INR',
+  double forexRate = 83.5,
+  double importDutyRate = 0.05,
+  double aidcRate = 0.01,
+  double gstRate = 0.03,
+}) {
+  final usdPerGram = usdPerTroyOz / 31.1035;
+  return GoldPriceBreakdown(
+    usdPerTroyOz: usdPerTroyOz,
+    usdPerGram: usdPerGram,
+    forexRate: forexRate,
+    basePerGram: usdPerGram * forexRate,
+    importDutyRate: importDutyRate,
+    aidcRate: aidcRate,
+    gstRate: gstRate,
+    targetCurrency: currency,
+    usedLiveForex: true,
+  );
+}
+
 ExchangeRateResult _fxSuccess({double inr = 83.5}) {
   return ExchangeRateResult(
     base: 'USD',
@@ -397,7 +421,18 @@ void main() {
     });
   });
 
-  group('refreshAllPrices — gold via GoldPriceService', () {
+  group('refreshAllPrices — metals via GoldPriceService', () {
+    /// Stub the metal fetch, returning whatever [answer] maps the requested
+    /// COMEX symbol to.
+    void stubMetal(GoldPriceBreakdown? Function(String comexSymbol) answer) {
+      when(() => mockGold.fetchMetalPriceBreakdown(
+            comexSymbol: any(named: 'comexSymbol'),
+            targetCurrency: any(named: 'targetCurrency'),
+            taxConfig: any(named: 'taxConfig'),
+          )).thenAnswer(
+          (inv) async => answer(inv.namedArguments[#comexSymbol] as String));
+    }
+
     test('updates gold price with final INR/gram', () async {
       final asset = _makeAsset(
           id: 'g1', type: AssetType.gold, currency: 'INR');
@@ -405,20 +440,8 @@ void main() {
       when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
       when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
 
-      final breakdown = GoldPriceBreakdown(
-        usdPerTroyOz: 2400.0,
-        usdPerGram: 2400.0 / 31.1035,
-        forexRate: 83.5,
-        basePerGram: (2400.0 / 31.1035) * 83.5,
-        importDutyRate: 0.05,
-        aidcRate: 0.01,
-        gstRate: 0.03,
-        targetCurrency: 'INR',
-        usedLiveForex: true,
-      );
-      when(() => mockGold.fetchGoldPriceBreakdown(
-              targetCurrency: any(named: 'targetCurrency')))
-          .thenAnswer((_) async => breakdown);
+      final breakdown = _breakdown();
+      stubMetal((_) => breakdown);
       when(() => mockRepo.updateAssetPrice('g1', any()))
           .thenAnswer((_) async {});
 
@@ -429,16 +452,14 @@ void main() {
           .called(1);
     });
 
-    test('uses cache fallback when gold API fails', () async {
+    test('uses cache fallback when the metal API fails', () async {
       final asset = _makeAsset(
           id: 'g1', type: AssetType.gold, currency: 'INR');
       when(() => mockRepo.getAllAssets()).thenReturn([asset]);
       when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
       when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
-      when(() => mockGold.fetchGoldPriceBreakdown(
-              targetCurrency: any(named: 'targetCurrency')))
-          .thenAnswer((_) async => null);
-      when(() => mockCache.getCachedResult(PriceSymbols.goldComex))
+      stubMetal((_) => null);
+      when(() => mockCache.getCachedResult('${PriceSymbols.goldComex}:INR'))
           .thenReturn(_success(PriceSymbols.goldComex, 6500.0));
       when(() => mockRepo.updateAssetPrice('g1', 6500.0,
           asOf: any(named: 'asOf'))).thenAnswer((_) async {});
@@ -448,6 +469,129 @@ void main() {
       expect(result.updated, 1);
       verify(() => mockRepo.updateAssetPrice('g1', 6500.0,
           asOf: any(named: 'asOf'))).called(1);
+    });
+
+    test('silver is priced against SI=F with the silver duty set', () async {
+      // Silver is stored as an AssetType.gold asset carrying SI=F. Pricing it
+      // against GC=F would overstate a holding by roughly 100x.
+      final asset = _makeAsset(
+          id: 's1',
+          symbol: PriceSymbols.silverComex,
+          type: AssetType.gold,
+          currency: 'INR');
+      when(() => mockRepo.getAllAssets()).thenReturn([asset]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
+      stubMetal((_) => _breakdown(
+            usdPerTroyOz: 30.0,
+            importDutyRate: 0.10,
+            aidcRate: 0.0,
+          ));
+      when(() => mockRepo.updateAssetPrice('s1', any()))
+          .thenAnswer((_) async {});
+
+      final result = await service.refreshAllPrices();
+      expect(result.updated, 1);
+
+      final captured = verify(() => mockGold.fetchMetalPriceBreakdown(
+            comexSymbol: captureAny(named: 'comexSymbol'),
+            targetCurrency: any(named: 'targetCurrency'),
+            taxConfig: captureAny(named: 'taxConfig'),
+          )).captured;
+
+      expect(captured[0], PriceSymbols.silverComex);
+      final tax = captured[1] as GoldTaxConfig;
+      expect(tax.importDutyRate, 0.10); // silver BCD, not gold's 5%
+      expect(tax.aidcRate, 0.0); // silver pays no AIDC
+    });
+
+    test('gold and silver held together each hit their own contract',
+        () async {
+      final gold = _makeAsset(
+          id: 'g1', type: AssetType.gold, currency: 'INR');
+      final silver = _makeAsset(
+          id: 's1',
+          symbol: PriceSymbols.silverComex,
+          type: AssetType.gold,
+          currency: 'INR');
+      when(() => mockRepo.getAllAssets()).thenReturn([gold, silver]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
+
+      final goldBreakdown = _breakdown(usdPerTroyOz: 2400.0);
+      final silverBreakdown = _breakdown(
+          usdPerTroyOz: 30.0, importDutyRate: 0.10, aidcRate: 0.0);
+      stubMetal((symbol) => PriceSymbols.isComexSilver(symbol)
+          ? silverBreakdown
+          : goldBreakdown);
+      when(() => mockRepo.updateAssetPrice(any(), any()))
+          .thenAnswer((_) async {});
+
+      final result = await service.refreshAllPrices();
+
+      expect(result.updated, 2);
+      verify(() => mockRepo.updateAssetPrice('g1', goldBreakdown.finalPerGram))
+          .called(1);
+      verify(() =>
+              mockRepo.updateAssetPrice('s1', silverBreakdown.finalPerGram))
+          .called(1);
+    });
+
+    test('a second currency is re-derived from USD, not given the INR price',
+        () async {
+      final inrGold = _makeAsset(
+          id: 'g1', type: AssetType.gold, currency: 'INR');
+      final usdGold = _makeAsset(
+          id: 'g2', type: AssetType.gold, currency: 'USD');
+      when(() => mockRepo.getAllAssets()).thenReturn([inrGold, usdGold]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
+
+      final breakdown = _breakdown();
+      stubMetal((_) => breakdown);
+      when(() => mockRepo.updateAssetPrice(any(), any()))
+          .thenAnswer((_) async {});
+
+      final result = await service.refreshAllPrices();
+
+      expect(result.updated, 2);
+      verify(() => mockRepo.updateAssetPrice('g1', breakdown.finalPerGram))
+          .called(1);
+      // USD/gram, untaxed — Indian duties are an INR-only concept.
+      verify(() => mockRepo.updateAssetPrice(
+              'g2', any(that: closeTo(breakdown.usdPerGram, 0.0001))))
+          .called(1);
+
+      // Each currency caches under its own key, so neither can clobber the
+      // other's per-gram number.
+      final cached = verify(() => mockCache.cachePrice(captureAny())).captured
+          .cast<PriceResult>();
+      expect(cached.map((r) => r.symbol),
+          containsAll(<String>['GC=F:INR', 'GC=F:USD']));
+    });
+
+    test('offline fallback will not hand a USD holding an INR cached price',
+        () async {
+      final usdGold = _makeAsset(
+          id: 'g2', type: AssetType.gold, currency: 'USD');
+      when(() => mockRepo.getAllAssets()).thenReturn([usdGold]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
+      stubMetal((_) => null);
+
+      // An INR price is cached (both under the old symbol-only key and the
+      // new composite one) but nothing in USD is.
+      when(() => mockCache.getCachedResult(PriceSymbols.goldComex))
+          .thenReturn(_success(PriceSymbols.goldComex, 6500.0));
+      when(() => mockCache.getCachedResult('${PriceSymbols.goldComex}:INR'))
+          .thenReturn(_success(PriceSymbols.goldComex, 6500.0));
+
+      final result = await service.refreshAllPrices();
+
+      expect(result.updated, 0);
+      expect(result.failed, 1);
+      verifyNever(() => mockRepo.updateAssetPrice('g2', any(),
+          asOf: any(named: 'asOf')));
     });
   });
 
@@ -495,6 +639,35 @@ void main() {
 
       expect(result.success, true);
       expect(result.price, 300000.0);
+    });
+
+    test('a single silver holding refreshes against SI=F', () async {
+      final asset = _makeAsset(
+          id: 's1',
+          symbol: PriceSymbols.silverComex,
+          type: AssetType.gold,
+          currency: 'INR');
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      final breakdown = _breakdown(
+          usdPerTroyOz: 30.0, importDutyRate: 0.10, aidcRate: 0.0);
+      when(() => mockGold.fetchMetalPriceBreakdown(
+            comexSymbol: any(named: 'comexSymbol'),
+            targetCurrency: any(named: 'targetCurrency'),
+            taxConfig: any(named: 'taxConfig'),
+          )).thenAnswer((_) async => breakdown);
+      when(() => mockRepo.updateAssetPrice('s1', any()))
+          .thenAnswer((_) async {});
+
+      final result = await service.refreshSinglePrice(asset);
+
+      expect(result.success, true);
+      expect(result.symbol, PriceSymbols.silverComex);
+      expect(result.price, breakdown.finalPerGram);
+      verify(() => mockGold.fetchMetalPriceBreakdown(
+            comexSymbol: PriceSymbols.silverComex,
+            targetCurrency: 'INR',
+            taxConfig: any(named: 'taxConfig'),
+          )).called(1);
     });
 
     test('returns cached result when stock refresh fails', () async {
@@ -592,6 +765,152 @@ void main() {
       expect(result.updated, 1);
       verify(() => mockYahoo.fetchPrice('NIFTYBEES.NS')).called(1);
       verifyNever(() => mockMutualFund.fetchNav(any()));
+    });
+  });
+
+  // Each holding is stored in its own currency; a refreshed price has to be
+  // written in that currency whatever the quote came in.
+  group('prices land in the holding\'s own currency', () {
+    ExchangeRateResult fx() => ExchangeRateResult(
+          base: 'USD',
+          rates: const {'USD': 1.0, 'INR': 83.0, 'EUR': 0.9, 'GBP': 0.8},
+          fetchedAt: DateTime.now(),
+          success: true,
+        );
+
+    /// Records every price written, by asset id.
+    Map<String, double> recordWrites() {
+      final written = <String, double>{};
+      when(() => mockRepo.updateAssetPrice(any(), any()))
+          .thenAnswer((inv) async {
+        written[inv.positionalArguments[0] as String] =
+            inv.positionalArguments[1] as double;
+      });
+      return written;
+    }
+
+    test('crypto is fetched per holding currency, not all in the base',
+        () async {
+      final inrCoin = MockCoinGeckoService();
+      final usdCoin = MockCoinGeckoService();
+      final requested = <String>[];
+      final perCurrency = PriceUpdateService(
+        assetRepository: mockRepo,
+        yahooService: mockYahoo,
+        stooqService: mockStooq,
+        currencyConverter: mockFx,
+        goldPriceService: mockGold,
+        mutualFundService: mockMutualFund,
+        priceCache: mockCache,
+        coinGeckoFactory: (vs) {
+          requested.add(vs);
+          return vs == 'USD' ? usdCoin : inrCoin;
+        },
+        cryptoFallbackFactory: (_) => mockCryptoCompare,
+      );
+      when(() => mockRepo.getAllAssets()).thenReturn([
+        _makeAsset(id: 'inr', symbol: 'bitcoin', type: AssetType.crypto),
+        _makeAsset(
+            id: 'usd',
+            symbol: 'bitcoin',
+            type: AssetType.crypto,
+            currency: 'USD'),
+      ]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => fx());
+      when(() => inrCoin.fetchMultiplePrices(any())).thenAnswer(
+          (_) async => [_success('bitcoin', 5800000.0)]);
+      when(() => usdCoin.fetchMultiplePrices(any())).thenAnswer(
+          (_) async => [_success('bitcoin', 70000.0, currency: 'USD')]);
+      final written = recordWrites();
+
+      final result = await perCurrency.refreshAllPrices();
+
+      expect(result.updated, 2);
+      expect(requested, unorderedEquals(['INR', 'USD']));
+      expect(written, {'inr': 5800000.0, 'usd': 70000.0});
+    });
+
+    test('a EUR quote is converted for an INR holding (not only USD)',
+        () async {
+      when(() => mockRepo.getAllAssets()).thenReturn(
+          [_makeAsset(id: 's1', symbol: 'SAP.DE', currency: 'INR')]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => fx());
+      when(() => mockYahoo.fetchPrice('SAP.DE'))
+          .thenAnswer((_) async => _success('SAP.DE', 180.0, currency: 'EUR'));
+      final written = recordWrites();
+
+      await service.refreshAllPrices();
+
+      expect(written['s1'], closeTo(180.0 / 0.9 * 83.0, 1e-6));
+    });
+
+    test('a pence quote is stored in pounds for a GBP holding', () async {
+      when(() => mockRepo.getAllAssets()).thenReturn(
+          [_makeAsset(id: 's1', symbol: 'VOD.L', currency: 'GBP')]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => fx());
+      when(() => mockYahoo.fetchPrice('VOD.L'))
+          .thenAnswer((_) async => _success('VOD.L', 72.5, currency: 'GBp'));
+      final written = recordWrites();
+
+      await service.refreshAllPrices();
+
+      expect(written['s1'], closeTo(0.725, 1e-9));
+    });
+
+    test('without live forex a USD quote is never stored as INR', () async {
+      when(() => mockRepo.getAllAssets()).thenReturn(
+          [_makeAsset(id: 's1', symbol: 'AAPL', currency: 'INR')]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer(
+          (_) async => ExchangeRateResult.failure('offline'));
+      when(() => mockYahoo.fetchPrice('AAPL'))
+          .thenAnswer((_) async => _success('AAPL', 200.0, currency: 'USD'));
+      final written = recordWrites();
+
+      final result = await service.refreshAllPrices();
+
+      // Treated like a failed fetch: no cache here, so it counts as failed.
+      expect(written, isEmpty);
+      expect(result.failed, 1);
+      expect(result.errors.single, contains('exchange rate'));
+    });
+
+    test('single refresh converts an INR listing for a USD holding',
+        () async {
+      final asset =
+          _makeAsset(id: 's1', symbol: 'TCS.NS', currency: 'USD');
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => fx());
+      when(() => mockYahoo.fetchPrice('TCS.NS'))
+          .thenAnswer((_) async => _success('TCS.NS', 4150.0));
+      final written = recordWrites();
+
+      final result = await service.refreshSinglePrice(asset);
+
+      expect(result.currency, 'USD');
+      expect(written['s1'], closeTo(4150.0 / 83.0, 1e-9));
+    });
+
+    test('a fund NAV is converted for a holding kept outside INR', () async {
+      when(() => mockRepo.getAllAssets()).thenReturn([
+        _makeAsset(
+            id: 'mf1',
+            symbol: '120503',
+            type: AssetType.mutualFund,
+            currency: 'USD'),
+      ]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => fx());
+      when(() => mockMutualFund.fetchNav(120503))
+          .thenAnswer((_) async => Ok(_mf(120503, 830.0)));
+      final written = recordWrites();
+
+      await service.refreshAllPrices();
+
+      expect(written['mf1'], closeTo(10.0, 1e-9));
     });
   });
 }

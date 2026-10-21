@@ -1,0 +1,14 @@
+# The Vercel CLI uploads the whole working tree and does NOT read .gitignore,
+# so this is an allowlist, not a denylist: ignore everything at the root, then
+# re-admit only what a deploy needs. Without this, `vercel` would try to upload
+# the ~4GB build/ tree (build/ios alone is 2.6GB).
+#
+# Anything new that Vercel must serve has to be re-admitted here with `!`.
+/*
+!api
+!build
+!vercel.json
+
+# Narrow build/ to just the Flutter web output.
+build/*
+!build/web

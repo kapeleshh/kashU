@@ -32,8 +32,10 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory=WEB_BUILD_DIR, **kwargs)
 
     def do_GET(self):
-        # Handle proxy requests: /proxy?url=https://...
-        if self.path.startswith('/proxy?'):
+        # Handle proxy requests: /proxy?url=https://... (legacy path) or
+        # /api/proxy?url=... (same path the Vercel deployment serves, so
+        # the web build works identically against either server).
+        if self.path.startswith('/proxy?') or self.path.startswith('/api/proxy?'):
             self._handle_proxy()
             return
         # Serve static Flutter web files

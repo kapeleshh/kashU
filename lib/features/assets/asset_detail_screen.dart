@@ -10,16 +10,47 @@ import '../../data/models/asset.dart';
 import '../../data/models/asset_type.dart';
 import '../../services/currency_converter_service.dart';
 import '../../services/gold_price_service.dart';
+import '../../services/price_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
+import '../transactions/record_transaction_sheet.dart';
 import 'add_asset_screen.dart';
 
-class AssetDetailScreen extends ConsumerWidget {
-  final Asset asset;
+/// One holding in detail. Takes the asset's id, not the [Asset] itself:
+/// every repository write stores a new object, so the screen re-reads the
+/// current copy through [assetByIdProvider] and never shows (or hands to
+/// Edit) a stale snapshot.
+class AssetDetailScreen extends ConsumerStatefulWidget {
+  final String assetId;
 
-  const AssetDetailScreen({super.key, required this.asset});
+  const AssetDetailScreen({super.key, required this.assetId});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AssetDetailScreen> createState() => _AssetDetailScreenState();
+}
+
+class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
+  /// The last copy seen, so the exit animation after a delete still shows
+  /// the holding instead of a blank page.
+  Asset? _lastSeen;
+  bool _leaving = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final live = ref.watch(assetByIdProvider(widget.assetId));
+    if (live == null) {
+      // Deleted (here, from Edit, or by a Clear All Data) — leave once the
+      // frame is done rather than navigating mid-build.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _leave());
+      final last = _lastSeen;
+      return last == null
+          ? const Scaffold(body: SizedBox.shrink())
+          : _buildFor(context, last);
+    }
+    _lastSeen = live;
+    return _buildFor(context, live);
+  }
+
+  Widget _buildFor(BuildContext context, Asset asset) {
     final isProfit = asset.gainLossPercentage >= 0;
     final gainColor =
         isProfit ? AppColors.gainOn(context) : AppColors.lossOn(context);
@@ -147,9 +178,19 @@ class AssetDetailScreen extends ConsumerWidget {
               // ── Update price ───────────────────────────────────────────────
               _SectionLabel(AppStrings.updatePrices),
               const SizedBox(height: 10),
-              _UpdatePriceCard(asset: asset),
+              _UpdatePriceCard(key: ValueKey(asset.id), asset: asset),
 
               const SizedBox(height: 18),
+
+              // ── Record a sale, dividend or interest ────────────────────────
+              _SoftButton(
+                label: 'Record sale or income',
+                icon: Icons.receipt_long_rounded,
+                color: AppColors.primary,
+                onTap: () =>
+                    showRecordTransactionSheet(context, assetId: asset.id),
+              ),
+              const SizedBox(height: 10),
 
               // ── Bottom actions: Edit (gradient) + Delete (soft) ────────────
               Row(
@@ -158,7 +199,7 @@ class AssetDetailScreen extends ConsumerWidget {
                     child: _GradientButton(
                       label: 'Edit',
                       icon: Icons.edit_rounded,
-                      onTap: () => _editAsset(context, ref),
+                      onTap: () => _editAsset(asset),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -167,7 +208,7 @@ class AssetDetailScreen extends ConsumerWidget {
                       label: 'Delete',
                       icon: Icons.delete_outline_rounded,
                       color: AppColors.lossOn(context),
-                      onTap: () => _confirmDelete(context, ref),
+                      onTap: () => _confirmDelete(asset),
                     ),
                   ),
                 ],
@@ -179,20 +220,35 @@ class AssetDetailScreen extends ConsumerWidget {
     );
   }
 
-  void _editAsset(BuildContext context, WidgetRef ref) {
-    final navigator = Navigator.of(context);
-    Navigator.push(
+  /// Close this screen once, however many paths ask for it (a delete here,
+  /// a save or delete from Edit, the asset disappearing under a rebuild).
+  void _leave() {
+    if (_leaving || !mounted) return;
+    final route = ModalRoute.of(context);
+    if (route == null || !route.isActive) return;
+    _leaving = true;
+    if (route.isCurrent) {
+      Navigator.of(context).pop();
+    } else {
+      // Something sits on top; drop just this route, not whatever is above.
+      Navigator.of(context).removeRoute(route);
+    }
+  }
+
+  /// Edit the asset as it is *now* — an older copy would write a stale price
+  /// back on save. Edit returns true after a save or delete (it invalidates
+  /// the providers itself); backing out returns null and keeps this screen.
+  Future<void> _editAsset(Asset asset) async {
+    final changed = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (context) => AddAssetScreen(existingAsset: asset),
       ),
-    ).then((_) {
-      ref.invalidate(allAssetsProvider);
-      navigator.pop();
-    });
+    );
+    if (changed == true) _leave();
   }
 
-  void _confirmDelete(BuildContext context, WidgetRef ref) {
+  void _confirmDelete(Asset asset) {
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -207,14 +263,14 @@ class AssetDetailScreen extends ConsumerWidget {
           ),
           TextButton(
             onPressed: () async {
-              final navigator = Navigator.of(context);
               Navigator.pop(dialogContext);
               await ref
                   .read(portfolioWriteServiceProvider)
                   .deleteAssetWithTransactions(asset.id);
+              if (!mounted) return;
               ref.invalidate(allAssetsProvider);
               ref.invalidate(portfolioSummaryProvider);
-              navigator.pop();
+              _leave();
             },
             style: TextButton.styleFrom(
               foregroundColor: AppColors.lossOn(context),
@@ -376,6 +432,9 @@ class _ValueCard extends StatelessWidget {
     required this.priceSeries,
   });
 
+  /// Everything sold: quantity 0, kept rather than deleted.
+  bool get isSold => asset.quantity <= 0;
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -411,23 +470,29 @@ class _ValueCard extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 9),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 5),
-                child: Text(
-                  '${isProfit ? '▲' : '▼'} ${CurrencyFormatter.formatPercentage(asset.gainLossPercentage.abs(), showSign: false)}',
-                  style: AppTheme.body(
-                    size: 13,
-                    weight: FontWeight.w800,
-                    color: gainColor,
+              if (!isSold) ...[
+                const SizedBox(width: 9),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 5),
+                  child: Text(
+                    '${isProfit ? '▲' : '▼'} ${CurrencyFormatter.formatPercentage(asset.gainLossPercentage.abs(), showSign: false)}',
+                    style: AppTheme.body(
+                      size: 13,
+                      weight: FontWeight.w800,
+                      color: gainColor,
+                    ),
                   ),
                 ),
-              ),
+              ],
             ],
           ),
           const SizedBox(height: 1),
           Text(
-            '${isProfit ? '+' : '-'}${CurrencyFormatter.formatCurrency(gainLossBase, base)} since you bought',
+            // A closed holding has no open gain; it stays for its history
+            // and so the tax report can find the sale's cost basis.
+            isSold
+                ? 'Fully sold — kept for your records and tax report'
+                : '${isProfit ? '+' : '-'}${CurrencyFormatter.formatCurrency(gainLossBase, base)} since you bought',
             style: AppTheme.body(
               size: 12,
               weight: FontWeight.w600,
@@ -686,13 +751,13 @@ class _SoftButton extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Update price (gold live fetch + manual) — restyled, behaviour preserved
+// Update price (metal live fetch + manual) — restyled, behaviour preserved
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _UpdatePriceCard extends ConsumerStatefulWidget {
   final Asset asset;
 
-  const _UpdatePriceCard({required this.asset});
+  const _UpdatePriceCard({super.key, required this.asset});
 
   @override
   ConsumerState<_UpdatePriceCard> createState() => _UpdatePriceCardState();
@@ -713,21 +778,38 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
   }
 
   @override
+  void didUpdateWidget(covariant _UpdatePriceCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Follow a price saved elsewhere (a refresh, an edit), but never
+    // overwrite a figure the user is in the middle of typing.
+    final oldText = oldWidget.asset.currentPrice.toStringAsFixed(2);
+    if (widget.asset.currentPrice != oldWidget.asset.currentPrice &&
+        _priceController.text == oldText) {
+      _priceController.text = widget.asset.currentPrice.toStringAsFixed(2);
+    }
+  }
+
+  @override
   void dispose() {
     _priceController.dispose();
     super.dispose();
   }
 
-  bool get _isGold => widget.asset.type == AssetType.gold;
+  bool get _isMetal => widget.asset.type == AssetType.gold;
+
+  /// 'Gold' or 'Silver'. Both are [AssetType.gold] assets — only the stored
+  /// symbol tells them apart, so labels must not assume gold.
+  String get _metalName =>
+      PriceSymbols.isComexSilver(widget.asset.symbol) ? 'Silver' : 'Gold';
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Live fetch card for gold assets
-        if (_isGold) ...[
-          _buildGoldLivePriceCard(context),
+        // Live fetch card for metal (gold / silver) assets
+        if (_isMetal) ...[
+          _buildMetalLivePriceCard(context),
           const SizedBox(height: 12),
         ],
 
@@ -767,7 +849,7 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
     );
   }
 
-  Widget _buildGoldLivePriceCard(BuildContext context) {
+  Widget _buildMetalLivePriceCard(BuildContext context) {
     final goldTone = AppColors.goldColor;
     return Container(
       padding: const EdgeInsets.all(16),
@@ -788,7 +870,7 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
               Icon(Icons.auto_awesome, color: goldTone, size: 18),
               const SizedBox(width: 8),
               Text(
-                'Live Gold Price',
+                'Live $_metalName Price',
                 style: AppTheme.body(
                   size: 14,
                   weight: FontWeight.w700,
@@ -862,7 +944,7 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: _isFetchingLivePrice ? null : _fetchLiveGoldPrice,
+              onPressed: _isFetchingLivePrice ? null : _fetchLiveMetalPrice,
               icon: _isFetchingLivePrice
                   ? const SizedBox(
                       width: 16,
@@ -884,7 +966,7 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
     );
   }
 
-  Future<void> _fetchLiveGoldPrice() async {
+  Future<void> _fetchLiveMetalPrice() async {
     setState(() {
       _isFetchingLivePrice = true;
       _fetchError = null;
@@ -895,7 +977,10 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
       final targetCurrency =
           widget.asset.currency.isNotEmpty ? widget.asset.currency : 'INR';
 
-      final breakdown = await goldService.fetchGoldPriceBreakdown(
+      // Resolve the contract from the stored symbol: a silver holding
+      // priced through the gold path would be written ~100x too high.
+      final breakdown = await goldService.fetchBreakdownForSymbol(
+        widget.asset.symbol,
         targetCurrency: targetCurrency,
       );
 
@@ -903,8 +988,9 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
 
       if (breakdown == null) {
         setState(() {
-          _fetchError =
-              'Could not fetch gold price from COMEX (GC=F).\nCheck your internet connection.';
+          _fetchError = 'Could not fetch ${_metalName.toLowerCase()} price '
+              'from COMEX (${PriceSymbols.metalSymbolFor(widget.asset.symbol)}).'
+              '\nCheck your internet connection.';
           _isFetchingLivePrice = false;
         });
         return;
@@ -932,7 +1018,7 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Gold price updated to '
+          '$_metalName price updated to '
           '${CurrencyFormatter.formatCurrency(price, widget.asset.currency)}/gram'
           '${widget.asset.currency == 'INR' ? ' (incl. Indian taxes)' : ''}',
         ),
