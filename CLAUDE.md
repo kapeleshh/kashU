@@ -4,26 +4,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 KashU is a privacy-focused, offline-first Flutter app for tracking an investment portfolio (stocks, mutual funds, metals, crypto, deposits, real estate, cash). All portfolio data lives locally in encrypted Hive boxes; the network is only used to fetch price/forex data.
 
-`docs/TECHNICAL_DECISIONS.md` records the *why* behind the Flutter / Riverpod / Hive choices, the data-model shape, and the Phase-1 security posture — read it before relitigating those decisions.
+`docs/TECHNICAL_DECISIONS.md` records the *why* behind the Flutter / Riverpod / Hive choices, the data-model shape, and the Phase-1 security posture — read it before relitigating those decisions. Its *UI/UX Decisions* section is stale, though: the app is no longer dark-first (`ThemeMode.system`, both themes built) and no longer system-font-only (Quicksand / Plus Jakarta Sans via `google_fonts`) — the "C·Soft" section below supersedes it.
 
 ## Commands
 
 ```bash
 flutter pub get                                          # install deps
-dart run build_runner build --delete-conflicting-outputs # regenerate *.g.dart (REQUIRED, see below)
+dart run build_runner build --delete-conflicting-outputs # regenerate *.g.dart (after any model change, see below)
 flutter analyze --fatal-infos                            # lint + type check (CI gate)
 flutter test                                             # run all tests
 flutter test test/services/gold_price_service_test.dart  # run a single test file
 flutter test --name "applies Indian taxes"               # run tests matching a name
 ```
 
-**Code generation is mandatory before analyze/test/run.** Hive adapters (`*.g.dart`) are generated from `@HiveType`/`@HiveField` annotations and are *not* committed in a build-ready state across all environments — CI runs `build_runner` before `flutter analyze`. After editing any model in `lib/data/models/` (or adding Riverpod codegen), rerun `build_runner` or the build breaks with missing-symbol errors.
+**Rerun code generation after any model change.** The four Hive adapters (`lib/data/models/*.g.dart`) are generated from `@HiveType`/`@HiveField` annotations and **are committed** — `.gitignore` deliberately leaves them un-ignored — so a model edit must ship with its regenerated adapter, or the build breaks with missing-symbol errors. CI reruns `build_runner` before `flutter analyze` regardless, which means CI won't catch a stale committed adapter. Riverpod codegen is not in use: `riverpod_generator` is a dev dependency, but there are no `@riverpod` annotations and every provider is hand-written.
 
 CI (`.github/workflows/ci.yml`) runs on push to `main`/`staging`/`p0-improvements` and PRs to `main`/`staging`. Two jobs:
 1. `analyze-and-test` — pub get → build_runner → `flutter analyze --fatal-infos` → `flutter test --coverage`. `--fatal-infos` means even lint infos fail the build.
 2. `build-android` — runs only if the first passes; Java 17 + `flutter build apk --release` (debug-signed until a release keystore is wired in from secrets).
 
 CI pins **Flutter 3.41.6 (stable)** — match this locally to avoid analyzer drift.
+
+Two other workflows live alongside it and never gate a merge: `claude.yml` (responds to `@claude` on issues/PR comments) and `claude-code-review.yml` (auto-reviews opened PRs). `ci.yml` is the only required check.
 
 ### Repo automation (`.claude/`)
 
@@ -41,7 +43,7 @@ Project slash commands live in `.claude/commands/` (`/regen`, `/hive-migration`,
 
 ### Web deployment (Vercel)
 
-`vercel.json` publishes the prebuilt `build/web` as static output (`buildCommand` is empty — build locally and deploy; git auto-deploys are disabled) and rewrites everything except `/api/*` to `index.html`. `flutter_bootstrap.js`, `flutter_service_worker.js`, `version.json`, and `index.html` are served `no-cache` so clients don't pin a stale build.
+Production is <https://kash-u.vercel.app>. `vercel.json` publishes the prebuilt `build/web` as static output (`buildCommand` is empty — build locally and deploy; git auto-deploys are disabled) and rewrites everything except `/api/*` to `index.html`. `flutter_bootstrap.js`, `flutter_service_worker.js`, `version.json`, and `index.html` are served `no-cache` so clients don't pin a stale build.
 
 `api/proxy.py` is the serverless twin of `proxy_server.py` (Python stdlib only, no `requirements.txt`). It is not a general relay: a per-host **path-prefix allowlist** (`ALLOWED_HOSTS`) gates every request, each redirect hop is re-validated against that allowlist so an open redirect on an allowed host can't escape it, bodies over ~10MB are refused, and responses are edge-cached per upstream host and gzipped (MFAPI's full scheme list is ~5.7MB). Adding a new upstream API means adding its host **and** path prefixes to *both* proxies.
 
@@ -79,9 +81,11 @@ Layered structure under `lib/`:
 
 `lib/shared/providers/portfolio_provider.dart` is the wiring hub: it constructs repositories and services and exposes them as providers, plus derived state like `portfolioSummaryProvider` (FutureProvider), `baseCurrencyProvider`, and price-refresh status providers. Services take their dependencies via constructor (with defaults) so they're testable — providers inject the shared singletons. When adding a service, follow this pattern: constructor-injected deps + a `Provider` in this file.
 
+**Providers do not observe Hive.** Nothing uses `box.listenable()`; `allAssetsProvider` is a one-off read of the repository, cached until it is invalidated. Any screen that writes assets or transactions must call `ref.invalidate(allAssetsProvider)` and `ref.invalidate(portfolioSummaryProvider)` afterwards (see the add/detail/settings screens), or the dashboard keeps showing the old numbers.
+
 ### Persistence — Hive (encrypted)
 
-Five boxes, all opened in `main.dart` `_bootstrap()`: `assets_box`, `transactions_box`, `settings_box`, `price_cache_box`, `price_history_box` (names in `AppConstants`). All boxes are AES-encrypted with a 256-bit key generated once and stored in the platform keychain/keystore via `flutter_secure_storage` (`_loadOrCreateCipher`). If box opening fails (corruption/full disk), the app shows `_DatabaseErrorApp` instead of crashing.
+Five boxes, opened in two phases in `main.dart`: `settings_box` first, in `_preBootstrap()` (so the crash-reporting consent flag can be read before Sentry initialises), then `assets_box`, `transactions_box`, `price_cache_box` and `price_history_box` in `_bootstrap()` (names in `AppConstants`). All boxes are AES-encrypted with a 256-bit key generated once and stored in the platform keychain/keystore via `flutter_secure_storage` (`_loadOrCreateCipher`). If box opening fails (corruption/full disk), the app shows `_DatabaseErrorApp` instead of crashing.
 
 **On web the storage story is weaker, and it is not guarded by `kIsWeb`.** `Hive.initFlutter()` has no web branch, so each box becomes its own **IndexedDB** database, and `flutter_secure_storage_web` keeps the AES key — plus the WebCrypto key that wraps it — in the same origin's `localStorage`. That is obfuscation at rest, not a keychain. Consequences worth knowing before touching web behaviour: clearing site data destroys the portfolio outright; iOS Safari evicts the storage of a site not visited for 7 days unless it was added to the Home Screen; and the app lock is inert (the Settings toggle is hidden and `AuthResult.notAvailable` simply unlocks). There is no server-side copy of anything, so an export is the only backup a web user has.
 
@@ -89,7 +93,7 @@ Five boxes, all opened in `main.dart` `_bootstrap()`: `assets_box`, `transaction
 
 `settings_box` doubles as the app's general key-value store, not just user preferences: the `AppConstants.key*` entries (base currency, app lock, schema version, crash-reporting consent, backup nudge), the rebalancing targets under `rebal_{assetTypeName}` keys, and the `PortfolioWriteService` pending-write markers all live there.
 
-**Schema migrations** (`data/migration/hive_migration_service.dart`): when you add/change a `@HiveField` on a model, bump `_currentSchemaVersion` and add a matching entry to the `_migrations` map. `runMigrations()` runs pending steps on startup after boxes open. Currently at version 1 with no migration steps. Model `typeId`s are fixed — `AssetType=0`, `TransactionType=1`, `Asset=2`, `Transaction=3` — never reuse or reorder field numbers.
+**Schema migrations** (`data/migration/hive_migration_service.dart`): when you add/change a `@HiveField` on a model, bump `_currentSchemaVersion` and add a matching entry to the `_migrations` map. `runMigrations()` runs pending steps on startup after boxes open. Currently at version 1, whose only entry is the `_baseline` no-op — so the first real migration is `2:`. Model `typeId`s are fixed — `AssetType=0`, `TransactionType=1`, `Asset=2`, `Transaction=3` — never reuse or reorder field numbers. Those four are the only Hive types: `price_cache_box` and `price_history_box` store `jsonEncode`d strings (`CachedPriceEntry`, `DailySnapshot`), so they sit outside the typeId/migration system entirely, and their `fromJson` has to cope with entries written by older builds.
 
 Repositories (`AssetRepository`, `TransactionRepository`) are the only place that touches Hive boxes directly. Derived portfolio math (`totalInvested`, `currentValue`, `gainLoss`) lives as getters on the `Asset` model, not in repositories.
 
@@ -100,18 +104,22 @@ Repositories (`AssetRepository`, `TransactionRepository`) are the only place tha
 `PriceService` (`services/price_service.dart`) is the abstract interface; `PriceSymbols` holds the per-`AssetType` routing rules (which types support auto-tracking, default symbols, input hints).
 
 `PriceUpdateService` (`services/price_update_service.dart`) orchestrates a full refresh, routing each asset by `AssetType` into four separate batches:
-- **crypto** → CoinGecko, then `CryptoCompareService` for whatever failed as **one batched call** (not per asset), then the cache. The app stores CoinGecko ids, so `_idToTicker` maps `bitcoin`→`BTC`; unmapped ids fail straight through to the cache. CryptoCompare reports errors as HTTP 200 with `{"Response": "Error"}`, so the body must be checked.
-- **gold/silver** → `GoldPriceService` (see below).
+- **crypto** → CoinGecko, then `CryptoCompareService` for whatever failed as **one batched call** (not per asset), then the cache. The app stores CoinGecko ids, so `CryptoCompareService._idToTicker` maps `bitcoin`→`BTC`; unmapped ids fail straight through to the cache. CryptoCompare reports errors as HTTP 200 with `{"Response": "Error"}`, so the body must be checked.
+- **metals** (`AssetType.gold`) → `GoldPriceService`, split again by stored symbol (see below). There is no `AssetType.silver`: silver is a gold-type asset carrying `SI=F`, so this bucket makes one COMEX call per metal, not per asset.
 - **mutual funds** → `MutualFundService` (MFAPI.in, keyed by AMFI scheme code — not Yahoo).
 - **everything else** (stocks, bonds) → Yahoo Finance with **Stooq as fallback**.
 
 Key behaviors to preserve when editing:
 - Exchange rates are pre-fetched once per refresh and reused (`CurrencyConverterService`, backed by live USD→INR forex from `open.er-api.com`).
-- Prices are converted into each asset's stored currency before saving.
+- Prices are converted into each asset's stored currency before saving. The metal batch fetches once in `assets.first.currency` and re-derives the others from `breakdown.usdPerGram` — the COMEX leg is currency-agnostic, so a second currency costs no extra round trip.
 - On API failure, it falls back to the last cached price (`PriceCacheService`, `price_cache_box`) before counting an asset as failed.
 - Stock/bond refreshes are throttled (300ms between calls) to avoid rate limiting.
 
 **Gold/silver pricing is computed, not fetched directly.** `GoldPriceService` fetches COMEX `GC=F`/`SI=F` (USD/troy oz) via Yahoo, converts oz→gram (÷31.1035) and USD→target currency via live forex, then applies Indian import duties + GST (`GoldTaxConfig.india` ≈ 9.18% for gold) only when the target currency is INR. This tax math is intentional and tested — see `test/services/gold_price_service_test.dart`.
+
+**Silver rides on `AssetType.gold`, so every metal path must branch on the symbol.** `PriceSymbols.isComexSilver` / `metalSymbolFor` resolve the contract and `GoldTaxConfig.forMetal` the duty set (gold carries AIDC; silver pays a higher BCD). `_refreshMetalAssets` and `_refreshSingleMetal` both route through them — anything that reaches for `fetchGoldPriceBreakdown` directly will reprice silver at the gold rate, which is roughly 100× off.
+
+**The metal price cache is keyed `SYMBOL:CURRENCY`** (`_metalCacheKey`), not by symbol alone. The cached number is a per-gram price in one currency, so a bare `GC=F` key lets an INR and a USD holding overwrite each other and hands one of them the other's number on the offline fallback.
 
 **Never call `kIsWeb` from a service to pick a URL.** `PlatformConfig.buildUrl()` (`core/utils/platform_config.dart`) is the single place that decides between the direct URL (mobile/desktop) and the same-origin `/api/proxy?url=…` route (web), resolved against `Uri.base` so it works unchanged on localhost, Vercel previews, and production.
 
@@ -130,7 +138,7 @@ After each successful refresh the dashboard (`features/dashboard/dashboard_scree
 
 ### App startup flow
 
-`main()` → `_bootstrap()`: error handlers → Hive init + register adapters → load/create cipher → open boxes (or error screen) → run migrations → finish interrupted cross-box writes → read settings flags → `runApp`. `KashUApp` chooses the home screen by priority: onboarding > lock screen (biometric/PIN auth) > dashboard.
+`main()` → `_preBootstrap()`: error handlers → Hive init + register adapters → load/create cipher → open `settings_box` (or error screen). `main()` then reads the crash-reporting consent flag and either runs `_bootstrap()` directly or as Sentry's `appRunner`. `_bootstrap(cipher)`: open the four data boxes → run migrations → finish interrupted cross-box writes → read settings flags → `runApp`. A failure in any of the first three lands on `_DatabaseErrorApp` rather than a blank screen. `KashUApp` chooses the home screen by priority: onboarding > lock screen (biometric/PIN auth) > dashboard.
 
 ## Release packaging
 
@@ -150,8 +158,9 @@ After each successful refresh the dashboard (`features/dashboard/dashboard_scree
 
 ## Conventions
 
-- Tests use `mocktail` and live under `test/`, mirroring the `lib/` layout. Service tests inject fake HTTP clients / dependencies via the constructor params; Hive-backed services take a `Box?` override for the same reason.
+- Tests use `mocktail` and live under `test/`, mirroring the `lib/` layout. Service tests inject fake HTTP clients / dependencies via the constructor params; Hive-backed services take a `Box?` override for the same reason, and the test opens that box against a `Directory.systemTemp.createTemp()` path (`Hive.init(tempDir.path)`), tearing it down with `Hive.deleteFromDisk()`.
+- **Two version numbers look alike — don't cross them.** `AppConstants.backupFormatVersion` (currently 2) versions the export/import JSON and is enforced by `ImportValidator`; `_currentSchemaVersion` in `HiveMigrationService` (currently 1) versions the Hive boxes on disk. Changing a `@HiveField` bumps the second; changing the shape of exported JSON bumps the first.
 - All user-facing currency formatting goes through `core/utils/currency_formatter.dart`; supported currencies and default fallback forex rates are in `AppConstants`.
 - Imported JSON is validated through `core/utils/import_validator.dart` — don't bypass it when adding import paths.
-- Network services return a `Result`/`PriceResult` rather than throwing, and retry through `core/utils/retry_helper.dart`, which deliberately does **not** retry a 429.
+- Network services return a `Result`/`PriceResult` rather than throwing, and retry through `RetryHelper.withRetry` (`core/utils/retry_helper.dart`; 3 attempts, 1s → 2s backoff). The helper itself knows nothing about HTTP status: a 429 is excluded only because the caller passes `isRetriable`, which CoinGecko and CryptoCompare match against their `'Rate limit'` error string. A new caller that omits `isRetriable` will retry a 429 like any other failure.
 - `ExportService` is a static-only class: the CSV row builders are pure functions so they can be unit-tested without the share sheet, and the capital-gains PDF splits STCG/LTCG on a simplified 12-month holding threshold.
