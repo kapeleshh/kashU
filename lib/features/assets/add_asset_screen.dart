@@ -962,6 +962,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
     final now = DateTime.now();
     final isNew = !isEditing;
+    final existing = widget.existingAsset;
+    final currentPrice = double.tryParse(_currentPriceController.text) ?? 0;
     final asset = Asset(
       id: widget.existingAsset?.id ?? const Uuid().v4(),
       name: _nameController.text.trim(),
@@ -971,7 +973,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       type: _selectedType,
       quantity: double.tryParse(_quantityController.text) ?? 0,
       purchasePrice: double.tryParse(_purchasePriceController.text) ?? 0,
-      currentPrice: double.tryParse(_currentPriceController.text) ?? 0,
+      currentPrice: currentPrice,
       currency: _selectedCurrency,
       purchaseDate: _purchaseDate,
       platform: _selectedPlatform,
@@ -980,7 +982,11 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
           : null,
       createdAt: widget.existingAsset?.createdAt ?? now,
       updatedAt: now,
-      priceUpdatedAt: now,
+      // Editing the name or notes must not stamp an old price as fresh.
+      priceUpdatedAt:
+          existing != null && existing.currentPrice == currentPrice
+              ? existing.priceUpdatedAt
+              : now,
     );
 
     if (isEditing) {
@@ -995,7 +1001,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     ref.invalidate(portfolioSummaryProvider);
 
     if (mounted) {
-      Navigator.pop(context);
+      // true = saved, so a detail screen underneath knows the edit happened
+      // (backing out pops with null).
+      Navigator.pop(context, true);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -1033,8 +1041,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               ref.invalidate(portfolioSummaryProvider);
 
               if (mounted) {
-                navigator.pop();
-                navigator.pop();
+                navigator.pop(); // the dialog
+                navigator.pop(true); // this screen — deleted counts as done
                 messenger.showSnackBar(
                   const SnackBar(
                       content:

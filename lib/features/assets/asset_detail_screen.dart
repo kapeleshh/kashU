@@ -14,13 +14,42 @@ import '../../services/price_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
 import 'add_asset_screen.dart';
 
-class AssetDetailScreen extends ConsumerWidget {
-  final Asset asset;
+/// One holding in detail. Takes the asset's id, not the [Asset] itself:
+/// every repository write stores a new object, so the screen re-reads the
+/// current copy through [assetByIdProvider] and never shows (or hands to
+/// Edit) a stale snapshot.
+class AssetDetailScreen extends ConsumerStatefulWidget {
+  final String assetId;
 
-  const AssetDetailScreen({super.key, required this.asset});
+  const AssetDetailScreen({super.key, required this.assetId});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AssetDetailScreen> createState() => _AssetDetailScreenState();
+}
+
+class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
+  /// The last copy seen, so the exit animation after a delete still shows
+  /// the holding instead of a blank page.
+  Asset? _lastSeen;
+  bool _leaving = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final live = ref.watch(assetByIdProvider(widget.assetId));
+    if (live == null) {
+      // Deleted (here, from Edit, or by a Clear All Data) — leave once the
+      // frame is done rather than navigating mid-build.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _leave());
+      final last = _lastSeen;
+      return last == null
+          ? const Scaffold(body: SizedBox.shrink())
+          : _buildFor(context, last);
+    }
+    _lastSeen = live;
+    return _buildFor(context, live);
+  }
+
+  Widget _buildFor(BuildContext context, Asset asset) {
     final isProfit = asset.gainLossPercentage >= 0;
     final gainColor =
         isProfit ? AppColors.gainOn(context) : AppColors.lossOn(context);
@@ -148,7 +177,7 @@ class AssetDetailScreen extends ConsumerWidget {
               // ── Update price ───────────────────────────────────────────────
               _SectionLabel(AppStrings.updatePrices),
               const SizedBox(height: 10),
-              _UpdatePriceCard(asset: asset),
+              _UpdatePriceCard(key: ValueKey(asset.id), asset: asset),
 
               const SizedBox(height: 18),
 
@@ -159,7 +188,7 @@ class AssetDetailScreen extends ConsumerWidget {
                     child: _GradientButton(
                       label: 'Edit',
                       icon: Icons.edit_rounded,
-                      onTap: () => _editAsset(context, ref),
+                      onTap: () => _editAsset(asset),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -168,7 +197,7 @@ class AssetDetailScreen extends ConsumerWidget {
                       label: 'Delete',
                       icon: Icons.delete_outline_rounded,
                       color: AppColors.lossOn(context),
-                      onTap: () => _confirmDelete(context, ref),
+                      onTap: () => _confirmDelete(asset),
                     ),
                   ),
                 ],
@@ -180,20 +209,35 @@ class AssetDetailScreen extends ConsumerWidget {
     );
   }
 
-  void _editAsset(BuildContext context, WidgetRef ref) {
-    final navigator = Navigator.of(context);
-    Navigator.push(
+  /// Close this screen once, however many paths ask for it (a delete here,
+  /// a save or delete from Edit, the asset disappearing under a rebuild).
+  void _leave() {
+    if (_leaving || !mounted) return;
+    final route = ModalRoute.of(context);
+    if (route == null || !route.isActive) return;
+    _leaving = true;
+    if (route.isCurrent) {
+      Navigator.of(context).pop();
+    } else {
+      // Something sits on top; drop just this route, not whatever is above.
+      Navigator.of(context).removeRoute(route);
+    }
+  }
+
+  /// Edit the asset as it is *now* — an older copy would write a stale price
+  /// back on save. Edit returns true after a save or delete (it invalidates
+  /// the providers itself); backing out returns null and keeps this screen.
+  Future<void> _editAsset(Asset asset) async {
+    final changed = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (context) => AddAssetScreen(existingAsset: asset),
       ),
-    ).then((_) {
-      ref.invalidate(allAssetsProvider);
-      navigator.pop();
-    });
+    );
+    if (changed == true) _leave();
   }
 
-  void _confirmDelete(BuildContext context, WidgetRef ref) {
+  void _confirmDelete(Asset asset) {
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -208,14 +252,14 @@ class AssetDetailScreen extends ConsumerWidget {
           ),
           TextButton(
             onPressed: () async {
-              final navigator = Navigator.of(context);
               Navigator.pop(dialogContext);
               await ref
                   .read(portfolioWriteServiceProvider)
                   .deleteAssetWithTransactions(asset.id);
+              if (!mounted) return;
               ref.invalidate(allAssetsProvider);
               ref.invalidate(portfolioSummaryProvider);
-              navigator.pop();
+              _leave();
             },
             style: TextButton.styleFrom(
               foregroundColor: AppColors.lossOn(context),
@@ -693,7 +737,7 @@ class _SoftButton extends StatelessWidget {
 class _UpdatePriceCard extends ConsumerStatefulWidget {
   final Asset asset;
 
-  const _UpdatePriceCard({required this.asset});
+  const _UpdatePriceCard({super.key, required this.asset});
 
   @override
   ConsumerState<_UpdatePriceCard> createState() => _UpdatePriceCardState();
@@ -711,6 +755,18 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
     _priceController = TextEditingController(
       text: widget.asset.currentPrice.toStringAsFixed(2),
     );
+  }
+
+  @override
+  void didUpdateWidget(covariant _UpdatePriceCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Follow a price saved elsewhere (a refresh, an edit), but never
+    // overwrite a figure the user is in the middle of typing.
+    final oldText = oldWidget.asset.currentPrice.toStringAsFixed(2);
+    if (widget.asset.currentPrice != oldWidget.asset.currentPrice &&
+        _priceController.text == oldText) {
+      _priceController.text = widget.asset.currentPrice.toStringAsFixed(2);
+    }
   }
 
   @override

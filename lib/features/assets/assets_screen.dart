@@ -298,7 +298,8 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
   void _navigateToAssetDetail(Asset asset) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => AssetDetailScreen(asset: asset)),
+      MaterialPageRoute(
+          builder: (context) => AssetDetailScreen(assetId: asset.id)),
     ).then((_) => ref.invalidate(allAssetsProvider));
   }
 }

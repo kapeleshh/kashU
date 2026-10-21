@@ -1,3 +1,4 @@
+import 'package:collection/collection.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../core/constants/app_constants.dart';
@@ -149,6 +150,18 @@ final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
 final allAssetsProvider = Provider<List<Asset>>((ref) {
   final repository = ref.watch(assetRepositoryProvider);
   return repository.getAllAssets();
+});
+
+/// The current stored copy of one asset, or null once it has been deleted.
+///
+/// AssetRepository writes a *new* object on every update, so a screen that
+/// holds on to the [Asset] it was opened with keeps showing (and saving) stale
+/// figures. Screens showing a single asset watch this instead; it follows
+/// [allAssetsProvider], which every write path invalidates.
+final assetByIdProvider = Provider.family<Asset?, String>((ref, id) {
+  return ref
+      .watch(allAssetsProvider)
+      .firstWhereOrNull((asset) => asset.id == id);
 });
 
 /// Provider for CurrencyConverterService (singleton with cache)
