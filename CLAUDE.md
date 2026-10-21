@@ -23,7 +23,7 @@ CI (`.github/workflows/ci.yml`) runs on push to `main`/`staging`/`p0-improvement
 1. `analyze-and-test` — pub get → build_runner → `flutter analyze --fatal-infos` → `flutter test --coverage`. `--fatal-infos` means even lint infos fail the build.
 2. `build-android` — runs only if the first passes; Java 17 + `flutter build apk --release` (debug-signed until a release keystore is wired in from secrets).
 
-CI pins **Flutter 3.41.6 (stable)** — match this locally to avoid analyzer drift.
+CI pins **Flutter 3.44.1 (stable)**, the same version release builds use — match it locally to avoid analyzer drift.
 
 ### Repo automation (`.claude/`)
 
@@ -155,3 +155,16 @@ After each successful refresh the dashboard (`features/dashboard/dashboard_scree
 - Imported JSON is validated through `core/utils/import_validator.dart` — don't bypass it when adding import paths.
 - Network services return a `Result`/`PriceResult` rather than throwing, and retry through `core/utils/retry_helper.dart`, which deliberately does **not** retry a 429.
 - `ExportService` is a static-only class: the CSV row builders are pure functions so they can be unit-tested without the share sheet, and the capital-gains PDF splits STCG/LTCG on a simplified 12-month holding threshold.
+
+## Phase 1 tracking (keep the WBS current)
+
+Phase 1 (the Google Play launch, v1.0 → v1.0.x) is broken into 51 work packages in the Notion database **Phase 1 Tasks** (Onelunchdev › kashU, data source `collection://9fad9df9-483a-4764-b109-5f70e4c56ae5`). Each row has a WBS ID (`1.3.1` …), a `Status` of `TODO` / `In progress` / `Completed`, an owner, dates and a "Done when" test. The plan behind it sits next to it as the **KashU Roadmap** and **Phase 1 WBS** Notion pages; interactive versions: [roadmap](https://claude.ai/artifact/2V41gMcLjFEpff9HGeZcMm), [WBS](https://claude.ai/artifact/Lv8rwoNTPe62sXKzhb5aRi).
+
+Update the board at these intervals through the Notion connector — if it isn't connected, say so instead of skipping the update:
+- **Starting a task** — set its row to `In progress`.
+- **Finishing a task** — set `Completed` only when its "Done when" is met, `flutter analyze --fatal-infos` and `flutter test` pass, and the change is committed; add the commit hash to the task page. If only a device check remains (fingerprint unlock, backup restore), leave it `In progress` and write down exactly what to test.
+- **End of every working session** — reconcile the board with `git log`: unfinished work stays `In progress` with a one-line note of what is left, and a newly found loose end becomes a new row (next free ID in its deliverable) instead of a silent fix.
+- **Every Friday** (task 1.1.5) — compare due dates with status. Window A (to 16 Nov 2026) has no slack, so a slip there moves the launch day for day; flag it.
+- **When dates or scope change** — update the row's Start/Due, and the roadmap and WBS pages when a milestone moves.
+
+Phase 1 git flow: one branch per deliverable off `staging` (`chore/release-engineering` = 1.2, `fix/p0-safety` = 1.3, `fix/p0-accuracy` = 1.4, later ones likewise), local commits with the WBS ID as the last line of the body, and nothing pushed until the owner asks.
