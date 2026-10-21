@@ -261,7 +261,6 @@ class _DashboardContent extends ConsumerWidget {
             portfolioAsync.when(
               data: (summary) => AssetAllocationChart(
                 allocation: summary.assetAllocation,
-                totalValue: summary.totalValue,
                 assetCount: summary.totalAssets,
               ),
               loading: () => const AssetAllocationChart.loading(),
