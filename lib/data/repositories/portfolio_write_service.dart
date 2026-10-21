@@ -1,8 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../core/constants/app_constants.dart';
+import '../../core/utils/transaction_validator.dart';
 import '../models/asset.dart';
+import '../models/transaction.dart';
+import '../models/transaction_type.dart';
 import 'asset_repository.dart';
 import 'transaction_repository.dart';
 
@@ -168,5 +172,140 @@ class PortfolioWriteService {
     debugPrint('[KashU] Completed ${pending.length} interrupted delete(s), '
         'removed $removed transaction(s)');
     return removed;
+  }
+
+  // ─── Recording sells and income ───────────────────────────────────────────
+
+  /// Record selling [quantity] units of [assetId] at [pricePerUnit] on
+  /// [date], and lower the holding by [quantity] as one logical write.
+  ///
+  /// The SELL carries what ExportService's capital-gains rows read: the
+  /// quantity, the per-unit price, the proceeds (quantity x price) in the
+  /// holding's currency, and the trade date. The holding's average cost
+  /// (purchasePrice) is left unchanged — it is the cost basis of the units
+  /// still held as much as of the ones sold.
+  ///
+  /// Selling everything leaves the asset with quantity 0. It is kept, not
+  /// deleted: the capital-gains report looks the sell's cost basis and
+  /// purchase date up on the asset, and a deleted asset would drop the gain.
+  ///
+  /// The transaction is written first and removed again if lowering the
+  /// quantity throws (compensation), so a failed sale leaves neither half.
+  /// Throws [ArgumentError] for input the form would reject (see
+  /// [TransactionValidator]) and [StateError] if the asset no longer exists.
+  Future<Transaction> recordSell({
+    required String assetId,
+    required double quantity,
+    required double pricePerUnit,
+    required DateTime date,
+    String? notes,
+  }) async {
+    final asset = _requireAsset(assetId);
+    _check(TransactionValidator.sellQuantity(quantity, asset.quantity));
+    _check(TransactionValidator.positive(pricePerUnit));
+    _check(TransactionValidator.date(date, purchaseDate: asset.purchaseDate));
+
+    final now = DateTime.now();
+    final sell = Transaction(
+      id: const Uuid().v4(),
+      assetId: asset.id,
+      type: TransactionType.sell,
+      quantity: quantity,
+      price: pricePerUnit,
+      amount: quantity * pricePerUnit,
+      currency: asset.currency,
+      date: date,
+      notes: _cleanNotes(notes),
+      createdAt: now,
+    );
+
+    await _transactionRepository.addTransaction(sell);
+    try {
+      await _assetRepository.updateAsset(asset.copyWith(
+        quantity:
+            TransactionValidator.remainingAfterSell(asset.quantity, quantity),
+        updatedAt: now,
+      ));
+    } catch (_) {
+      await _transactionRepository.deleteTransaction(sell.id);
+      rethrow;
+    }
+    return sell;
+  }
+
+  /// Record a dividend or interest payment of [amount], in the holding's
+  /// currency, received on [date]. Only the transactions box is written:
+  /// income does not change the holding.
+  ///
+  /// Throws [ArgumentError] for any other [type] or invalid input, and
+  /// [StateError] if the asset no longer exists.
+  Future<Transaction> recordIncome({
+    required String assetId,
+    required TransactionType type,
+    required double amount,
+    required DateTime date,
+    String? notes,
+  }) async {
+    if (type != TransactionType.dividend && type != TransactionType.interest) {
+      throw ArgumentError.value(type, 'type', 'Must be dividend or interest');
+    }
+    final asset = _requireAsset(assetId);
+    _check(TransactionValidator.positive(amount));
+    _check(TransactionValidator.date(date, purchaseDate: asset.purchaseDate));
+
+    final income = Transaction(
+      id: const Uuid().v4(),
+      assetId: asset.id,
+      type: type,
+      quantity: 0,
+      price: 0,
+      amount: amount,
+      currency: asset.currency,
+      date: date,
+      notes: _cleanNotes(notes),
+      createdAt: DateTime.now(),
+    );
+    await _transactionRepository.addTransaction(income);
+    return income;
+  }
+
+  /// Delete [transaction]. Deleting a SELL also returns its units to the
+  /// holding (when the asset still exists), so undoing a mistaken sale
+  /// restores the quantity it took away. Other types only remove the record.
+  ///
+  /// Compensated like [recordSell]: if restoring the quantity throws, the
+  /// transaction is put back and the error rethrown.
+  Future<void> deleteTransaction(Transaction transaction) async {
+    final asset = transaction.type == TransactionType.sell
+        ? _assetRepository.getAssetById(transaction.assetId)
+        : null;
+
+    await _transactionRepository.deleteTransaction(transaction.id);
+    if (asset == null) return;
+    try {
+      await _assetRepository.updateAsset(asset.copyWith(
+        quantity: asset.quantity + transaction.quantity,
+        updatedAt: DateTime.now(),
+      ));
+    } catch (_) {
+      // A fresh copy: the deleted HiveObject is detached from its box.
+      await _transactionRepository.addTransaction(transaction.copyWith());
+      rethrow;
+    }
+  }
+
+  Asset _requireAsset(String assetId) {
+    final asset = _assetRepository.getAssetById(assetId);
+    if (asset == null) throw StateError('Asset $assetId no longer exists');
+    return asset;
+  }
+
+  static void _check(String? error) {
+    if (error != null) throw ArgumentError(error);
+  }
+
+  static String? _cleanNotes(String? notes) {
+    final trimmed = notes?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
   }
 }

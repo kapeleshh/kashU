@@ -1,7 +1,9 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_decorations.dart';
+import '../../core/utils/currency_formatter.dart';
 import '../../services/fd_bond_calculator.dart';
 
 /// Deposit sub-type: Fixed Deposit or Recurring Deposit
@@ -42,11 +44,16 @@ class FdBondInputResult {
 /// - Progress bar, maturity tracking, Cr/L/K formatting
 class FdBondInputField extends StatefulWidget {
   final bool isFd; // true = Deposit (FD/RD), false = Bond
+
+  /// The currency the holding is being entered in — the amounts here are
+  /// written straight into its purchase and current price.
+  final String currency;
   final void Function(FdBondInputResult result) onChanged;
 
   const FdBondInputField({
     super.key,
     required this.isFd,
+    required this.currency,
     required this.onChanged,
   });
 
@@ -312,6 +319,10 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
     }
   }
 
+  /// Prefix for the amount fields, e.g. '₹ ' or 'CHF '.
+  String get _symbol =>
+      '${AppConstants.currencies[widget.currency] ?? widget.currency} ';
+
   @override
   Widget build(BuildContext context) {
     final accentColor = widget.isFd
@@ -367,10 +378,10 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
         if (_depositType == DepositType.recurring) ...[
           TextField(
             controller: _monthlyInstallmentController,
-            decoration: const InputDecoration(
-              labelText: 'Monthly Installment (₹)',
+            decoration: InputDecoration(
+              labelText: 'Monthly Installment',
               hintText: 'e.g. 5000',
-              prefixText: '₹ ',
+              prefixText: _symbol,
             ),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
           ),
@@ -379,9 +390,9 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
           TextField(
             controller: _principalController,
             decoration: InputDecoration(
-              labelText: widget.isFd ? 'Principal Amount (₹)' : 'Face Value (₹)',
+              labelText: widget.isFd ? 'Principal Amount' : 'Face Value',
               hintText: 'e.g. 500000',
-              prefixText: '₹ ',
+              prefixText: _symbol,
             ),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
           ),
@@ -406,10 +417,10 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
             controller: _maturityAmountController,
             decoration: InputDecoration(
               labelText: _depositType == DepositType.recurring
-                  ? 'Expected Maturity Amount (₹)'
-                  : 'Maturity Amount (₹)',
+                  ? 'Expected Maturity Amount'
+                  : 'Maturity Amount',
               hintText: 'e.g. 624580',
-              prefixText: '₹ ',
+              prefixText: _symbol,
               helperText: 'App will calculate the interest rate for you',
             ),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -474,6 +485,7 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
                 ? _derivedRate
                 : null,
             accentColor: accentColor,
+            currency: widget.currency,
           ),
         ],
       ],
@@ -617,6 +629,7 @@ class _CalculationCard extends StatelessWidget {
   final DepositType depositType;
   final double? derivedRate;
   final Color accentColor;
+  final String currency;
 
   const _CalculationCard({
     required this.result,
@@ -624,6 +637,7 @@ class _CalculationCard extends StatelessWidget {
     required this.depositType,
     required this.derivedRate,
     required this.accentColor,
+    required this.currency,
   });
 
   @override
@@ -650,7 +664,7 @@ class _CalculationCard extends StatelessWidget {
                 ),
               ),
               Text(
-                '₹${_fmt(result.currentValue)}',
+                _fmt(result.currentValue),
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   color: accentColor,
@@ -678,17 +692,17 @@ class _CalculationCard extends StatelessWidget {
           const SizedBox(height: 8),
 
           if (depositType == DepositType.recurring) ...[
-            _row(context, 'Total to Invest', '₹${_fmt(result.principal)}'),
+            _row(context, 'Total to Invest', _fmt(result.principal)),
             _row(context, 'Interest Earned',
-                '₹${_fmt(result.interestEarnedSoFar)}',
+                _fmt(result.interestEarnedSoFar),
                 color: AppColors.success),
-            _row(context, 'Maturity Value', '₹${_fmt(result.maturityValue)}'),
+            _row(context, 'Maturity Value', _fmt(result.maturityValue)),
           ] else ...[
-            _row(context, 'Principal', '₹${_fmt(result.principal)}'),
+            _row(context, 'Principal', _fmt(result.principal)),
             _row(context, 'Interest Earned',
-                '₹${_fmt(result.interestEarnedSoFar)}',
+                _fmt(result.interestEarnedSoFar),
                 color: AppColors.success),
-            _row(context, 'Maturity Value', '₹${_fmt(result.maturityValue)}'),
+            _row(context, 'Maturity Value', _fmt(result.maturityValue)),
           ],
 
           const SizedBox(height: 10),
@@ -755,14 +769,7 @@ class _CalculationCard extends StatelessWidget {
     );
   }
 
-  String _fmt(double value) {
-    if (value >= 10000000) {
-      return '${(value / 10000000).toStringAsFixed(2)} Cr';
-    } else if (value >= 100000) {
-      return '${(value / 100000).toStringAsFixed(2)} L';
-    } else if (value >= 1000) {
-      return '${(value / 1000).toStringAsFixed(2)} K';
-    }
-    return value.toStringAsFixed(2);
-  }
+  /// Compact amount in the holding's currency (Cr/L/K for INR, K/M/B else).
+  String _fmt(double value) =>
+      CurrencyFormatter.formatCompactCurrency(value, currency);
 }

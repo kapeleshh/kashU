@@ -58,6 +58,7 @@ Future<void> _doRefreshPrices(WidgetRef ref, BuildContext context) async {
         await ref.read(priceHistoryServiceProvider).recordDailySnapshot(
               total: summary.totalValue,
               assetValues: {for (final a in assets) a.id: a.currentValue},
+              assetQuantities: {for (final a in assets) a.id: a.quantity},
             );
       }
     } catch (_) {
@@ -261,7 +262,6 @@ class _DashboardContent extends ConsumerWidget {
             portfolioAsync.when(
               data: (summary) => AssetAllocationChart(
                 allocation: summary.assetAllocation,
-                totalValue: summary.totalValue,
                 assetCount: summary.totalAssets,
               ),
               loading: () => const AssetAllocationChart.loading(),

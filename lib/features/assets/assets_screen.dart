@@ -57,7 +57,9 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _Header(
-              count: assets.length,
+              // Open positions only — a fully sold holding (quantity 0) is
+              // still listed, for its history, but is no longer held.
+              count: assets.where((a) => a.quantity > 0).length,
               totalValue: totalValue,
               baseCurrency: base,
             ),
@@ -306,7 +308,8 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
   void _navigateToAssetDetail(Asset asset) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => AssetDetailScreen(asset: asset)),
+      MaterialPageRoute(
+          builder: (context) => AssetDetailScreen(assetId: asset.id)),
     ).then((_) => ref.invalidate(allAssetsProvider));
   }
 }
@@ -635,11 +638,16 @@ class _AssetTile extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '${isProfit ? '▲' : '▼'} ${CurrencyFormatter.formatPercentage(asset.gainLossPercentage.abs(), showSign: false)}',
+                    // Nothing held, so no open gain to show.
+                    asset.quantity <= 0
+                        ? 'Sold'
+                        : '${isProfit ? '▲' : '▼'} ${CurrencyFormatter.formatPercentage(asset.gainLossPercentage.abs(), showSign: false)}',
                     style: AppTheme.body(
                       size: 11.5,
                       weight: FontWeight.w800,
-                      color: changeColor,
+                      color: asset.quantity <= 0
+                          ? AppColors.textTertiaryOn(context)
+                          : changeColor,
                     ),
                   ),
                 ],

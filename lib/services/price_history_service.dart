@@ -10,15 +10,20 @@ import '../core/constants/app_constants.dart';
 /// [assetValues] maps asset id → that asset's value in its OWN currency
 /// (used for per-asset sparklines, where the trend shape — not the absolute
 /// currency — is what matters).
+/// [assetQuantities] maps asset id → units held at capture time, so today's
+/// change can tell a price move from a sale; empty on snapshots written
+/// before it was recorded.
 class DailySnapshot {
   final DateTime date; // normalised to the day (local)
   final double total;
   final Map<String, double> assetValues;
+  final Map<String, double> assetQuantities;
 
   const DailySnapshot({
     required this.date,
     required this.total,
     required this.assetValues,
+    this.assetQuantities = const {},
   });
 
   /// Day key `yyyy-MM-dd`, also the Hive box key.
@@ -33,6 +38,7 @@ class DailySnapshot {
         'date': key,
         'total': total,
         'assets': assetValues,
+        if (assetQuantities.isNotEmpty) 'qty': assetQuantities,
       };
 
   static DailySnapshot? fromJson(Map<String, dynamic> json) {
@@ -44,17 +50,21 @@ class DailySnapshot {
     final m = int.tryParse(parts[1]);
     final d = int.tryParse(parts[2]);
     if (y == null || m == null || d == null) return null;
-    final raw = json['assets'];
-    final assets = <String, double>{};
-    if (raw is Map) {
-      raw.forEach((k, v) {
-        if (k is String && v is num) assets[k] = v.toDouble();
-      });
+    Map<String, double> numbers(Object? raw) {
+      final out = <String, double>{};
+      if (raw is Map) {
+        raw.forEach((k, v) {
+          if (k is String && v is num) out[k] = v.toDouble();
+        });
+      }
+      return out;
     }
+
     return DailySnapshot(
       date: DateTime(y, m, d),
       total: (json['total'] as num?)?.toDouble() ?? 0,
-      assetValues: assets,
+      assetValues: numbers(json['assets']),
+      assetQuantities: numbers(json['qty']),
     );
   }
 }
@@ -83,10 +93,11 @@ class PriceHistoryService {
   /// Record (or overwrite) today's snapshot, then prune old entries.
   ///
   /// [total] is in the base currency; [assetValues] are per-asset native
-  /// values. Passing [now] is for tests.
+  /// values and [assetQuantities] the units held. Passing [now] is for tests.
   Future<void> recordDailySnapshot({
     required double total,
     required Map<String, double> assetValues,
+    Map<String, double> assetQuantities = const {},
     DateTime? now,
   }) async {
     if (!_isOpen) return;
@@ -95,6 +106,7 @@ class PriceHistoryService {
       date: DateTime(today.year, today.month, today.day),
       total: total,
       assetValues: assetValues,
+      assetQuantities: assetQuantities,
     );
     await _box.put(snap.key, jsonEncode(snap.toJson()));
     await _prune(today);

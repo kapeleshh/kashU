@@ -1,9 +1,16 @@
-import 'package:flutter_test/flutter_test.dart';
+import 'dart:io';
 
+import 'package:flutter_test/flutter_test.dart';
+import 'package:hive/hive.dart';
+
+import 'package:kashu/core/constants/app_constants.dart';
 import 'package:kashu/data/models/asset.dart';
 import 'package:kashu/data/models/asset_type.dart';
 import 'package:kashu/data/models/transaction.dart';
 import 'package:kashu/data/models/transaction_type.dart';
+import 'package:kashu/data/repositories/asset_repository.dart';
+import 'package:kashu/data/repositories/portfolio_write_service.dart';
+import 'package:kashu/data/repositories/transaction_repository.dart';
 import 'package:kashu/services/export_service.dart';
 
 Asset _asset({
@@ -186,6 +193,106 @@ void main() {
       final rowsUnknown =
           ExportService.transactionsCsvRows([tx], <String, String>{});
       expect(rowsUnknown[1][1], 'a1'); // fallback to id
+    });
+  });
+
+  // End to end through the real write path: a sale recorded in the app must
+  // be exactly what the capital-gains report reads — including a full exit,
+  // whose asset has to survive (at quantity 0) to supply the cost basis.
+  group('a sale recorded through PortfolioWriteService', () {
+    late Directory tempDir;
+    late AssetRepository assetRepo;
+    late TransactionRepository txRepo;
+    late PortfolioWriteService writes;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('kashu_export_test');
+      Hive.init(tempDir.path);
+      if (!Hive.isAdapterRegistered(AssetTypeAdapter().typeId)) {
+        Hive.registerAdapter(AssetTypeAdapter());
+        Hive.registerAdapter(TransactionTypeAdapter());
+        Hive.registerAdapter(AssetAdapter());
+        Hive.registerAdapter(TransactionAdapter());
+      }
+      await Hive.openBox<Asset>(AppConstants.assetsBox);
+      await Hive.openBox<Transaction>(AppConstants.transactionsBox);
+      final settings = await Hive.openBox(AppConstants.settingsBox);
+      assetRepo = AssetRepository();
+      txRepo = TransactionRepository();
+      writes = PortfolioWriteService(
+        assetRepository: assetRepo,
+        transactionRepository: txRepo,
+        settingsBox: settings,
+      );
+    });
+
+    tearDown(() async {
+      await Hive.deleteFromDisk();
+      await tempDir.delete(recursive: true);
+    });
+
+    List<CapitalGainRow> gains() {
+      final assets = assetRepo.getAllAssets();
+      return ExportService.computeCapitalGains(
+        assets,
+        txRepo.getAllTransactions(),
+        {for (final a in assets) a.id: a.name},
+      );
+    }
+
+    test('appears in the capital-gains rows with the right figures',
+        () async {
+      // 10 @ 100 bought 1 Jan 2023, with its initial BUY logged.
+      await writes.addAssetWithBuyTransaction(
+          _asset(qty: 10, buy: 100, purchaseDate: DateTime(2023, 1, 1)));
+
+      await writes.recordSell(
+        assetId: 'a1',
+        quantity: 4,
+        pricePerUnit: 130,
+        date: DateTime(2023, 6, 1),
+      );
+
+      final row = gains().single;
+      expect(row.assetName, 'Reliance');
+      expect(row.quantity, 4);
+      expect(row.salePrice, 130);
+      expect(row.saleProceeds, 520);
+      expect(row.avgCostBasis, 100);
+      expect(row.costBasis, 400);
+      expect(row.gain, 120);
+      expect(row.isLongTerm, isFalse); // 151 days
+      expect(row.currency, 'INR');
+    });
+
+    test('a full exit keeps its row — the asset stays at quantity 0',
+        () async {
+      await writes.addAssetWithBuyTransaction(
+          _asset(qty: 10, buy: 100, purchaseDate: DateTime(2023, 1, 1)));
+
+      await writes.recordSell(
+        assetId: 'a1',
+        quantity: 10,
+        pricePerUnit: 90,
+        date: DateTime(2024, 2, 1),
+      );
+
+      expect(assetRepo.getAssetById('a1')!.quantity, 0);
+      final row = gains().single;
+      expect(row.gain, -100); // 900 proceeds - 1000 cost
+      expect(row.isLongTerm, isTrue); // 396 days
+    });
+
+    test('dividends and interest never become gain rows', () async {
+      await writes.addAssetWithBuyTransaction(_asset());
+      await writes.recordIncome(
+        assetId: 'a1',
+        type: TransactionType.dividend,
+        amount: 25,
+        date: DateTime(2023, 6, 1),
+      );
+
+      expect(gains(), isEmpty);
     });
   });
 }
