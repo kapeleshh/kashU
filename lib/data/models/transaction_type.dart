@@ -62,16 +62,17 @@ extension TransactionTypeExtension on TransactionType {
     }
   }
 
-  /// Returns true if the transaction adds money/units to portfolio
-  bool get isInflow {
+  /// True when money comes *in* to the investor: a sale's proceeds, a
+  /// dividend, interest. A buy is money going out. (Cash, not units — a buy
+  /// adds units but is still an outflow.)
+  bool get isCashInflow {
     switch (this) {
       case TransactionType.buy:
-        return true;
-      case TransactionType.sell:
         return false;
+      case TransactionType.sell:
       case TransactionType.dividend:
       case TransactionType.interest:
-        return true; // Income transactions
+        return true;
     }
   }
 }

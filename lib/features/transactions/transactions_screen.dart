@@ -5,10 +5,13 @@ import '../../core/constants/app_strings.dart';
 import '../../core/theme/app_decorations.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
+import '../../core/utils/transaction_validator.dart';
+import '../../data/models/asset.dart';
 import '../../data/models/transaction.dart';
 import '../../data/models/transaction_type.dart';
 import '../../services/currency_converter_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
+import 'record_transaction_sheet.dart';
 
 class TransactionsScreen extends ConsumerStatefulWidget {
   const TransactionsScreen({super.key});
@@ -23,7 +26,10 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   @override
   Widget build(BuildContext context) {
     final txRepo = ref.watch(transactionRepositoryProvider);
-    final assetRepo = ref.watch(assetRepositoryProvider);
+    // Watched (not read from the repository) so this tab — kept alive in the
+    // dashboard's IndexedStack — rebuilds after any write: every write path
+    // invalidates allAssetsProvider.
+    final assets = ref.watch(allAssetsProvider);
 
     // Base currency + live exchange rates for VALUE conversion.
     final base = ref.watch(baseCurrencyProvider);
@@ -32,7 +38,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
 
     // Build asset-name lookup map once per build
     final assetNames = {
-      for (final a in assetRepo.getAllAssets()) a.id: a.name,
+      for (final a in assets) a.id: a.name,
     };
 
     // Apply filter
@@ -50,7 +56,10 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
             // Header — "Activity" + transaction count
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: _Header(count: allTransactions.length),
+              child: _Header(
+                count: allTransactions.length,
+                assets: assets,
+              ),
             ),
 
             const SizedBox(height: 14),
@@ -101,11 +110,21 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   }
 
   Future<void> _deleteTransaction(Transaction transaction) async {
+    // Deleting a sale hands its units back to the holding — say so.
+    final asset = transaction.type == TransactionType.sell
+        ? ref.read(assetByIdProvider(transaction.assetId))
+        : null;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Transaction'),
-        content: const Text('This will permanently remove this transaction.'),
+        content: Text(
+          asset == null
+              ? 'This will permanently remove this transaction.'
+              : 'This will permanently remove this sale and add '
+                  '${CurrencyFormatter.formatQuantity(transaction.quantity)} '
+                  'back to ${asset.name}.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -123,10 +142,19 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     );
 
     if (confirm == true && mounted) {
-      await ref
-          .read(transactionRepositoryProvider)
-          .deleteTransaction(transaction.id);
-      setState(() {}); // rebuild to reflect deletion
+      try {
+        await ref
+            .read(portfolioWriteServiceProvider)
+            .deleteTransaction(transaction);
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(AppStrings.errorGeneric)),
+        );
+        return;
+      }
+      ref.invalidate(allAssetsProvider);
+      ref.invalidate(portfolioSummaryProvider);
     }
   }
 }
@@ -135,31 +163,64 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
 
 class _Header extends StatelessWidget {
   final int count;
-  const _Header({required this.count});
+
+  /// Holdings a sale or income can be recorded against; the record action
+  /// is hidden while there are none.
+  final List<Asset> assets;
+
+  const _Header({required this.count, required this.assets});
 
   @override
   Widget build(BuildContext context) {
     final subtitle = '$count transaction${count == 1 ? '' : 's'}';
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
       children: [
-        Text(
-          'Activity',
-          style: AppTheme.heading(
-            size: 22,
-            color: Theme.of(context).colorScheme.onSurface,
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Activity',
+                style: AppTheme.heading(
+                  size: 22,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                style: AppTheme.body(
+                  size: 12.5,
+                  weight: FontWeight.w700,
+                  color: AppColors.textSecondaryOn(context),
+                ),
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 2),
-        Text(
-          subtitle,
-          style: AppTheme.body(
-            size: 12.5,
-            weight: FontWeight.w700,
-            color: AppColors.textSecondaryOn(context),
+        if (assets.isNotEmpty)
+          Tooltip(
+            message: 'Record a sale or income',
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                gradient: AppColors.primaryGradient,
+                borderRadius: BorderRadius.circular(AppRadii.avatar),
+                boxShadow: AppShadows.glow(AppColors.primary, opacity: 0.4),
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(AppRadii.avatar),
+                  onTap: () => pickAssetAndRecord(context, assets),
+                  child: const Icon(Icons.add_rounded,
+                      color: Colors.white, size: 22),
+                ),
+              ),
+            ),
           ),
-        ),
       ],
     );
   }
@@ -304,11 +365,13 @@ class _TransactionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isInflow = transaction.type.isInflow;
-    // Money out (buy) reads as a loss tone; money in reads as a gain tone.
-    final amountColor = transaction.type == TransactionType.buy
-        ? AppColors.lossOn(context)
-        : AppColors.gainOn(context);
+    // Cash-flow convention: a buy is money out ("-", neutral — paying for
+    // an asset is not a loss); a sale, dividend or interest is money in
+    // ("+", gain tone).
+    final isCashIn = transaction.type.isCashInflow;
+    final amountColor = isCashIn
+        ? AppColors.gainOn(context)
+        : Theme.of(context).colorScheme.onSurface;
 
     final title = assetName ?? transaction.type.displayName;
     final subtitle = _subtitle();
@@ -396,12 +459,12 @@ class _TransactionCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  '${isInflow ? '+' : '-'}${CurrencyFormatter.formatCurrency(amountInBase, baseCurrency)}',
+                  '${isCashIn ? '+' : '-'}${CurrencyFormatter.formatCurrency(amountInBase, baseCurrency)}',
                   style: AppTheme.heading(size: 13.5, color: amountColor),
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  _formatDate(transaction.date),
+                  TransactionValidator.formatDate(transaction.date),
                   style: AppTheme.body(
                     size: 11,
                     weight: FontWeight.w700,
@@ -430,14 +493,6 @@ class _TransactionCard extends StatelessWidget {
       parts.add(transaction.notes!.trim());
     }
     return parts.join(' · ');
-  }
-
-  static String _formatDate(DateTime dt) {
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-    ];
-    return '${dt.day} ${months[dt.month - 1]}';
   }
 }
 

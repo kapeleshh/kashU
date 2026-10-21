@@ -12,6 +12,7 @@ import '../../services/currency_converter_service.dart';
 import '../../services/gold_price_service.dart';
 import '../../services/price_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
+import '../transactions/record_transaction_sheet.dart';
 import 'add_asset_screen.dart';
 
 /// One holding in detail. Takes the asset's id, not the [Asset] itself:
@@ -180,6 +181,16 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
               _UpdatePriceCard(key: ValueKey(asset.id), asset: asset),
 
               const SizedBox(height: 18),
+
+              // ── Record a sale, dividend or interest ────────────────────────
+              _SoftButton(
+                label: 'Record sale or income',
+                icon: Icons.receipt_long_rounded,
+                color: AppColors.primary,
+                onTap: () =>
+                    showRecordTransactionSheet(context, assetId: asset.id),
+              ),
+              const SizedBox(height: 10),
 
               // ── Bottom actions: Edit (gradient) + Delete (soft) ────────────
               Row(
@@ -421,6 +432,9 @@ class _ValueCard extends StatelessWidget {
     required this.priceSeries,
   });
 
+  /// Everything sold: quantity 0, kept rather than deleted.
+  bool get isSold => asset.quantity <= 0;
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -456,23 +470,29 @@ class _ValueCard extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 9),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 5),
-                child: Text(
-                  '${isProfit ? '▲' : '▼'} ${CurrencyFormatter.formatPercentage(asset.gainLossPercentage.abs(), showSign: false)}',
-                  style: AppTheme.body(
-                    size: 13,
-                    weight: FontWeight.w800,
-                    color: gainColor,
+              if (!isSold) ...[
+                const SizedBox(width: 9),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 5),
+                  child: Text(
+                    '${isProfit ? '▲' : '▼'} ${CurrencyFormatter.formatPercentage(asset.gainLossPercentage.abs(), showSign: false)}',
+                    style: AppTheme.body(
+                      size: 13,
+                      weight: FontWeight.w800,
+                      color: gainColor,
+                    ),
                   ),
                 ),
-              ),
+              ],
             ],
           ),
           const SizedBox(height: 1),
           Text(
-            '${isProfit ? '+' : '-'}${CurrencyFormatter.formatCurrency(gainLossBase, base)} since you bought',
+            // A closed holding has no open gain; it stays for its history
+            // and so the tax report can find the sale's cost basis.
+            isSold
+                ? 'Fully sold — kept for your records and tax report'
+                : '${isProfit ? '+' : '-'}${CurrencyFormatter.formatCurrency(gainLossBase, base)} since you bought',
             style: AppTheme.body(
               size: 12,
               weight: FontWeight.w600,

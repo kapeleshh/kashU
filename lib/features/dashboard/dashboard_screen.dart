@@ -58,6 +58,7 @@ Future<void> _doRefreshPrices(WidgetRef ref, BuildContext context) async {
         await ref.read(priceHistoryServiceProvider).recordDailySnapshot(
               total: summary.totalValue,
               assetValues: {for (final a in assets) a.id: a.currentValue},
+              assetQuantities: {for (final a in assets) a.id: a.quantity},
             );
       }
     } catch (_) {

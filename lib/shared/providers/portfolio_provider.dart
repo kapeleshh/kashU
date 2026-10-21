@@ -107,6 +107,10 @@ final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
   // current rates. Per-asset (not total-vs-total) so buying/selling an asset
   // doesn't masquerade as a price move, and so a base-currency switch can't
   // corrupt the comparison. Shown only once such a baseline exists.
+  //
+  // A sale (or a quantity edit) since the snapshot changes an asset's value
+  // without any price moving, so where the snapshot recorded the quantity
+  // the baseline is rescaled to today's: prior price x units held now.
   final priorSnapshot =
       ref.watch(priceHistoryServiceProvider).previousDaySnapshot();
   double todaysChange = 0;
@@ -114,8 +118,15 @@ final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
   var hasTodaysChange = false;
   if (priorSnapshot != null) {
     for (final a in assets) {
-      final priorNative = priorSnapshot.assetValues[a.id];
-      if (priorNative == null) continue; // no baseline (asset is new)
+      final priorValue = priorSnapshot.assetValues[a.id];
+      if (priorValue == null) continue; // no baseline (asset is new)
+      final priorQty = priorSnapshot.assetQuantities[a.id];
+      if (priorQty != null && priorQty <= 0 && a.quantity > 0) {
+        continue; // held nothing then: no prior price to compare against
+      }
+      final priorNative = priorQty != null && priorQty > 0
+          ? priorValue / priorQty * a.quantity
+          : priorValue;
       hasTodaysChange = true;
       final priorBase = rates == null
           ? priorNative
@@ -141,7 +152,9 @@ final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
     assetAllocation: allocation,
     topGainers: repository.getTopGainers(),
     topLosers: repository.getTopLosers(),
-    totalAssets: assets.length,
+    // Open positions: a fully sold holding stays stored (quantity 0) for its
+    // history and cost basis, but is no longer something the user holds.
+    totalAssets: assets.where((a) => a.quantity > 0).length,
     lastUpdated: DateTime.now(),
   );
 });

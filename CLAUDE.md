@@ -99,6 +99,8 @@ Repositories (`AssetRepository`, `TransactionRepository`) are the only place tha
 
 **Cross-box writes go through `PortfolioWriteService`** (`data/repositories/portfolio_write_service.dart`), not the two repositories directly. Hive has no cross-box transactions, so a crash between the two halves of a combined write (add asset + log its BUY; delete asset + its transactions; Clear All Data) can leave the boxes inconsistent. This service compensates on failed adds and writes pending-write markers into the settings box for deletes, which `completeInterruptedWrites()` finishes on the next launch (`main.dart`). It only ever cleans up *marked* writes — orphaned transactions from any other source are real user history (they feed the Activity screen and tax exports) and must not be touched.
 
+**Sales and income** (the Record-transaction sheet, `features/transactions/record_transaction_sheet.dart`) go through `PortfolioWriteService.recordSell` / `recordIncome`, validated by `core/utils/transaction_validator.dart` on both sides. A sell logs the SELL and lowers the asset's quantity in one compensated write; the average cost (`purchasePrice`) is unchanged. **A fully sold holding stays stored at quantity 0** — `ExportService.computeCapitalGains` looks the sell's cost basis and purchase date up on the asset, so deleting it would drop the gain from the tax report; screens treat quantity 0 as "sold" (no open gain, not counted as a holding). Deleting a SELL through `deleteTransaction` hands its units back.
+
 ### Price tracking — the core domain logic
 
 `PriceService` (`services/price_service.dart`) is the abstract interface; `PriceSymbols` holds the per-`AssetType` routing rules (which types support auto-tracking, default symbols, input hints).

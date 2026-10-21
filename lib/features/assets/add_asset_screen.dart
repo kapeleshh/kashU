@@ -406,7 +406,12 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                         return AppStrings.errorRequired;
                       }
                       final parsed = double.tryParse(value);
-                      if (parsed == null || parsed <= 0) {
+                      // An edited holding may be at 0 — fully sold, kept
+                      // for its history; a new one must hold something.
+                      if (parsed == null ||
+                          !parsed.isFinite ||
+                          parsed < 0 ||
+                          (parsed == 0 && !isEditing)) {
                         return AppStrings.errorInvalidNumber;
                       }
                       return null;
