@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 
+import 'package:kashu/core/utils/currency_formatter.dart';
 import 'package:kashu/data/models/asset.dart';
 import 'package:kashu/data/models/asset_type.dart';
 import 'package:kashu/data/repositories/asset_repository.dart';
@@ -229,6 +230,38 @@ void main() {
 
     verify(() => writes.deleteAssetWithTransactions('a1')).called(1);
     expect(find.byType(AssetDetailScreen), findsNothing);
+  });
+
+  testWidgets('a deposit with terms shows them and today\'s value',
+      (tester) async {
+    final start = DateTime(2020, 1, 1);
+    final fd = Asset(
+      id: 'a1',
+      name: 'Reliance', // the name openDetail waits for
+      type: AssetType.fixedDeposit,
+      quantity: 1,
+      purchasePrice: 100000,
+      currentPrice: 100000, // frozen on the day it was added
+      currency: 'INR',
+      purchaseDate: start,
+      createdAt: start,
+      updatedAt: start,
+      depositRatePercent: 10,
+      depositMaturityDate: DateTime(2022, 1, 1),
+      depositCompounding: 'yearly',
+    );
+    store([fd]);
+    await openDetail(tester);
+
+    // Matured: worth its maturity value, not the stored 100000.
+    final value = CurrencyFormatter.formatCurrency(fd.currentValue, 'INR');
+    expect(fd.currentValue, greaterThan(120000));
+    expect(find.text(value), findsWidgets);
+    expect(find.text('10.00% p.a. · Yearly'), findsOneWidget);
+    expect(find.text('Matured on'), findsOneWidget);
+    // Nothing to update by hand.
+    expect(find.text('Update Prices'), findsNothing);
+    expect(find.byKey(const ValueKey('manual-price')), findsNothing);
   });
 
   testWidgets('Edit gets the current price and saving closes the detail',

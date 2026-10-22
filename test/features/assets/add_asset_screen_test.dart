@@ -101,7 +101,9 @@ void main() {
   }
 
   Future<void> tapSave(WidgetTester tester, String label) async {
-    await tester.ensureVisible(find.text(label));
+    // The form is a lazy list: the button may not be built until scrolled to.
+    await tester.scrollUntilVisible(find.text(label), 300,
+        scrollable: find.byType(Scrollable).first);
     await tester.tap(find.text(label));
     await tester.pump();
   }
@@ -296,6 +298,113 @@ void main() {
       expect(find.text("Couldn't delete this asset. Please try again."),
           findsOneWidget);
       expect(find.text('Edit asset'), findsOneWidget);
+    });
+  });
+
+  group('deposits', () {
+    Finder calcField(String label) => find.widgetWithText(TextField, label);
+
+    testWidgets('an RD started this month can be saved, with its terms',
+        (tester) async {
+      when(() => writes.addAssetWithBuyTransaction(any()))
+          .thenAnswer((_) async {});
+      await openForm(tester);
+      await tapType(tester, 'Deposits');
+      await tester.tap(find.text('Recurring Deposit'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(calcField('Monthly Installment'), '5000');
+      await tester.enterText(calcField('Annual Interest Rate (%)'), '7');
+      await tester.pumpAndSettle();
+      // The first instalment is paid on the start date — not 0.
+      expect(text(tester, 'asset-purchase-price'), '5000.00');
+      expect(text(tester, 'asset-current-price'), '5000.00');
+      expect(text(tester, 'asset-quantity'), '1');
+
+      await tester.enterText(
+          find.byKey(const ValueKey('asset-name')), 'HDFC RD');
+      await tapSave(tester, 'Add to portfolio');
+      await tester.pumpAndSettle();
+
+      final saved = verify(() => writes.addAssetWithBuyTransaction(
+          captureAny())).captured.single as Asset;
+      expect(saved.type, AssetType.fixedDeposit);
+      expect(saved.rdMonthlyInstalment, 5000);
+      expect(saved.depositRatePercent, 7);
+      expect(saved.depositCompounding, isNull);
+      expect(saved.depositMaturityDate, isNotNull);
+      expect(saved.purchasePrice, 5000);
+      expect(saved.totalInvested, 5000);
+      expect(saved.hasDepositSchedule, isTrue);
+    });
+
+    testWidgets('an FD is saved with the terms it grows from',
+        (tester) async {
+      when(() => writes.addAssetWithBuyTransaction(any()))
+          .thenAnswer((_) async {});
+      await openForm(tester);
+      await tapType(tester, 'Deposits');
+
+      await tester.enterText(calcField('Principal Amount'), '100000');
+      await tester.enterText(calcField('Annual Interest Rate (%)'), '7.5');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Grows daily at 7.50% p.a.'), findsOneWidget);
+
+      await tester.enterText(
+          find.byKey(const ValueKey('asset-name')), 'SBI FD');
+      await tapSave(tester, 'Add to portfolio');
+      await tester.pumpAndSettle();
+
+      final saved = verify(() => writes.addAssetWithBuyTransaction(
+          captureAny())).captured.single as Asset;
+      expect(saved.depositRatePercent, 7.5);
+      expect(saved.depositCompounding, 'quarterly');
+      expect(saved.rdMonthlyInstalment, isNull);
+      expect(saved.purchasePrice, 100000);
+      expect(saved.quantity, 1);
+    });
+
+    testWidgets('editing a deposit keeps its terms', (tester) async {
+      when(() => repo.updateAsset(any())).thenAnswer((_) async {});
+      final start = DateTime(2024, 1, 1);
+      final fd = Asset(
+        id: 'fd1',
+        name: 'SBI FD',
+        type: AssetType.fixedDeposit,
+        quantity: 1,
+        purchasePrice: 100000,
+        currentPrice: 100000, // as saved on the first day
+        currency: 'INR',
+        purchaseDate: start,
+        createdAt: start,
+        updatedAt: start,
+        depositRatePercent: 7.5,
+        depositMaturityDate: DateTime(2034, 1, 1),
+        depositCompounding: 'quarterly',
+      );
+      await openForm(tester, existing: fd);
+
+      // The calculator starts from the saved terms, and the current price
+      // is today's value rather than the frozen one.
+      expect(find.widgetWithText(TextField, '7.5'), findsOneWidget);
+      expect(text(tester, 'asset-current-price'),
+          fd.currentValue.toStringAsFixed(2));
+      expect(double.parse(text(tester, 'asset-current-price')),
+          greaterThan(100000));
+
+      await tester.enterText(
+          find.byKey(const ValueKey('asset-name')), 'SBI tax-saver FD');
+      await tapSave(tester, 'Update');
+      await tester.pumpAndSettle();
+
+      final saved =
+          verify(() => repo.updateAsset(captureAny())).captured.single as Asset;
+      expect(saved.name, 'SBI tax-saver FD');
+      expect(saved.depositRatePercent, 7.5);
+      expect(saved.depositMaturityDate, DateTime(2034, 1, 1));
+      expect(saved.depositCompounding, 'quarterly');
+      expect(saved.purchaseDate, start);
+      expect(saved.purchasePrice, 100000);
     });
   });
 

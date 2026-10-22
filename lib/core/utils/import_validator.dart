@@ -1,5 +1,6 @@
 import '../../data/models/asset_type.dart';
 import '../../data/models/transaction_type.dart';
+import '../../services/fd_bond_calculator.dart';
 import '../constants/app_constants.dart';
 import 'amount_validator.dart';
 
@@ -16,7 +17,9 @@ import 'amount_validator.dart';
 /// version managed by HiveMigrationService. The two evolve independently.
 class ImportValidator {
   static const int _currentSchemaVersion = AppConstants.backupFormatVersion;
-  static const List<int> _supportedVersions = [1, 2];
+  /// v3 added the optional deposit terms to assets; files from v1 and v2
+  /// simply lack them and import as manually valued deposits.
+  static const List<int> _supportedVersions = [1, 2, 3];
 
   /// Validate the top-level backup envelope.
   ///
@@ -139,6 +142,59 @@ class ImportValidator {
     final purchaseDate = DateTime.tryParse(a['purchaseDate'] as String? ?? '');
     if (purchaseDate != null && purchaseDate.isAfter(DateTime.now())) {
       return 'Asset[$idx]."purchaseDate" must not be in the future.';
+    }
+    return _validateDepositTerms(a, idx, purchaseDate!);
+  }
+
+  /// The optional deposit terms (backup format v3). Either none of them is
+  /// present, or a complete set on a deposit: a rate, a maturity after the
+  /// purchase (start) date, and a compounding frequency for an FD or a
+  /// monthly instalment for an RD — the same rules the deposit calculator
+  /// applies, so an import can't create a deposit the app can't value.
+  static String? _validateDepositTerms(
+    Map<String, dynamic> a,
+    int idx,
+    DateTime purchaseDate,
+  ) {
+    final rate = a['depositRatePercent'];
+    final maturity = a['depositMaturityDate'];
+    final compounding = a['depositCompounding'];
+    final instalment = a['rdMonthlyInstalment'];
+    if (rate == null &&
+        maturity == null &&
+        compounding == null &&
+        instalment == null) {
+      return null;
+    }
+
+    final label = 'Asset[$idx]';
+    final type = AssetType.values[a['type'] as int];
+    if (type != AssetType.fixedDeposit && type != AssetType.bond) {
+      return '$label has deposit terms but is not a deposit.';
+    }
+    final rateErr = _checkAmount(rate, '$label."depositRatePercent"',
+        allowZero: false);
+    if (rateErr != null) return rateErr;
+    if ((rate as num) > DepositSchedule.maxRatePercent) {
+      return '$label."depositRatePercent" must be at most '
+          '${DepositSchedule.maxRatePercent.toStringAsFixed(0)}.';
+    }
+    final maturityDate = maturity is String ? DateTime.tryParse(maturity) : null;
+    if (maturityDate == null || maturityDate.isAfter(DateTime(2100))) {
+      return '$label."depositMaturityDate" must be a valid ISO-8601 date '
+          'string.';
+    }
+    if (!maturityDate.isAfter(purchaseDate)) {
+      return '$label."depositMaturityDate" must be after its purchaseDate.';
+    }
+    if (instalment != null) {
+      return _checkAmount(instalment, '$label."rdMonthlyInstalment"',
+          allowZero: false);
+    }
+    if (compounding is! String ||
+        CompoundingFrequency.fromName(compounding) == null) {
+      return '$label."depositCompounding" must be one of '
+          '${CompoundingFrequency.values.map((f) => f.name).join(', ')}.';
     }
     return null;
   }

@@ -97,6 +97,46 @@ void main() {
     expect(summary.totalAssets, 1);
   });
 
+  test('a deposit with terms counts at today\'s value, interest included',
+      () async {
+    final now = DateTime.now();
+    final opened = DateTime(now.year - 1, now.month, now.day);
+    final fd = Asset(
+      id: 'fd',
+      name: 'SBI FD',
+      type: AssetType.fixedDeposit,
+      quantity: 1,
+      purchasePrice: 100000,
+      currentPrice: 100000, // stored the day it was added, never refreshed
+      currency: 'INR',
+      purchaseDate: opened,
+      createdAt: opened,
+      updatedAt: opened,
+      depositRatePercent: 10,
+      depositMaturityDate: DateTime(now.year + 2, now.month, now.day),
+      depositCompounding: 'yearly',
+    );
+    // Yesterday's snapshot held the deposit a day's interest lower.
+    final yesterday = DailySnapshot(
+      date: now.subtract(const Duration(days: 1)),
+      total: fd.currentPriceOn(now.subtract(const Duration(days: 1))),
+      assetValues: {
+        'fd': fd.currentPriceOn(now.subtract(const Duration(days: 1))),
+      },
+      assetQuantities: const {'fd': 1},
+    );
+
+    final summary = await summaryFor([fd], yesterday);
+
+    expect(summary.totalInvested, 100000);
+    expect(summary.totalValue, closeTo(110000, 30)); // a year at 10%
+    expect(summary.totalGainLoss, closeTo(10000, 30));
+    // The day's interest shows up as today's change, with no refresh.
+    expect(summary.hasTodaysChange, isTrue);
+    expect(summary.todaysChange, greaterThan(0));
+    expect(summary.todaysChange, lessThan(40)); // ~110000 × 10% / 365
+  });
+
   test('a snapshot round-trips its quantities through JSON', () {
     final snap = _yesterday();
     final back = DailySnapshot.fromJson(snap.toJson())!;

@@ -16,6 +16,7 @@ import '../../shared/widgets/fd_bond_input_field.dart';
 import '../../shared/widgets/mutual_fund_search_field.dart';
 import '../../shared/widgets/stock_search_field.dart';
 import '../../services/coingecko_service.dart';
+import '../../services/fd_bond_calculator.dart';
 import '../../services/currency_converter_service.dart';
 import '../../services/mutual_fund_service.dart';
 import '../../services/price_service.dart';
@@ -90,9 +91,14 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   _FetchStatus? _cryptoFetchStatus;
   CryptoSearchResult? _selectedCrypto;
 
-  // FD/Bond calculator state (stored for potential future use e.g. maturity date in notes)
-  // ignore: unused_field
-  FdBondInputResult? _fdBondResult;
+  /// A deposit's terms from the calculator (or, when editing, the ones it
+  /// was saved with). While set, the deposit is valued from them — its
+  /// purchase and current price are filled in, not typed — and they are
+  /// saved with it so its value keeps growing. Null: valued by hand.
+  DepositSchedule? _depositTerms;
+
+  /// Whether the open deposit is valued from [_depositTerms].
+  bool get _hasDepositTerms => _usesFdBondCalculator && _depositTerms != null;
 
   /// True while a save or delete is being written. Save is disabled
   /// meanwhile, so a second tap can't add the holding twice.
@@ -149,6 +155,15 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       // Gold and silver share AssetType.gold — the stored symbol is the only
       // thing that tells them apart, so the chip has to be restored from it.
       _isSilver = PriceSymbols.isComexSilver(asset.symbol);
+      _depositTerms = asset.depositSchedule;
+      if (_depositTerms != null) {
+        // Today's figures, not the ones frozen on the day it was saved.
+        final today = DateTime.now();
+        _purchasePriceController.text =
+            asset.investedPriceOn(today).toStringAsFixed(2);
+        _currentPriceController.text =
+            asset.currentPriceOn(today).toStringAsFixed(2);
+      }
     }
   }
 
@@ -266,24 +281,15 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               const SizedBox(height: 16),
             ],
 
-            // FD/Bond calculator
-            if (_usesFdBondCalculator && !isEditing) ...[
+            // FD/Bond calculator — also when editing, so a deposit saved
+            // without terms can be given them and saved terms corrected.
+            if (_usesFdBondCalculator) ...[
               FdBondInputField(
                 isFd: _selectedType == AssetType.fixedDeposit,
                 currency: _selectedCurrency,
-                onChanged: (result) {
-                  setState(() {
-                    _fdBondResult = result;
-                    // Auto-fill principal as purchase price
-                    _purchasePriceController.text =
-                        result.principal.toStringAsFixed(2);
-                    // Auto-fill current value
-                    _currentPriceController.text =
-                        result.calculation.currentValue.toStringAsFixed(2);
-                    // Set purchase date to start date
-                    _purchaseDate = result.startDate;
-                  });
-                },
+                initial: _depositTerms,
+                onChanged: (result) =>
+                    setState(() => _applyDepositTerms(result)),
               ),
               const SizedBox(height: 16),
             ],
@@ -425,7 +431,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                       labelText: AppStrings.purchasePrice,
                       prefixText:
                           '${AppConstants.currencies[_selectedCurrency] ?? _selectedCurrency} ',
+                      helperText: _hasDepositTerms ? 'From the deposit' : null,
                     ),
+                    readOnly: _hasDepositTerms,
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
                     validator: (value) => AmountValidator.validate(value),
@@ -445,7 +453,11 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                 prefixText:
                     '${AppConstants.currencies[_selectedCurrency] ?? _selectedCurrency} ',
                 hintText: _isFetchingStockPrice ? 'Fetching...' : null,
+                helperText: _depositGrowthNote,
+                helperMaxLines: 2,
               ),
+              // A deposit with terms is valued from them every day.
+              readOnly: _hasDepositTerms,
               keyboardType:
                   const TextInputType.numberWithOptions(decimal: true),
               // 0 is a real price: a delisted share, a written-off loan.
@@ -455,52 +467,54 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
             const SizedBox(height: 16),
 
-            // Purchase Date
-            Material(
-              color: Theme.of(context).colorScheme.surface,
-              borderRadius: BorderRadius.circular(AppRadii.small),
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                onTap: _selectDate,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 14),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              AppStrings.purchaseDate,
-                              style: AppTheme.body(
-                                size: 12,
-                                color: AppColors.textSecondaryOn(context),
+            // Purchase Date — for a deposit with terms it is the calculator's
+            // start date, set there.
+            if (!_hasDepositTerms) ...[
+              Material(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: BorderRadius.circular(AppRadii.small),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: _selectDate,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 14),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                AppStrings.purchaseDate,
+                                style: AppTheme.body(
+                                  size: 12,
+                                  color: AppColors.textSecondaryOn(context),
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 3),
-                            Text(
-                              '${_purchaseDate.day}/${_purchaseDate.month}/${_purchaseDate.year}',
-                              style: AppTheme.body(
-                                size: 15,
-                                weight: FontWeight.w700,
-                                color:
-                                    Theme.of(context).colorScheme.onSurface,
+                              const SizedBox(height: 3),
+                              Text(
+                                '${_purchaseDate.day}/${_purchaseDate.month}/${_purchaseDate.year}',
+                                style: AppTheme.body(
+                                  size: 15,
+                                  weight: FontWeight.w700,
+                                  color:
+                                      Theme.of(context).colorScheme.onSurface,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                      Icon(Icons.calendar_today_rounded,
-                          size: 18,
-                          color: AppColors.textSecondaryOn(context)),
-                    ],
+                        Icon(Icons.calendar_today_rounded,
+                            size: 18,
+                            color: AppColors.textSecondaryOn(context)),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-
-            const SizedBox(height: 16),
+              const SizedBox(height: 16),
+            ],
 
             // Platform Dropdown
             DropdownButtonFormField<String>(
@@ -671,7 +685,34 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     _cryptoFetchStatus = null;
     _autofillQuote = null;
     _autofilledPriceText = null;
-    _fdBondResult = null;
+    _depositTerms = null;
+  }
+
+  /// Take the calculator's latest figures. Call inside setState.
+  void _applyDepositTerms(FdBondInputResult? result) {
+    // Invalid input drops the terms; the last figures stay, now editable,
+    // and the deposit would be saved as manually valued.
+    _depositTerms = result?.schedule;
+    if (result == null) return;
+    _purchasePriceController.text = result.principal.toStringAsFixed(2);
+    _currentPriceController.text =
+        result.calculation.currentValue.toStringAsFixed(2);
+    _purchaseDate = result.startDate;
+    // A deposit is one holding; the figures above are its whole amount.
+    if (_quantityController.text.trim().isEmpty) {
+      _quantityController.text = '1';
+    }
+  }
+
+  /// Under the current-price field of a deposit with terms: how it grows.
+  String? get _depositGrowthNote {
+    final terms = _depositTerms;
+    if (!_hasDepositTerms || terms == null) return null;
+    final maturity = terms.maturityDate;
+    final date = '${maturity.day}/${maturity.month}/${maturity.year}';
+    if (terms.isMaturedOn(DateTime.now())) return 'Matured on $date';
+    return 'Grows daily at ${terms.annualRatePercent.toStringAsFixed(2)}% '
+        'p.a. until $date';
   }
 
   Future<bool> _confirmTypeChange(AssetType type) async {
@@ -1196,8 +1237,11 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     final now = DateTime.now();
     final isNew = !isEditing;
     final existing = widget.existingAsset;
-    // The validators above passed, so these parse to finite numbers.
-    final currentPrice = AmountValidator.parse(_currentPriceController.text)!;
+    final terms = _hasDepositTerms ? _depositTerms : null;
+    // The validators above passed, so these parse to finite numbers. A
+    // deposit with terms takes its figures from them, unrounded.
+    final currentPrice = terms?.valueAsOf(now) ??
+        AmountValidator.parse(_currentPriceController.text)!;
     final asset = Asset(
       id: widget.existingAsset?.id ?? const Uuid().v4(),
       name: _nameController.text.trim(),
@@ -1206,10 +1250,11 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
           : null,
       type: _selectedType,
       quantity: AmountValidator.parse(_quantityController.text)!,
-      purchasePrice: AmountValidator.parse(_purchasePriceController.text)!,
+      purchasePrice: terms?.investedAsOf(now) ??
+          AmountValidator.parse(_purchasePriceController.text)!,
       currentPrice: currentPrice,
       currency: _selectedCurrency,
-      purchaseDate: _purchaseDate,
+      purchaseDate: terms?.startDate ?? _purchaseDate,
       platform: _selectedPlatform,
       notes: _notesController.text.trim().isNotEmpty
           ? _notesController.text.trim()
@@ -1221,6 +1266,13 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
           existing != null && existing.currentPrice == currentPrice
               ? existing.priceUpdatedAt
               : now,
+      // Kept so the deposit is valued from them from now on. Any other
+      // holding (or a deposit without terms) saves none.
+      depositRatePercent: terms?.annualRatePercent,
+      depositMaturityDate: terms?.maturityDate,
+      depositCompounding:
+          terms == null || terms.isRecurring ? null : terms.compounding.name,
+      rdMonthlyInstalment: terms?.monthlyInstalment,
     );
 
     setState(() => _isWriting = true);

@@ -55,7 +55,7 @@ class AppConstants {
   /// Version of the backup/export JSON file format. Independent of the Hive
   /// on-disk schema version tracked by HiveMigrationService — bump this only
   /// when the structure of exported JSON changes.
-  static const int backupFormatVersion = 2;
+  static const int backupFormatVersion = 3;
 
   /// The public privacy policy (served from web/privacy.html) and the support
   /// address it, Settings and the Play listing all point to.

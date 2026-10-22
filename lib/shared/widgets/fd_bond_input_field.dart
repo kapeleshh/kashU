@@ -15,6 +15,8 @@ enum DepositInputMode { byRate, byMaturity }
 
 /// Result passed back to the parent when the user fills in deposit details.
 class FdBondInputResult {
+  /// An FD's principal, or what an RD has paid in so far (at least its
+  /// first instalment once it has started).
   final double principal;
   final double annualRatePercent;
   final DateTime startDate;
@@ -23,6 +25,9 @@ class FdBondInputResult {
   final FdBondCalculationResult calculation;
   final DepositType depositType;
   final double? monthlyInstallment; // for RD
+
+  /// An RD's instalments over the whole tenure; null for an FD.
+  final double? totalToInvest;
 
   const FdBondInputResult({
     required this.principal,
@@ -33,7 +38,20 @@ class FdBondInputResult {
     required this.calculation,
     required this.depositType,
     this.monthlyInstallment,
+    this.totalToInvest,
   });
+
+  /// The terms to store with the holding, so its value keeps growing after
+  /// the day it was added.
+  DepositSchedule get schedule => DepositSchedule(
+        startDate: startDate,
+        maturityDate: maturityDate,
+        annualRatePercent: annualRatePercent,
+        principal: principal,
+        compounding: compounding,
+        monthlyInstalment:
+            depositType == DepositType.recurring ? monthlyInstallment : null,
+      );
 }
 
 /// Smart input widget for Fixed Deposits, Recurring Deposits, and Bonds.
@@ -49,13 +67,20 @@ class FdBondInputField extends StatefulWidget {
   /// The currency the holding is being entered in — the amounts here are
   /// written straight into its purchase and current price.
   final String currency;
-  final void Function(FdBondInputResult result) onChanged;
+
+  /// Terms to start from, when editing a deposit that has them.
+  final DepositSchedule? initial;
+
+  /// Called with the deposit's details whenever they change, and with null
+  /// whenever they stop adding up (a field cleared or out of range).
+  final void Function(FdBondInputResult? result) onChanged;
 
   const FdBondInputField({
     super.key,
     required this.isFd,
     required this.currency,
     required this.onChanged,
+    this.initial,
   });
 
   @override
@@ -74,12 +99,28 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
   DepositType _depositType = DepositType.fixed;
   DepositInputMode _inputMode = DepositInputMode.byRate;
 
-  FdBondCalculationResult? _result;
-  double? _derivedRate; // back-calculated rate when using byMaturity mode
+  /// The current calculation, or null while the inputs don't add up.
+  FdBondInputResult? _input;
 
   @override
   void initState() {
     super.initState();
+    final initial = widget.initial;
+    if (initial != null) {
+      _startDate = initial.startDate;
+      _maturityDate = initial.maturityDate;
+      _rateController.text = _plain(initial.annualRatePercent);
+      if (initial.isRecurring) {
+        _depositType = DepositType.recurring;
+        _monthlyInstallmentController.text =
+            _plain(initial.monthlyInstalment!);
+      } else {
+        _compounding = initial.compounding;
+        _principalController.text = _plain(initial.principal);
+      }
+      // Shown, not reported: the parent already holds these terms.
+      _input = _compute();
+    }
     _principalController.addListener(_recalculate);
     _rateController.addListener(_recalculate);
     _maturityAmountController.addListener(_recalculate);
@@ -95,69 +136,63 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
     super.dispose();
   }
 
+  /// 5000 rather than 5000.0, but 7.25 as typed.
+  static String _plain(double value) => value == value.roundToDouble()
+      ? value.toStringAsFixed(0)
+      : value.toString();
+
   void _recalculate() {
-    final principal = AmountValidator.parse(_principalController.text);
-    if (principal == null || principal <= 0) {
-      setState(() { _result = null; _derivedRate = null; });
-      return;
-    }
-    if (_maturityDate.isBefore(_startDate)) {
-      setState(() { _result = null; _derivedRate = null; });
-      return;
-    }
-
-    if (_depositType == DepositType.recurring) {
-      _recalculateRd(principal);
-      return;
-    }
-
-    if (_inputMode == DepositInputMode.byRate) {
-      _recalculateByRate(principal);
-    } else {
-      _recalculateByMaturity(principal);
-    }
+    final input = _compute();
+    setState(() => _input = input);
+    widget.onChanged(input);
   }
 
-  void _recalculateByRate(double principal) {
+  /// The deposit as currently entered, or null when it doesn't add up.
+  FdBondInputResult? _compute() {
+    if (!_maturityDate.isAfter(_startDate)) return null;
+    if (_depositType == DepositType.recurring) return _computeRd();
+    return _inputMode == DepositInputMode.byRate
+        ? _computeFdByRate()
+        : _computeFdByMaturity();
+  }
+
+  /// The typed rate when it is a usable one (above 0, at most 100% p.a.).
+  double? _typedRate() {
     final rate = AmountValidator.parse(_rateController.text);
-    if (rate == null || rate <= 0) {
-      setState(() { _result = null; _derivedRate = null; });
-      return;
+    if (rate == null || rate <= 0 || rate > DepositSchedule.maxRatePercent) {
+      return null;
     }
-
-    final result = FdBondCalculator.calculate(
-      principal: principal,
-      annualRatePercent: rate,
-      startDate: _startDate,
-      maturityDate: _maturityDate,
-      compounding: _compounding,
-    );
-
-    setState(() {
-      _result = result;
-      _derivedRate = rate;
-    });
-
-    _notifyParent(result, rate, principal);
+    return rate;
   }
 
-  void _recalculateByMaturity(double principal) {
-    final maturityAmount = AmountValidator.parse(_maturityAmountController.text);
-    if (maturityAmount == null || maturityAmount <= principal) {
-      setState(() { _result = null; _derivedRate = null; });
-      return;
+  double? _typedPrincipal() {
+    final principal = AmountValidator.parse(_principalController.text);
+    return principal == null || principal <= 0 ? null : principal;
+  }
+
+  FdBondInputResult? _computeFdByRate() {
+    final principal = _typedPrincipal();
+    final rate = _typedRate();
+    if (principal == null || rate == null) return null;
+    return _fdResult(principal, rate);
+  }
+
+  FdBondInputResult? _computeFdByMaturity() {
+    final principal = _typedPrincipal();
+    final maturityAmount =
+        AmountValidator.parse(_maturityAmountController.text);
+    if (principal == null ||
+        maturityAmount == null ||
+        maturityAmount <= principal) {
+      return null;
     }
 
     // Back-calculate the annual interest rate from maturity amount
-    final totalDays = _maturityDate.difference(_startDate).inDays;
-    if (totalDays <= 0) {
-      setState(() { _result = null; _derivedRate = null; });
-      return;
-    }
+    final totalDays = DateUtils.dateOnly(_maturityDate)
+        .difference(DateUtils.dateOnly(_startDate))
+        .inDays;
+    if (totalDays <= 0) return null;
     final tTotal = totalDays / 365.0;
-    final n = _compounding == CompoundingFrequency.simple
-        ? 1.0
-        : _compounding.periodsPerYear.toDouble();
 
     double derivedRate;
     if (_compounding == CompoundingFrequency.simple) {
@@ -165,140 +200,125 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
       derivedRate = ((maturityAmount / principal) - 1) / tTotal * 100;
     } else {
       // A = P(1 + r/n)^(nt) → r = n × ((A/P)^(1/(nt)) - 1)
+      final n = _compounding.periodsPerYear.toDouble();
       final ratio = maturityAmount / principal;
       final exponent = 1.0 / (n * tTotal);
       derivedRate = n * (math.pow(ratio, exponent).toDouble() - 1) * 100;
     }
 
-    if (derivedRate <= 0 || derivedRate > 100) {
-      setState(() { _result = null; _derivedRate = null; });
-      return;
+    if (!derivedRate.isFinite ||
+        derivedRate <= 0 ||
+        derivedRate > DepositSchedule.maxRatePercent) {
+      return null;
     }
+    return _fdResult(principal, derivedRate);
+  }
 
-    final result = FdBondCalculator.calculate(
+  FdBondInputResult _fdResult(double principal, double rate) {
+    final calculation = FdBondCalculator.calculate(
       principal: principal,
-      annualRatePercent: derivedRate,
+      annualRatePercent: rate,
       startDate: _startDate,
       maturityDate: _maturityDate,
       compounding: _compounding,
     );
-
-    setState(() {
-      _result = result;
-      _derivedRate = derivedRate;
-    });
-
-    _notifyParent(result, derivedRate, principal);
-  }
-
-  void _recalculateRd(double monthlyInstallment) {
-    final installment = AmountValidator.parse(_monthlyInstallmentController.text);
-    if (installment == null || installment <= 0) {
-      setState(() { _result = null; _derivedRate = null; });
-      return;
-    }
-
-    double rate;
-    if (_inputMode == DepositInputMode.byRate) {
-      final r = AmountValidator.parse(_rateController.text);
-      if (r == null || r <= 0) {
-        setState(() { _result = null; _derivedRate = null; });
-        return;
-      }
-      rate = r;
-    } else {
-      // For RD by maturity: back-calculate rate
-      final maturityAmount = AmountValidator.parse(_maturityAmountController.text);
-      if (maturityAmount == null || maturityAmount <= 0) {
-        setState(() { _result = null; _derivedRate = null; });
-        return;
-      }
-      final months = _maturityDate.difference(_startDate).inDays ~/ 30;
-      if (months <= 0) {
-        setState(() { _result = null; _derivedRate = null; });
-        return;
-      }
-      // Approximate: use binary search to find rate
-      rate = _findRdRate(installment, maturityAmount, months);
-      if (rate <= 0) {
-        setState(() { _result = null; _derivedRate = null; });
-        return;
-      }
-    }
-
-    // RD maturity formula: M = R × [(1+i)^n - 1] / i × (1+i)
-    // where i = monthly rate, n = number of months
-    final months = _maturityDate.difference(_startDate).inDays ~/ 30;
-    final i = rate / 100 / 12; // monthly rate
-    final n = months.toDouble();
-    final maturityValue = installment * ((math.pow(1 + i, n) - 1) / i) * (1 + i);
-
-    // Current value: proportional to months elapsed
-    final elapsedMonths = DateTime.now().difference(_startDate).inDays ~/ 30;
-    final effectiveMonths = elapsedMonths.clamp(0, months);
-    final currentValue = installment * ((math.pow(1 + i, effectiveMonths) - 1) / i) * (1 + i);
-    final totalInvested = installment * months;
-    final principal = installment * effectiveMonths; // invested so far
-
-    // Create a synthetic result using FdBondCalculationResult
-    final result = FdBondCalculationResult(
-      principal: totalInvested, // total to be invested
-      annualRatePercent: rate,
-      startDate: _startDate,
-      maturityDate: _maturityDate,
-      compounding: CompoundingFrequency.monthly,
-      currentValue: currentValue.clamp(0, maturityValue),
-      maturityValue: maturityValue,
-    );
-
-    setState(() {
-      _result = result;
-      _derivedRate = rate;
-    });
-
-    widget.onChanged(FdBondInputResult(
+    return FdBondInputResult(
       principal: principal,
       annualRatePercent: rate,
       startDate: _startDate,
       maturityDate: _maturityDate,
+      compounding: _compounding,
+      calculation: calculation,
+      depositType: _depositType,
+    );
+  }
+
+  FdBondInputResult? _computeRd() {
+    final installment =
+        AmountValidator.parse(_monthlyInstallmentController.text);
+    if (installment == null || installment <= 0) return null;
+    final instalments =
+        FdBondCalculator.rdInstalmentCount(_startDate, _maturityDate);
+    if (instalments < 1) return null;
+
+    double? rate;
+    if (_inputMode == DepositInputMode.byRate) {
+      rate = _typedRate();
+    } else {
+      final maturityAmount =
+          AmountValidator.parse(_maturityAmountController.text);
+      // Anything up to the instalments themselves means no interest at all.
+      if (maturityAmount == null ||
+          maturityAmount <= installment * instalments) {
+        return null;
+      }
+      rate = _findRdRate(installment, maturityAmount);
+    }
+    if (rate == null) return null;
+
+    final rd = FdBondCalculator.calculateRecurring(
+      monthlyInstalment: installment,
+      annualRatePercent: rate,
+      startDate: _startDate,
+      maturityDate: _maturityDate,
+    );
+    final calculation = FdBondCalculationResult(
+      principal: rd.investedSoFar,
+      annualRatePercent: rate,
+      startDate: _startDate,
+      maturityDate: _maturityDate,
       compounding: CompoundingFrequency.monthly,
-      calculation: result,
+      currentValue: rd.currentValue,
+      maturityValue: rd.maturityValue,
+    );
+    return FdBondInputResult(
+      // Paid in so far: the first instalment from the start date on, so an
+      // RD opened this month is never a holding worth 0.
+      principal: rd.investedSoFar,
+      annualRatePercent: rate,
+      startDate: _startDate,
+      maturityDate: _maturityDate,
+      compounding: CompoundingFrequency.monthly,
+      calculation: calculation,
       depositType: DepositType.recurring,
       monthlyInstallment: installment,
-    ));
+      totalToInvest: rd.totalToInvest,
+    );
   }
 
-  /// Binary search to find RD rate given maturity amount
-  double _findRdRate(double installment, double targetMaturity, int months) {
-    double lo = 0.01, hi = 50.0;
-    for (int iter = 0; iter < 100; iter++) {
+  /// The annual rate at which [installment] a month grows to
+  /// [targetMaturity] by the maturity date, found by bisection (maturity
+  /// value rises with the rate). Null when no rate up to the cap gets there.
+  double? _findRdRate(double installment, double targetMaturity) {
+    double maturityAt(double rate) => FdBondCalculator.calculateRecurring(
+          monthlyInstalment: installment,
+          annualRatePercent: rate,
+          startDate: _startDate,
+          maturityDate: _maturityDate,
+          asOf: _maturityDate,
+        ).maturityValue;
+
+    var lo = 0.0;
+    var hi = DepositSchedule.maxRatePercent;
+    if (maturityAt(hi) < targetMaturity) return null;
+    for (var iter = 0; iter < 60; iter++) {
       final mid = (lo + hi) / 2;
-      final i = mid / 100 / 12;
-      final n = months.toDouble();
-      final m = installment * ((math.pow(1 + i, n) - 1) / i) * (1 + i);
-      if ((m - targetMaturity).abs() < 0.01) { return mid; }
-      if (m < targetMaturity) { lo = mid; } else { hi = mid; }
+      if (maturityAt(mid) < targetMaturity) {
+        lo = mid;
+      } else {
+        hi = mid;
+      }
     }
-    return (lo + hi) / 2;
-  }
-
-  void _notifyParent(FdBondCalculationResult result, double rate, double principal) {
-    widget.onChanged(FdBondInputResult(
-      principal: principal,
-      annualRatePercent: rate,
-      startDate: _startDate,
-      maturityDate: _maturityDate,
-      compounding: _compounding,
-      calculation: result,
-      depositType: _depositType,
-    ));
+    final rate = (lo + hi) / 2;
+    return rate > 0 ? rate : null;
   }
 
   Future<void> _pickStartDate() async {
     final picked = await showDatePicker(
       context: context,
       initialDate: _startDate,
-      firstDate: DateTime(2000),
+      // Matches the asset form's purchase-date range.
+      firstDate: DateTime(1990),
       lastDate: DateTime.now(),
     );
     if (picked != null) {
@@ -308,11 +328,15 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
   }
 
   Future<void> _pickMaturityDate() async {
+    final firstDate = DateUtils.dateOnly(_startDate).add(const Duration(days: 1));
     final picked = await showDatePicker(
       context: context,
-      initialDate: _maturityDate,
-      firstDate: _startDate.add(const Duration(days: 1)),
-      lastDate: DateTime(2060),
+      // A start date moved past the old maturity must not put the initial
+      // date outside the picker's range (that asserts).
+      initialDate:
+          _maturityDate.isBefore(firstDate) ? firstDate : _maturityDate,
+      firstDate: firstDate,
+      lastDate: DateTime(2099, 12, 31),
     );
     if (picked != null) {
       setState(() => _maturityDate = picked);
@@ -324,6 +348,18 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
   /// the shared rule (finite and more than 0).
   String? _amountError(TextEditingController controller) =>
       AmountValidator.validate(controller.text, required: false);
+
+  /// The rate field's error: the shared rule, plus the 100% p.a. cap.
+  String? get _rateError {
+    final basic = _amountError(_rateController);
+    if (basic != null) return basic;
+    final rate = AmountValidator.parse(_rateController.text);
+    if (rate != null && rate > DepositSchedule.maxRatePercent) {
+      return 'At most ${DepositSchedule.maxRatePercent.toStringAsFixed(0)}% '
+          'p.a.';
+    }
+    return null;
+  }
 
   /// Prefix for the amount fields, e.g. '₹ ' or 'CHF '.
   String get _symbol =>
@@ -417,7 +453,7 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
                   : 'Coupon Rate (% p.a.)',
               hintText: 'e.g. 7.5',
               suffixText: '% p.a.',
-              errorText: _amountError(_rateController),
+              errorText: _rateError,
             ),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
           ),
@@ -484,15 +520,16 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
         ],
 
         // Calculation result card
-        if (_result != null) ...[
+        if (_input != null) ...[
           _CalculationCard(
-            result: _result!,
+            result: _input!.calculation,
             isFd: widget.isFd,
             depositType: _depositType,
+            totalToInvest: _input!.totalToInvest,
             // Only worth showing when the app derived the rate from the
             // maturity amount — in by-rate mode the user just typed it.
             derivedRate: _inputMode == DepositInputMode.byMaturity
-                ? _derivedRate
+                ? _input!.annualRatePercent
                 : null,
             accentColor: accentColor,
             currency: widget.currency,
@@ -515,10 +552,7 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
       ),
       selected: isSelected,
       onSelected: (_) {
-        setState(() {
-          _depositType = type;
-          _result = null;
-        });
+        setState(() => _depositType = type);
         _recalculate();
       },
       selectedColor: color,
@@ -538,10 +572,7 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
     final isSelected = _inputMode == mode;
     return GestureDetector(
       onTap: () {
-        setState(() {
-          _inputMode = mode;
-          _result = null;
-        });
+        setState(() => _inputMode = mode);
         _recalculate();
       },
       child: Container(
@@ -634,12 +665,16 @@ class _DateTile extends StatelessWidget {
 }
 
 class _CalculationCard extends StatelessWidget {
+  /// For an RD, `principal` is what has been paid in so far.
   final FdBondCalculationResult result;
   final bool isFd;
   final DepositType depositType;
   final double? derivedRate;
   final Color accentColor;
   final String currency;
+
+  /// An RD's instalments over the whole tenure.
+  final double? totalToInvest;
 
   const _CalculationCard({
     required this.result,
@@ -648,6 +683,7 @@ class _CalculationCard extends StatelessWidget {
     required this.derivedRate,
     required this.accentColor,
     required this.currency,
+    this.totalToInvest,
   });
 
   @override
@@ -702,10 +738,12 @@ class _CalculationCard extends StatelessWidget {
           const SizedBox(height: 8),
 
           if (depositType == DepositType.recurring) ...[
-            _row(context, 'Total to Invest', _fmt(result.principal)),
+            _row(context, 'Paid in so far', _fmt(result.principal)),
             _row(context, 'Interest Earned',
                 _fmt(result.interestEarnedSoFar),
                 color: AppColors.success),
+            if (totalToInvest != null)
+              _row(context, 'Total to Invest', _fmt(totalToInvest!)),
             _row(context, 'Maturity Value', _fmt(result.maturityValue)),
           ] else ...[
             _row(context, 'Principal', _fmt(result.principal)),

@@ -133,7 +133,7 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
                     child: _StatTile(
                       label: 'CURRENT',
                       value: CurrencyFormatter.formatCurrency(
-                        asset.currentPrice,
+                        asset.effectiveCurrentPrice,
                         priceCurrency,
                       ),
                     ),
@@ -181,9 +181,25 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
               const SizedBox(height: 16),
 
               // ── Update price ───────────────────────────────────────────────
-              _SectionLabel(AppStrings.updatePrices),
-              const SizedBox(height: 10),
-              _UpdatePriceCard(key: ValueKey(asset.id), asset: asset),
+              // A deposit with terms is valued from them every day; a typed
+              // price would be ignored, so there is nothing to update.
+              if (asset.hasDepositSchedule)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: Text(
+                    'Its value grows every day from these terms — no price '
+                    'updates needed. Edit the deposit to change them.',
+                    style: AppTheme.body(
+                      size: 12.5,
+                      color: AppColors.textSecondaryOn(context),
+                    ),
+                  ),
+                )
+              else ...[
+                _SectionLabel(AppStrings.updatePrices),
+                const SizedBox(height: 10),
+                _UpdatePriceCard(key: ValueKey(asset.id), asset: asset),
+              ],
 
               const SizedBox(height: 18),
 
@@ -405,7 +421,8 @@ class _Header extends StatelessWidget {
 /// Relative age of the asset's last price update, or null when never fetched.
 /// Mirrors the wording used on the assets list tiles.
 String? _priceAge(Asset asset) {
-  if (asset.priceUpdatedAt == null) return null;
+  // A deposit with terms is valued as of today, whatever was last saved.
+  if (asset.priceUpdatedAt == null || asset.hasDepositSchedule) return null;
   final diff = DateTime.now().difference(asset.priceUpdatedAt!);
   if (diff.inMinutes < 1) return 'just now';
   if (diff.inHours < 1) return '${diff.inMinutes}m ago';
@@ -608,11 +625,29 @@ class _DetailsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final terms = asset.depositSchedule;
+    String date(DateTime d) => '${d.day}/${d.month}/${d.year}';
+    String money(double v) =>
+        CurrencyFormatter.formatCurrency(v, asset.currency);
     final rows = <(String, String)>[
       (
-        'Purchase date',
-        '${asset.purchaseDate.day}/${asset.purchaseDate.month}/${asset.purchaseDate.year}',
+        terms != null ? 'Started' : 'Purchase date',
+        date(asset.purchaseDate),
       ),
+      if (terms != null) ...[
+        if (terms.isRecurring)
+          ('Monthly instalment', money(terms.monthlyInstalment!)),
+        (
+          'Interest rate',
+          '${terms.annualRatePercent.toStringAsFixed(2)}% p.a.'
+              '${terms.isRecurring ? '' : ' · ${terms.compounding.label}'}',
+        ),
+        (
+          terms.isMaturedOn(DateTime.now()) ? 'Matured on' : 'Matures on',
+          date(terms.maturityDate),
+        ),
+        ('Value at maturity', money(asset.quantity * terms.maturityValue)),
+      ],
       if (asset.platform != null) ('Platform', asset.platform!),
       if (asset.currency != 'INR') ('Currency', asset.currency),
     ];
