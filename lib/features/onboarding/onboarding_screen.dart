@@ -6,6 +6,7 @@ import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
 import '../../core/theme/app_decorations.dart';
 import '../../core/theme/app_theme.dart';
+import '../../shared/widgets/kashu_logo.dart';
 import '../dashboard/dashboard_screen.dart';
 
 class OnboardingScreen extends StatefulWidget {
@@ -178,26 +179,7 @@ class _WelcomePage extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Logo — brand gradient badge with soft glow
-          Container(
-            width: 104,
-            height: 104,
-            decoration: BoxDecoration(
-              gradient: AppColors.heroGradient,
-              borderRadius: BorderRadius.circular(AppRadii.hero),
-              boxShadow: AppShadows.glow(AppColors.primary, opacity: 0.55),
-            ),
-            child: Center(
-              child: Text(
-                'K',
-                style: AppTheme.heading(
-                  size: 52,
-                  weight: FontWeight.w800,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ),
+          const KashuMark(size: 104, glow: true),
           const SizedBox(height: 40),
           Text(
             'Welcome to ${AppStrings.appName}',

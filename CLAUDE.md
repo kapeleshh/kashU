@@ -152,9 +152,13 @@ After each successful refresh the dashboard (`features/dashboard/dashboard_scree
   **throws at configuration time** if `android/key.properties` is absent, because an unsigned bundle
   is only ever destined for an upload that would be rejected. A release *APK* still builds with the
   debug key (CI smoke-builds one) but logs a loud warning — never ship that artifact.
-- Store graphics come from `tool/generate_store_assets.py`, which imports the gradient and coin from
-  `tool/generate_app_icon.py`, so the listing cannot drift from the shipped icon. Output lands in
-  `store/play/` and is not bundled into the app.
+- **Every logo asset comes from `tool/generate_brand_assets.py`**, which defines the "Cashew U" mark
+  (cashew path, coin, tile, Sau Lavender palette) once in a 100×100 design space and writes the iOS
+  app icons, the Android legacy icons and adaptive layers (vector foreground, a monochrome layer for
+  themed icons, the tile colour), the web favicon and PWA icons, `store/play/icon-512.png`, the
+  feature graphic, and `lib/core/constants/brand_mark.dart` — the same geometry, which the app's
+  `KashuMark` / `KashuWordmark` (`shared/widgets/kashu_logo.dart`) draw. Never hand-edit any of
+  those outputs: change the mark in the script and rerun it. `store/play/` is not bundled into the app.
 - The privacy policy is a plain static page at `web/privacy.html`; `flutter build web` copies it into
   `build/web/`, and Vercel's filesystem phase serves it before the SPA rewrite, so `/privacy.html`
   works without touching `vercel.json`.

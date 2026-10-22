@@ -18,6 +18,7 @@ import '../../services/auth_service.dart';
 import '../../services/backup_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
 import '../../shared/providers/settings_providers.dart';
+import '../../shared/widgets/kashu_logo.dart';
 import '../rebalancing/rebalancing_screen.dart';
 import '../export/tax_export_screen.dart';
 
@@ -328,30 +329,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Center(
             child: Column(
               children: [
-                Container(
-                  width: 64,
-                  height: 64,
-                  decoration: BoxDecoration(
-                    gradient: AppColors.primaryGradient,
-                    borderRadius: BorderRadius.circular(AppRadii.tile),
-                    boxShadow: AppShadows.glow(AppColors.primary, opacity: 0.45),
-                  ),
-                  child: Center(
-                    child: Text(
-                      'K',
-                      style: AppTheme.heading(
-                        size: 30,
-                        weight: FontWeight.w800,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
+                const KashuMark(size: 64, glow: true),
                 const SizedBox(height: 14),
-                Text(
-                  AppStrings.appName,
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
+                const KashuWordmark(fontSize: 22),
                 const SizedBox(height: 4),
                 Text(
                   AppStrings.appTagline,

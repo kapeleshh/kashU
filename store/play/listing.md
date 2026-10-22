@@ -97,7 +97,7 @@ out unless `--dart-define=SENTRY_DSN=...` is passed at build time *and* the user
 | Phone screenshots | 2–8, min 320px, 16:9 or 9:16 | ❌ **still needed** |
 | 7" / 10" tablet screenshots | Optional | ❌ not planned for v1 |
 
-Regenerate the two graphics with `python3 tool/generate_store_assets.py`.
+Regenerate the two graphics (and every app icon) with `python3 tool/generate_brand_assets.py`.
 
 **Screenshots still to capture** — the four screens that show the app at its best:
 dashboard with holdings, asset detail with sparkline, rebalancing, tax export.
