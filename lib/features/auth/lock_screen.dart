@@ -6,6 +6,7 @@ import '../../core/theme/app_decorations.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/auth_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
+import '../../shared/widgets/kashu_logo.dart';
 
 /// Full-screen lock shown while [appLockedProvider] is true — rendered as an
 /// overlay above the app (see KashUApp's MaterialApp.builder), so unlocking
@@ -116,37 +117,11 @@ class _LockScreenState extends ConsumerState<LockScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // Brand badge — indigo→lavender gradient with the K mark.
-                Container(
-                  width: 88,
-                  height: 88,
-                  decoration: BoxDecoration(
-                    gradient: AppColors.primaryGradient,
-                    borderRadius: BorderRadius.circular(AppRadii.hero),
-                    boxShadow: AppShadows.glow(AppColors.primary, opacity: 0.5),
-                  ),
-                  child: Center(
-                    child: Text(
-                      'K',
-                      style: AppTheme.heading(
-                        size: 46,
-                        color: Colors.white,
-                        weight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                ),
+                const KashuMark(size: 88, glow: true),
 
                 const SizedBox(height: 32),
 
-                Text(
-                  AppStrings.appName,
-                  style: AppTheme.heading(
-                    size: 28,
-                    color: theme.colorScheme.onSurface,
-                    weight: FontWeight.w700,
-                  ),
-                ),
+                const KashuWordmark(fontSize: 28),
 
                 const SizedBox(height: 48),
 
