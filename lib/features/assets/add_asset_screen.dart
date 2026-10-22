@@ -60,6 +60,13 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   String? _selectedPlatform;
   DateTime _purchaseDate = DateTime.now();
 
+  /// Bumped whenever a type change clears the form. The form's fields are
+  /// keyed by it, so they are rebuilt empty (search boxes, the deposit
+  /// calculator and any inline errors included), and a price fetch started
+  /// before the change compares it to know its result belongs to a form
+  /// that no longer exists.
+  int _formGeneration = 0;
+
   // Gold/Silver toggle state
   bool _isSilver = false; // false = Gold, true = Silver
 
@@ -68,19 +75,16 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   _FetchStatus? _goldFetchStatus;
 
   // Stock search state
-  Key _stockSearchKey = UniqueKey(); // reset widget when type changes
   bool _isFetchingStockPrice = false;
   _FetchStatus? _stockFetchStatus;
   StockSearchResult? _selectedStock;
 
   // Mutual fund search state
-  final Key _mfSearchKey = UniqueKey();
   bool _isFetchingMfNav = false;
   _FetchStatus? _mfFetchStatus;
   MutualFundResult? _selectedMf;
 
   // Crypto search state
-  final Key _cryptoSearchKey = UniqueKey();
   bool _isFetchingCryptoPrice = false;
   _FetchStatus? _cryptoFetchStatus;
   CryptoSearchResult? _selectedCrypto;
@@ -188,6 +192,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       body: Form(
         key: _formKey,
         child: ListView(
+          key: ValueKey('asset-form-$_formGeneration'),
           padding: const EdgeInsets.all(16),
           children: [
             // Asset Type Selection
@@ -221,7 +226,6 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
             // Mutual fund search (MFAPI.in)
             if (_usesMfSearch && !isEditing) ...[
               MutualFundSearchField(
-                key: _mfSearchKey,
                 onSelected: _onMfSelected,
               ),
               const SizedBox(height: 8),
@@ -241,7 +245,6 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
             // Crypto search (CoinGecko)
             if (_usesCryptoSearch && !isEditing) ...[
               CryptoSearchField(
-                key: _cryptoSearchKey,
                 onSelected: _onCryptoSelected,
               ),
               const SizedBox(height: 8),
@@ -283,7 +286,6 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
             // Stock search
             if (_usesStockSearch && !isEditing) ...[
               StockSearchField(
-                key: _stockSearchKey,
                 onSelected: _onStockSelected,
                 hintText: _selectedType == AssetType.bond
                     ? 'Search bond or treasury name...'
@@ -305,6 +307,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
             // Name field (always shown; auto-filled for stocks/MFs)
             TextFormField(
+              key: const ValueKey('asset-name'),
               controller: _nameController,
               decoration: InputDecoration(
                 labelText: _usesFdBondCalculator
@@ -393,6 +396,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               children: [
                 Expanded(
                   child: TextFormField(
+                    key: const ValueKey('asset-quantity'),
                     controller: _quantityController,
                     decoration: InputDecoration(
                       labelText: AppStrings.quantity,
@@ -421,6 +425,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                 const SizedBox(width: 16),
                 Expanded(
                   child: TextFormField(
+                    key: const ValueKey('asset-purchase-price'),
                     controller: _purchasePriceController,
                     decoration: InputDecoration(
                       labelText: AppStrings.purchasePrice,
@@ -448,6 +453,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
             // Current Price
             TextFormField(
+              key: const ValueKey('asset-current-price'),
               controller: _currentPriceController,
               decoration: InputDecoration(
                 labelText: AppStrings.currentPrice,
@@ -520,6 +526,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
 
             // Platform Dropdown
             DropdownButtonFormField<String>(
+              key: const ValueKey('asset-platform'),
               initialValue: _selectedPlatform,
               decoration: const InputDecoration(
                 labelText: AppStrings.platform,
@@ -632,35 +639,88 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     );
   }
 
-  /// Handles asset-type selection (preserves the original chip onSelected logic).
-  void _onTypeSelected(AssetType type) {
+  /// A new type starts the holding over: a stock's name, a `RELIANCE.NS`
+  /// symbol or a per-share price must never ride along into a metal or a
+  /// deposit. Only what is true of any holding — currency, purchase date and
+  /// notes — is kept. Editing an existing asset asks first, because its
+  /// saved figures are what gets cleared; cancelling keeps the old type.
+  Future<void> _onTypeSelected(AssetType type) async {
+    if (type == _selectedType) return;
+    if (isEditing && !await _confirmTypeChange(type)) return;
+    if (!mounted) return;
     setState(() {
       _selectedType = type;
-      _goldFetchStatus = null;
-      _stockFetchStatus = null;
-      _selectedStock = null;
-      _selectedMf = null;
-      _selectedCrypto = null;
-      _autofillQuote = null;
-      _autofilledPriceText = null;
-      // Reset stock search widget
-      _stockSearchKey = UniqueKey();
+      _clearTypeSpecificFields();
     });
     if (type == AssetType.gold) {
-      _symbolController.text =
-          _isSilver ? PriceSymbols.silverComex : PriceSymbols.goldComex;
+      // Metals start as gold; the Gold/Silver chips switch the contract.
+      _symbolController.text = PriceSymbols.goldComex;
       _fetchGoldPrice();
-    } else {
-      if (_symbolController.text == PriceSymbols.goldComex ||
-          _symbolController.text == PriceSymbols.silverComex) {
-        _symbolController.clear();
-      }
     }
   }
+
+  /// Empty every field that belongs to one asset type. Call inside setState.
+  void _clearTypeSpecificFields() {
+    // Rebuilds the form's fields (search boxes, the deposit calculator and
+    // inline errors with them) and orphans any fetch still in flight.
+    _formGeneration++;
+    _nameController.clear();
+    _symbolController.clear();
+    _quantityController.clear();
+    _purchasePriceController.clear();
+    _currentPriceController.clear();
+    _selectedPlatform = null;
+    _isSilver = false;
+    _selectedStock = null;
+    _selectedMf = null;
+    _selectedCrypto = null;
+    _isFetchingGoldPrice = false;
+    _isFetchingStockPrice = false;
+    _isFetchingMfNav = false;
+    _isFetchingCryptoPrice = false;
+    _goldFetchStatus = null;
+    _stockFetchStatus = null;
+    _mfFetchStatus = null;
+    _cryptoFetchStatus = null;
+    _autofillQuote = null;
+    _autofilledPriceText = null;
+    _fdBondResult = null;
+  }
+
+  Future<bool> _confirmTypeChange(AssetType type) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Change asset type?'),
+        content: Text(
+          'Switching to ${type.displayName} clears the name, symbol, '
+          'quantity, prices and platform. Currency, purchase date and notes '
+          'are kept.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text(AppStrings.cancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Change type'),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
+  }
+
+  /// True once [generation] is no longer the live form — the screen closed
+  /// or a type change cleared it — so a fetch result must be dropped.
+  bool _isStale(int generation) =>
+      !mounted || generation != _formGeneration;
 
   /// Called when user selects a stock from the search dropdown.
   /// Auto-fills name, symbol, and fetches live price.
   Future<void> _onStockSelected(StockSearchResult result) async {
+    final generation = _formGeneration;
     setState(() {
       _selectedStock = result;
       _nameController.text = result.name;
@@ -674,7 +734,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       final yahooService = YahooFinanceService();
       final priceResult = await yahooService.fetchPrice(result.symbol);
 
-      if (!mounted) return;
+      if (_isStale(generation)) return;
 
       if (priceResult.success && priceResult.price > 0) {
         final status = await _applyQuote(
@@ -682,7 +742,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
           priceResult.currency,
           label: 'Live price',
         );
-        if (!mounted) return;
+        if (_isStale(generation)) return;
         setState(() {
           _isFetchingStockPrice = false;
           _stockFetchStatus = status;
@@ -697,7 +757,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
         });
       }
     } catch (e) {
-      if (!mounted) return;
+      if (_isStale(generation)) return;
       setState(() {
         _isFetchingStockPrice = false;
         _stockFetchStatus = const _FetchStatus(
@@ -711,6 +771,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   /// Called when user selects a mutual fund from the search dropdown.
   /// Auto-fills name, symbol (scheme code), and fetches latest NAV.
   Future<void> _onMfSelected(MutualFundResult result) async {
+    final generation = _formGeneration;
     setState(() {
       _selectedMf = result;
       _nameController.text = result.shortName;
@@ -723,7 +784,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       final mfService = MutualFundService();
       final navResult = await mfService.fetchNav(result.schemeCode);
 
-      if (!mounted) return;
+      if (_isStale(generation)) return;
 
       if (navResult.isOk && navResult.valueOrNull?.nav != null) {
         final mf = navResult.valueOrNull!;
@@ -735,7 +796,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
           suffix: mf.navDate == null ? '' : ' (${mf.navDate})',
           decimals: 4,
         );
-        if (!mounted) return;
+        if (_isStale(generation)) return;
         setState(() {
           _isFetchingMfNav = false;
           _mfFetchStatus = status;
@@ -750,7 +811,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
         });
       }
     } catch (e) {
-      if (!mounted) return;
+      if (_isStale(generation)) return;
       setState(() {
         _isFetchingMfNav = false;
         _mfFetchStatus = const _FetchStatus(
@@ -776,6 +837,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   /// quotes every currency the app offers, so no conversion is needed.
   Future<void> _fetchCryptoPrice(CryptoSearchResult coin) async {
     final currency = _selectedCurrency;
+    final generation = _formGeneration;
     setState(() {
       _cryptoFetchStatus = null;
       _isFetchingCryptoPrice = true;
@@ -787,7 +849,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       final priceResult = await cryptoService.fetchPrice(coin.id);
 
       // A newer fetch (the currency changed meanwhile) owns the field now.
-      if (!mounted || currency != _selectedCurrency) return;
+      if (_isStale(generation) || currency != _selectedCurrency) return;
 
       if (priceResult.success && priceResult.price > 0) {
         setState(() {
@@ -810,7 +872,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
         });
       }
     } catch (e) {
-      if (!mounted || currency != _selectedCurrency) return;
+      if (_isStale(generation) || currency != _selectedCurrency) return;
       setState(() {
         _isFetchingCryptoPrice = false;
         _cryptoFetchStatus = const _FetchStatus(
@@ -838,6 +900,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     String suffix = '',
     int decimals = 2,
   }) async {
+    final generation = _formGeneration;
     _autofillQuote = (price: price, currency: quoteCurrency);
     // Planned against the state as it is when called — after the forex
     // await too, in case the user changed the currency meanwhile.
@@ -855,7 +918,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       decision = planWith(
           await ref.read(currencyConverterServiceProvider).fetchRates());
     }
-    if (!mounted) return const _FetchStatus('', _FetchState.pending);
+    if (_isStale(generation)) {
+      return const _FetchStatus('', _FetchState.pending);
+    }
 
     final quoted = QuoteCurrency.normalize(price, quoteCurrency);
     final quotedText =
@@ -919,13 +984,14 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     } else if (_autofillQuote != null && _priceStillAutofilled) {
       final quote = _autofillQuote!;
       final isMf = _usesMfSearch;
+      final generation = _formGeneration;
       _applyQuote(
         quote.price,
         quote.currency,
         label: isMf ? 'Latest NAV' : 'Live price',
         decimals: isMf ? 4 : 2,
       ).then((status) {
-        if (!mounted) return;
+        if (_isStale(generation)) return;
         setState(() {
           if (isMf) {
             _mfFetchStatus = status;
@@ -960,6 +1026,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         TextFormField(
+          key: const ValueKey('asset-symbol'),
           controller: _symbolController,
           enabled: supportsTracking,
           decoration: InputDecoration(
@@ -1061,6 +1128,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   Future<void> _fetchGoldPrice() async {
     final currency = _selectedCurrency;
     final isSilver = _isSilver;
+    final generation = _formGeneration;
     setState(() {
       _isFetchingGoldPrice = true;
       _goldFetchStatus = null;
@@ -1076,7 +1144,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               targetCurrency: currency);
 
       // A newer fetch (currency or metal changed meanwhile) owns the field.
-      if (!mounted || currency != _selectedCurrency || isSilver != _isSilver) {
+      if (_isStale(generation) ||
+          currency != _selectedCurrency ||
+          isSilver != _isSilver) {
         return;
       }
 
@@ -1104,7 +1174,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
         );
       });
     } catch (e) {
-      if (!mounted || currency != _selectedCurrency || isSilver != _isSilver) {
+      if (_isStale(generation) ||
+          currency != _selectedCurrency ||
+          isSilver != _isSilver) {
         return;
       }
       setState(() {
