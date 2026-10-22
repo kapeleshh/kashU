@@ -8,6 +8,7 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'core/config/app_config.dart';
 import 'core/config/crash_reporting_consent.dart';
 import 'core/theme/app_theme.dart';
+import 'core/theme/font_licenses.dart';
 import 'core/constants/app_strings.dart';
 import 'core/constants/app_constants.dart';
 import 'data/migration/hive_migration_service.dart';
@@ -216,7 +217,12 @@ bool _readCrashReportingConsent() {
 /// recovery screen doesn't initialise it a second time.
 bool _sentryStarted = false;
 
-void main() => _startApp();
+void main() {
+  // Once per process: _startApp re-runs after "Try again" on the recovery
+  // screen, and the licence registry does not de-duplicate.
+  registerFontLicenses();
+  _startApp();
+}
 
 Future<void> _startApp() async {
   final cipher = await _preBootstrap();

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../constants/app_colors.dart';
 import 'app_decorations.dart';
 
@@ -8,16 +7,30 @@ import 'app_decorations.dart';
 /// headline / title) and Plus Jakarta Sans for body & labels. Both a light and
 /// a dark [ThemeData] are provided; every screen is theme-aware, so `main.dart`
 /// follows the device with `ThemeMode.system`.
+///
+/// Both families ship inside the app (assets/fonts/, declared under `fonts:`
+/// in pubspec.yaml): text renders in the brand fonts on an offline first
+/// launch, and no font is ever fetched from the network.
 class AppTheme {
   AppTheme._();
 
   static ThemeData get darkTheme => _build(Brightness.dark);
   static ThemeData get lightTheme => _build(Brightness.light);
 
+  /// The bundled heading family. Only weight 700 is bundled; heavier
+  /// requests (w800) render with it, exactly as they did when the font came
+  /// from Google Fonts (Quicksand tops out at 700).
+  static const String headingFontFamily = 'Quicksand';
+
+  /// The bundled body family: weights 500, 600, 700 and 800, plus a 500
+  /// italic for the inline input hints.
+  static const String bodyFontFamily = 'PlusJakartaSans';
+
   /// Headings — Quicksand. Use for hero numbers, screen titles, card titles.
   static TextStyle heading(
           {required double size, Color? color, FontWeight weight = FontWeight.w700}) =>
-      GoogleFonts.quicksand(
+      TextStyle(
+        fontFamily: headingFontFamily,
         fontSize: size,
         fontWeight: weight,
         color: color,
@@ -27,7 +40,8 @@ class AppTheme {
   /// Body / UI — Plus Jakarta Sans.
   static TextStyle body(
           {required double size, Color? color, FontWeight weight = FontWeight.w600}) =>
-      GoogleFonts.plusJakartaSans(
+      TextStyle(
+        fontFamily: bodyFontFamily,
         fontSize: size,
         fontWeight: weight,
         color: color,
@@ -218,9 +232,9 @@ class AppTheme {
 
   static TextTheme _textTheme(Color primary, Color secondary, Color tertiary) {
     TextStyle q(double s, FontWeight w, Color c) =>
-        GoogleFonts.quicksand(fontSize: s, fontWeight: w, color: c, letterSpacing: 0.2);
+        heading(size: s, weight: w, color: c);
     TextStyle j(double s, FontWeight w, Color c) =>
-        GoogleFonts.plusJakartaSans(fontSize: s, fontWeight: w, color: c);
+        body(size: s, weight: w, color: c);
 
     return TextTheme(
       // Display & headline & title → Quicksand

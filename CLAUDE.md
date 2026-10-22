@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 KashU is a privacy-focused, offline-first Flutter app for tracking an investment portfolio (stocks, mutual funds, metals, crypto, deposits, real estate, cash). All portfolio data lives locally in encrypted Hive boxes; the network is only used to fetch price/forex data.
 
-`docs/TECHNICAL_DECISIONS.md` records the *why* behind the Flutter / Riverpod / Hive choices, the data-model shape, and the Phase-1 security posture — read it before relitigating those decisions. Its *UI/UX Decisions* section is stale, though: the app is no longer dark-first (`ThemeMode.system`, both themes built) and no longer system-font-only (Quicksand / Plus Jakarta Sans via `google_fonts`) — the "C·Soft" section below supersedes it.
+`docs/TECHNICAL_DECISIONS.md` records the *why* behind the Flutter / Riverpod / Hive choices, the data-model shape, and the Phase-1 security posture — read it before relitigating those decisions. Its *UI/UX Decisions* section is stale, though: the app is no longer dark-first (`ThemeMode.system`, both themes built) and no longer system-font-only (Quicksand / Plus Jakarta Sans, bundled in `assets/fonts/`) — the "C·Soft" section below supersedes it.
 
 ## Commands
 
@@ -138,7 +138,7 @@ After each successful refresh the dashboard (`features/dashboard/dashboard_scree
 `core/theme/app_theme.dart` builds both `lightTheme` and `darkTheme`; `main.dart` runs `ThemeMode.system` and every screen is theme-aware. **Don't hardcode colors, radii, shadows or fonts in widgets:**
 - `AppColors` (`core/constants/app_colors.dart`) — the semantic tokens (`background`, `surface`, `textPrimary`, …) hold the **dark** values; their light counterparts live under `light*` tokens and are picked inside `AppTheme._build`. Per-`AssetType` colors (`stockColor`, `cryptoColor`, …) and the brand gradients live here too.
 - `AppRadii` / `AppShadows` (`core/theme/app_decorations.dart`) — the shared corner radii and the soft purple-tinted shadows/glows.
-- Typography is **Quicksand for headings, Plus Jakarta Sans for body/labels**, reached through the `TextTheme` or the `AppTheme.heading()` / `AppTheme.body()` helpers — never `GoogleFonts.*` directly in a widget.
+- Typography is **Quicksand for headings, Plus Jakarta Sans for body/labels**, reached through the `TextTheme` or the `AppTheme.heading()` / `AppTheme.body()` helpers — never a `fontFamily` string in a widget. Both families are **bundled** (`assets/fonts/`, pubspec `fonts:`; there is no `google_fonts` dependency), so nothing is fetched at runtime. Only the weights in use ship — Quicksand 700, Plus Jakarta Sans 500/600/700/800 + 500 italic; a new weight means extending `tool/build_fonts.py` and pubspec, and `test/core/theme/bundled_fonts_test.dart` checks they agree. The OFL texts are registered with `LicenseRegistry` (`core/theme/font_licenses.dart`).
 
 ### App startup flow
 
