@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_decorations.dart';
+import '../../core/utils/amount_validator.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../services/fd_bond_calculator.dart';
 
@@ -95,7 +96,7 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
   }
 
   void _recalculate() {
-    final principal = double.tryParse(_principalController.text);
+    final principal = AmountValidator.parse(_principalController.text);
     if (principal == null || principal <= 0) {
       setState(() { _result = null; _derivedRate = null; });
       return;
@@ -118,7 +119,7 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
   }
 
   void _recalculateByRate(double principal) {
-    final rate = double.tryParse(_rateController.text);
+    final rate = AmountValidator.parse(_rateController.text);
     if (rate == null || rate <= 0) {
       setState(() { _result = null; _derivedRate = null; });
       return;
@@ -141,7 +142,7 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
   }
 
   void _recalculateByMaturity(double principal) {
-    final maturityAmount = double.tryParse(_maturityAmountController.text);
+    final maturityAmount = AmountValidator.parse(_maturityAmountController.text);
     if (maturityAmount == null || maturityAmount <= principal) {
       setState(() { _result = null; _derivedRate = null; });
       return;
@@ -191,7 +192,7 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
   }
 
   void _recalculateRd(double monthlyInstallment) {
-    final installment = double.tryParse(_monthlyInstallmentController.text);
+    final installment = AmountValidator.parse(_monthlyInstallmentController.text);
     if (installment == null || installment <= 0) {
       setState(() { _result = null; _derivedRate = null; });
       return;
@@ -199,7 +200,7 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
 
     double rate;
     if (_inputMode == DepositInputMode.byRate) {
-      final r = double.tryParse(_rateController.text);
+      final r = AmountValidator.parse(_rateController.text);
       if (r == null || r <= 0) {
         setState(() { _result = null; _derivedRate = null; });
         return;
@@ -207,7 +208,7 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
       rate = r;
     } else {
       // For RD by maturity: back-calculate rate
-      final maturityAmount = double.tryParse(_maturityAmountController.text);
+      final maturityAmount = AmountValidator.parse(_maturityAmountController.text);
       if (maturityAmount == null || maturityAmount <= 0) {
         setState(() { _result = null; _derivedRate = null; });
         return;
@@ -319,6 +320,11 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
     }
   }
 
+  /// Inline error for a calculator amount: nothing while blank, otherwise
+  /// the shared rule (finite and more than 0).
+  String? _amountError(TextEditingController controller) =>
+      AmountValidator.validate(controller.text, required: false);
+
   /// Prefix for the amount fields, e.g. '₹ ' or 'CHF '.
   String get _symbol =>
       '${AppConstants.currencies[widget.currency] ?? widget.currency} ';
@@ -382,6 +388,7 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
               labelText: 'Monthly Installment',
               hintText: 'e.g. 5000',
               prefixText: _symbol,
+              errorText: _amountError(_monthlyInstallmentController),
             ),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
           ),
@@ -393,6 +400,7 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
               labelText: widget.isFd ? 'Principal Amount' : 'Face Value',
               hintText: 'e.g. 500000',
               prefixText: _symbol,
+              errorText: _amountError(_principalController),
             ),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
           ),
@@ -409,6 +417,7 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
                   : 'Coupon Rate (% p.a.)',
               hintText: 'e.g. 7.5',
               suffixText: '% p.a.',
+              errorText: _amountError(_rateController),
             ),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
           ),
@@ -422,6 +431,7 @@ class _FdBondInputFieldState extends State<FdBondInputField> {
               hintText: 'e.g. 624580',
               prefixText: _symbol,
               helperText: 'App will calculate the interest rate for you',
+              errorText: _amountError(_maturityAmountController),
             ),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
           ),

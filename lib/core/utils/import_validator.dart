@@ -1,6 +1,7 @@
 import '../../data/models/asset_type.dart';
 import '../../data/models/transaction_type.dart';
 import '../constants/app_constants.dart';
+import 'amount_validator.dart';
 
 /// Validates KashU backup JSON before it is written to the database.
 ///
@@ -112,13 +113,11 @@ class ImportValidator {
         return 'Asset[$idx]."$key" must be text.';
       }
     }
-    // Required numeric fields
+    // Required numeric fields. Zero is allowed: a fully sold holding keeps
+    // quantity 0, and older backups may carry a 0 price.
     for (final key in ['quantity', 'purchasePrice', 'currentPrice']) {
-      final err = _checkNumber(a[key], 'Asset[$idx]."$key"');
+      final err = _checkAmount(a[key], 'Asset[$idx]."$key"', allowZero: true);
       if (err != null) return err;
-      if ((a[key] as num) < 0) {
-        return 'Asset[$idx]."$key" must not be negative.';
-      }
     }
     // type index
     final typeIdx = a['type'];
@@ -174,11 +173,37 @@ class ImportValidator {
   /// Null if [value] is a finite number. `jsonDecode` turns an overflowing
   /// literal such as 1e999 into infinity, so "is a num" alone is not enough.
   static String? _checkNumber(dynamic value, String label) {
-    if (value is! num) {
-      return '$label must be a number, got ${value.runtimeType}.';
+    switch (AmountValidator.problemOf(value, allowZero: true)) {
+      case AmountProblem.notANumber:
+        return '$label must be a number, got ${value.runtimeType}.';
+      case AmountProblem.notFinite:
+        return '$label must be a finite number.';
+      case AmountProblem.negative:
+      case AmountProblem.zero:
+      case null:
+        return null;
     }
-    if (!value.isFinite) return '$label must be a finite number.';
-    return null;
+  }
+
+  /// Null if [value] passes the same amount rule the app's forms apply
+  /// ([AmountValidator]): finite, not negative, and not 0 unless
+  /// [allowZero].
+  static String? _checkAmount(
+    dynamic value,
+    String label, {
+    required bool allowZero,
+  }) {
+    switch (AmountValidator.problemOf(value, allowZero: allowZero)) {
+      case AmountProblem.notANumber:
+      case AmountProblem.notFinite:
+        return _checkNumber(value, label);
+      case AmountProblem.negative:
+        return '$label must not be negative.';
+      case AmountProblem.zero:
+        return '$label must be more than 0.';
+      case null:
+        return null;
+    }
   }
 
   static bool _isValidDate(dynamic value) {

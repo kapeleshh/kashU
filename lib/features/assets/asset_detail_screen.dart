@@ -5,6 +5,7 @@ import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
 import '../../core/theme/app_decorations.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/amount_validator.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../data/models/asset.dart';
 import '../../data/models/asset_type.dart';
@@ -769,6 +770,9 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
   GoldPriceBreakdown? _lastBreakdown;
   String? _fetchError;
 
+  /// Inline error under the manual price field (e.g. a negative price).
+  String? _priceError;
+
   @override
   void initState() {
     super.initState();
@@ -828,14 +832,22 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
                 children: [
                   Expanded(
                     child: TextField(
+                      key: const ValueKey('manual-price'),
                       controller: _priceController,
                       decoration: InputDecoration(
                         labelText: 'Price per ${_priceUnit(widget.asset.type)}',
                         prefixText:
                             '${AppConstants.currencies[widget.asset.currency] ?? widget.asset.currency} ',
+                        errorText: _priceError,
+                        errorMaxLines: 2,
                       ),
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (_) {
+                        if (_priceError != null) {
+                          setState(() => _priceError = null);
+                        }
+                      },
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -1028,13 +1040,16 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
   }
 
   Future<void> _updatePrice({bool showSnackbar = true}) async {
-    final newPrice = double.tryParse(_priceController.text);
-    if (newPrice == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text(AppStrings.errorInvalidNumber)),
-      );
+    // Same rule as the asset form's current price: finite, not negative,
+    // and 0 allowed (a delisted share is worth nothing).
+    final error =
+        AmountValidator.validate(_priceController.text, allowZero: true);
+    if (error != null) {
+      setState(() => _priceError = error);
       return;
     }
+    final newPrice = AmountValidator.parse(_priceController.text)!;
+    if (_priceError != null) setState(() => _priceError = null);
 
     final repository = ref.read(assetRepositoryProvider);
     await repository.updateAssetPrice(widget.asset.id, newPrice);

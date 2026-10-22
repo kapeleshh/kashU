@@ -158,6 +158,42 @@ void main() {
     });
   });
 
+  group('number validation', () {
+    testWidgets('NaN, Infinity and a negative price are refused inline',
+        (tester) async {
+      await openForm(tester);
+      await tester.enterText(
+          find.byKey(const ValueKey('asset-name')), 'Reliance Industries');
+      await tester.enterText(
+          find.byKey(const ValueKey('asset-quantity')), 'NaN');
+      await tester.enterText(
+          find.byKey(const ValueKey('asset-purchase-price')), 'Infinity');
+      await tester.enterText(
+          find.byKey(const ValueKey('asset-current-price')), '-5');
+
+      await tester.ensureVisible(find.text('Add to portfolio'));
+      await tester.tap(find.text('Add to portfolio'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Enter a valid number'), findsNWidgets(2));
+      expect(find.text("Can't be negative"), findsOneWidget);
+      verifyNever(() => writes.addAssetWithBuyTransaction(any()));
+    });
+
+    testWidgets('a new holding needs a quantity above 0', (tester) async {
+      await openForm(tester);
+      await tester.enterText(
+          find.byKey(const ValueKey('asset-quantity')), '0');
+
+      await tester.ensureVisible(find.text('Add to portfolio'));
+      await tester.tap(find.text('Add to portfolio'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Must be more than 0'), findsOneWidget);
+      verifyNever(() => writes.addAssetWithBuyTransaction(any()));
+    });
+  });
+
   group('changing the asset type while editing', () {
     testWidgets('cancelling the confirmation keeps the old type and fields',
         (tester) async {

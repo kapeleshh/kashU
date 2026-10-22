@@ -141,6 +141,38 @@ void main() {
     verifyNever(() => repo.updateAsset(any()));
   });
 
+  testWidgets('a negative or infinite manual price is refused inline',
+      (tester) async {
+    await openDetail(tester);
+    final priceField = find.byKey(const ValueKey('manual-price'));
+
+    await tester.enterText(priceField, '-5');
+    await tester.ensureVisible(find.text('Update'));
+    await tester.tap(find.text('Update'));
+    await tester.pump();
+    expect(find.text("Can't be negative"), findsOneWidget);
+
+    await tester.enterText(priceField, 'Infinity');
+    await tester.tap(find.text('Update'));
+    await tester.pump();
+    expect(find.text('Enter a valid number'), findsOneWidget);
+
+    verifyNever(() => repo.updateAssetPrice(any(), any()));
+  });
+
+  testWidgets('a valid manual price is saved', (tester) async {
+    when(() => repo.updateAssetPrice(any(), any()))
+        .thenAnswer((_) async {});
+    await openDetail(tester);
+
+    await tester.enterText(find.byKey(const ValueKey('manual-price')), '0');
+    await tester.ensureVisible(find.text('Update'));
+    await tester.tap(find.text('Update'));
+    await tester.pump();
+
+    verify(() => repo.updateAssetPrice('a1', 0)).called(1);
+  });
+
   testWidgets('Edit gets the current price and saving closes the detail',
       (tester) async {
     await openDetail(tester);

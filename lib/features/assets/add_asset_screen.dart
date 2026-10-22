@@ -6,6 +6,7 @@ import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
 import '../../core/theme/app_decorations.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/amount_validator.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../data/models/asset.dart';
 import '../../data/models/asset_type.dart';
@@ -405,21 +406,10 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                     ),
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return AppStrings.errorRequired;
-                      }
-                      final parsed = double.tryParse(value);
-                      // An edited holding may be at 0 — fully sold, kept
-                      // for its history; a new one must hold something.
-                      if (parsed == null ||
-                          !parsed.isFinite ||
-                          parsed < 0 ||
-                          (parsed == 0 && !isEditing)) {
-                        return AppStrings.errorInvalidNumber;
-                      }
-                      return null;
-                    },
+                    // An edited holding may be at 0 — fully sold, kept for
+                    // its history; a new one must hold something.
+                    validator: (value) =>
+                        AmountValidator.validate(value, allowZero: isEditing),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -434,16 +424,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                     ),
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return AppStrings.errorRequired;
-                      }
-                      final parsed = double.tryParse(value);
-                      if (parsed == null || parsed.isNaN || parsed <= 0) {
-                        return AppStrings.errorInvalidNumber;
-                      }
-                      return null;
-                    },
+                    validator: (value) => AmountValidator.validate(value),
                   ),
                 ),
               ],
@@ -463,16 +444,9 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               ),
               keyboardType:
                   const TextInputType.numberWithOptions(decimal: true),
-              validator: (value) {
-                if (value == null || value.isEmpty) {
-                  return AppStrings.errorRequired;
-                }
-                final parsed = double.tryParse(value);
-                if (parsed == null || parsed.isNaN || parsed < 0) {
-                  return AppStrings.errorInvalidNumber;
-                }
-                return null;
-              },
+              // 0 is a real price: a delisted share, a written-off loan.
+              validator: (value) =>
+                  AmountValidator.validate(value, allowZero: true),
             ),
 
             const SizedBox(height: 16),
@@ -1208,7 +1182,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     final now = DateTime.now();
     final isNew = !isEditing;
     final existing = widget.existingAsset;
-    final currentPrice = double.tryParse(_currentPriceController.text) ?? 0;
+    // The validators above passed, so these parse to finite numbers.
+    final currentPrice = AmountValidator.parse(_currentPriceController.text)!;
     final asset = Asset(
       id: widget.existingAsset?.id ?? const Uuid().v4(),
       name: _nameController.text.trim(),
@@ -1216,8 +1191,8 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
           ? _symbolController.text.trim()
           : null,
       type: _selectedType,
-      quantity: double.tryParse(_quantityController.text) ?? 0,
-      purchasePrice: double.tryParse(_purchasePriceController.text) ?? 0,
+      quantity: AmountValidator.parse(_quantityController.text)!,
+      purchasePrice: AmountValidator.parse(_purchasePriceController.text)!,
       currentPrice: currentPrice,
       currency: _selectedCurrency,
       purchaseDate: _purchaseDate,
