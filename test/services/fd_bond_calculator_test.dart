@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kashu/services/fd_bond_calculator.dart';
 
@@ -238,6 +240,154 @@ void main() {
         tenureMonths: 24,
       );
       expect(long, greaterThan(short));
+    });
+  });
+
+  group('FdBondCalculator.calculate — asOf (daily growth)', () {
+    final start = DateTime(2024, 1, 1);
+    final maturity = DateTime(2027, 1, 1);
+    double valueOn(DateTime day) => FdBondCalculator.calculate(
+          principal: 100000,
+          annualRatePercent: 7.5,
+          startDate: start,
+          maturityDate: maturity,
+          compounding: CompoundingFrequency.quarterly,
+          asOf: day,
+        ).currentValue;
+
+    test('is the principal on the start day and grows every day after', () {
+      expect(valueOn(start), 100000);
+      final dayOne = valueOn(DateTime(2024, 1, 2));
+      expect(dayOne, greaterThan(100000));
+      expect(valueOn(DateTime(2024, 1, 3)), greaterThan(dayOne));
+      expect(valueOn(DateTime(2025, 1, 1)), closeTo(107735, 5)); // 366 days
+    });
+
+    test('stops at the maturity value', () {
+      final atMaturity = valueOn(maturity);
+      expect(valueOn(DateTime(2030, 6, 1)), atMaturity);
+      // 1096 days (2024 is a leap year) at 7.5% compounded quarterly.
+      expect(atMaturity, closeTo(124997, 5));
+    });
+
+    test('ignores the time of day', () {
+      expect(valueOn(DateTime(2024, 6, 1, 23, 59)),
+          valueOn(DateTime(2024, 6, 1)));
+    });
+  });
+
+  group('calendar months', () {
+    test('monthsBetween counts whole calendar months', () {
+      expect(FdBondCalculator.monthsBetween(
+          DateTime(2024, 1, 15), DateTime(2024, 2, 14)), 0);
+      expect(FdBondCalculator.monthsBetween(
+          DateTime(2024, 1, 15), DateTime(2024, 2, 15)), 1);
+      expect(FdBondCalculator.monthsBetween(
+          DateTime(2024, 1, 15), DateTime(2034, 1, 15)), 120);
+      // A month from the 31st ends on the last day of a shorter month.
+      expect(FdBondCalculator.monthsBetween(
+          DateTime(2025, 1, 31), DateTime(2025, 2, 28)), 1);
+    });
+
+    test('addMonths clamps to the end of the month', () {
+      expect(FdBondCalculator.addMonths(DateTime(2024, 1, 31), 1),
+          DateTime.utc(2024, 2, 29));
+      expect(FdBondCalculator.addMonths(DateTime(2024, 11, 30), 3),
+          DateTime.utc(2025, 2, 28));
+    });
+
+    test('rdInstalmentCount: 12 for a one-year RD', () {
+      expect(FdBondCalculator.rdInstalmentCount(
+          DateTime(2024, 3, 10), DateTime(2025, 3, 10)), 12);
+      // An odd maturity still collects the instalment due before it.
+      expect(FdBondCalculator.rdInstalmentCount(
+          DateTime(2024, 3, 10), DateTime(2025, 3, 20)), 13);
+      expect(FdBondCalculator.rdInstalmentCount(
+          DateTime(2024, 3, 10), DateTime(2024, 3, 10)), 0);
+    });
+  });
+
+  group('FdBondCalculator.calculateRecurring', () {
+    final start = DateTime(2024, 1, 10);
+    final maturity = DateTime(2025, 1, 10);
+    RecurringDepositResult on(DateTime day) =>
+        FdBondCalculator.calculateRecurring(
+          monthlyInstalment: 5000,
+          annualRatePercent: 7.0,
+          startDate: start,
+          maturityDate: maturity,
+          asOf: day,
+        );
+
+    test('an RD started today already holds its first instalment', () {
+      final today = on(start);
+      expect(today.instalmentsPaid, 1);
+      expect(today.investedSoFar, 5000);
+      expect(today.currentValue, 5000);
+    });
+
+    test('a new instalment is counted on each monthly due date', () {
+      expect(on(DateTime(2024, 2, 9)).instalmentsPaid, 1);
+      expect(on(DateTime(2024, 2, 10)).instalmentsPaid, 2);
+      expect(on(DateTime(2024, 12, 31)).instalmentsPaid, 12);
+    });
+
+    test('matches the standard RD maturity formula', () {
+      // M = R × [(1+i)^n − 1] / i × (1+i), i = 7%/12, n = 12
+      const i = 0.07 / 12;
+      final expected = 5000 * (math.pow(1 + i, 12) - 1) / i * (1 + i);
+      expect(on(maturity).maturityValue, closeTo(expected, 0.01));
+      expect(on(maturity).currentValue, closeTo(expected, 0.01));
+      expect(on(maturity).totalToInvest, 60000);
+    });
+
+    test('grows between instalments and stops at maturity', () {
+      final early = on(DateTime(2024, 3, 1)).currentValue;
+      final later = on(DateTime(2024, 3, 5)).currentValue;
+      expect(later, greaterThan(early));
+      expect(on(DateTime(2026, 1, 1)).currentValue,
+          on(maturity).maturityValue);
+      expect(on(DateTime(2026, 1, 1)).investedSoFar, 60000);
+    });
+  });
+
+  group('DepositSchedule', () {
+    test('values an FD from its principal', () {
+      final fd = DepositSchedule(
+        startDate: DateTime(2024, 1, 1),
+        maturityDate: DateTime(2025, 1, 1),
+        annualRatePercent: 7.5,
+        principal: 100000,
+        compounding: CompoundingFrequency.quarterly,
+      );
+      expect(fd.isRecurring, isFalse);
+      expect(fd.investedAsOf(DateTime(2024, 6, 1)), 100000);
+      expect(fd.valueAsOf(DateTime(2024, 1, 1)), 100000);
+      expect(fd.maturityValue, closeTo(107714, 50));
+      expect(fd.isMaturedOn(DateTime(2024, 12, 31)), isFalse);
+      expect(fd.isMaturedOn(DateTime(2025, 1, 1)), isTrue);
+    });
+
+    test('values an RD from its instalments', () {
+      final rd = DepositSchedule(
+        startDate: DateTime(2024, 1, 10),
+        maturityDate: DateTime(2025, 1, 10),
+        annualRatePercent: 7.0,
+        principal: 0, // unused for an RD
+        compounding: CompoundingFrequency.monthly,
+        monthlyInstalment: 5000,
+      );
+      expect(rd.isRecurring, isTrue);
+      expect(rd.investedAsOf(DateTime(2024, 1, 10)), 5000);
+      expect(rd.investedAsOf(DateTime(2024, 4, 10)), 20000);
+      expect(rd.valueAsOf(DateTime(2024, 4, 10)), greaterThan(20000));
+    });
+
+    test('CompoundingFrequency.fromName reads stored names only', () {
+      expect(CompoundingFrequency.fromName('halfYearly'),
+          CompoundingFrequency.halfYearly);
+      expect(CompoundingFrequency.fromName('weekly'), isNull);
+      expect(CompoundingFrequency.fromName(null), isNull);
     });
   });
 }

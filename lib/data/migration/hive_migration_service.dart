@@ -10,7 +10,7 @@ import '../../../core/constants/app_constants.dart';
 /// backup/export JSON format version (`AppConstants.backupFormatVersion`,
 /// enforced by ImportValidator) — the two just happen to be numbered
 /// similarly and evolve on their own schedules.
-const int _currentSchemaVersion = 1;
+const int _currentSchemaVersion = 2;
 
 /// A single migration step: transforms box data from one version to the next.
 typedef _Migration = Future<void> Function(Box settings);
@@ -25,11 +25,12 @@ typedef _Migration = Future<void> Function(Box settings);
 ///
 /// How to add a migration (example: adding a new field to Asset):
 /// ```dart
-/// const int _currentSchemaVersion = 2; // ← bump this
+/// const int _currentSchemaVersion = 3; // ← bump this
 ///
 /// static const _migrations = <int, _Migration>{
 ///   1: _baseline,
-///   2: _addAssetTagField, // ← add new entry
+///   2: _addDepositTerms,
+///   3: _addAssetTagField, // ← add new entry
 /// };
 ///
 /// static Future<void> _addAssetTagField(Box settings) async {
@@ -42,6 +43,7 @@ abstract final class HiveMigrationService {
   /// Map of schema version → migration step to reach that version.
   static const Map<int, _Migration> _migrations = {
     1: _baseline, // V1 is the initial schema — no transforms needed
+    2: _addDepositTerms, // Asset fields 14–17 (deposit terms)
   };
 
   /// Run any pending migrations. Call this after all Hive boxes are opened.
@@ -74,5 +76,18 @@ abstract final class HiveMigrationService {
   /// No data transforms required; just records the version.
   static Future<void> _baseline(Box _) async {
     // No-op: existing boxes are already in V1 shape.
+  }
+
+  /// V2 — Asset gains nullable deposit terms: `depositRatePercent` (14),
+  /// `depositMaturityDate` (15), `depositCompounding` (16) and
+  /// `rdMonthlyInstalment` (17), so a deposit's value can grow daily.
+  ///
+  /// Purely additive: a V1 record simply lacks those fields and the adapter
+  /// reads them as null. Existing deposits are deliberately left without
+  /// terms — the app cannot know their rate — so they stay manually valued
+  /// through `currentPrice`, exactly as before, until the user enters the
+  /// terms by editing the deposit.
+  static Future<void> _addDepositTerms(Box _) async {
+    // No-op: nothing on disk needs rewriting.
   }
 }

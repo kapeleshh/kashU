@@ -81,14 +81,42 @@ class _RebalancingScreenState extends ConsumerState<RebalancingScreen> {
   Widget build(BuildContext context) {
     final assets = ref.watch(allAssetsProvider);
     final baseCurrency = ref.watch(baseCurrencyProvider);
+    final summaryAsync = ref.watch(portfolioSummaryProvider);
+    final summary = summaryAsync.valueOrNull;
 
-    // Current value per asset type
-    final Map<AssetType, double> typeValues = {};
-    double totalValue = 0;
-    for (final asset in assets) {
-      typeValues[asset.type] = (typeValues[asset.type] ?? 0) + asset.currentValue;
-      totalValue += asset.currentValue;
+    if (assets.isNotEmpty && summary == null) {
+      // The per-type values come from the dashboard's summary (converted
+      // into the base currency), so wait for it rather than guess.
+      return Scaffold(
+        appBar: AppBar(title: const Text('Rebalancing Calculator')),
+        body: Center(
+          child: summaryAsync.hasError
+              ? Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    "Couldn't load your portfolio values. Please try again.",
+                    textAlign: TextAlign.center,
+                    style: AppTheme.body(
+                      size: 13,
+                      color: AppColors.textSecondaryOn(context),
+                    ),
+                  ),
+                )
+              : const CircularProgressIndicator(),
+        ),
+      );
     }
+
+    // Current value per asset type, in the base currency: the dashboard's
+    // allocation, so both screens show the same split and the same total
+    // (a USD holding is converted, not added up as if it were rupees).
+    // Before any holding has a price, the allocation (like the dashboard's
+    // chart) falls back to the amounts invested.
+    final Map<AssetType, double> typeValues = {
+      ...?summary?.assetAllocation,
+    };
+    final double totalValue =
+        typeValues.values.fold(0.0, (sum, v) => sum + v);
 
     // Only show types that have holdings OR a non-zero target
     final relevantTypes = AssetType.values.where((t) {

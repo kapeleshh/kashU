@@ -51,9 +51,33 @@ class WidgetUpdateService {
       HomeWidget.saveWidgetData<bool>('is_positive', isPositive),
     ]);
 
-    await HomeWidget.updateWidget(
-      qualifiedAndroidName: _kAndroidWidgetName,
-      iOSName: 'PortfolioWidget',
-    );
+    await _notifyWidget();
   }
+
+  /// Remove the portfolio figures from shared storage and redraw the widget,
+  /// which then shows its empty state ("—", as on a fresh install) instead
+  /// of the total of a portfolio that no longer exists. Called by Clear All
+  /// Data. Saving null deletes the entry on both Android and iOS.
+  static Future<void> clearPortfolioWidget() async {
+    if (kIsWeb) return;
+
+    await HomeWidget.setAppGroupId(_kIosAppGroup);
+    await Future.wait([
+      for (final key in widgetDataKeys) HomeWidget.saveWidgetData(key, null),
+    ]);
+    await _notifyWidget();
+  }
+
+  /// Every shared-storage entry the native widgets read.
+  static const List<String> widgetDataKeys = [
+    'portfolio_value',
+    'gain_loss',
+    'gain_loss_pct',
+    'is_positive',
+  ];
+
+  static Future<void> _notifyWidget() => HomeWidget.updateWidget(
+        qualifiedAndroidName: _kAndroidWidgetName,
+        iOSName: 'PortfolioWidget',
+      );
 }

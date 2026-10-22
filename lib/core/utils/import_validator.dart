@@ -1,6 +1,8 @@
 import '../../data/models/asset_type.dart';
 import '../../data/models/transaction_type.dart';
+import '../../services/fd_bond_calculator.dart';
 import '../constants/app_constants.dart';
+import 'amount_validator.dart';
 
 /// Validates KashU backup JSON before it is written to the database.
 ///
@@ -15,7 +17,9 @@ import '../constants/app_constants.dart';
 /// version managed by HiveMigrationService. The two evolve independently.
 class ImportValidator {
   static const int _currentSchemaVersion = AppConstants.backupFormatVersion;
-  static const List<int> _supportedVersions = [1, 2];
+  /// v3 added the optional deposit terms to assets; files from v1 and v2
+  /// simply lack them and import as manually valued deposits.
+  static const List<int> _supportedVersions = [1, 2, 3];
 
   /// Validate the top-level backup envelope.
   ///
@@ -112,13 +116,11 @@ class ImportValidator {
         return 'Asset[$idx]."$key" must be text.';
       }
     }
-    // Required numeric fields
+    // Required numeric fields. Zero is allowed: a fully sold holding keeps
+    // quantity 0, and older backups may carry a 0 price.
     for (final key in ['quantity', 'purchasePrice', 'currentPrice']) {
-      final err = _checkNumber(a[key], 'Asset[$idx]."$key"');
+      final err = _checkAmount(a[key], 'Asset[$idx]."$key"', allowZero: true);
       if (err != null) return err;
-      if ((a[key] as num) < 0) {
-        return 'Asset[$idx]."$key" must not be negative.';
-      }
     }
     // type index
     final typeIdx = a['type'];
@@ -140,6 +142,59 @@ class ImportValidator {
     final purchaseDate = DateTime.tryParse(a['purchaseDate'] as String? ?? '');
     if (purchaseDate != null && purchaseDate.isAfter(DateTime.now())) {
       return 'Asset[$idx]."purchaseDate" must not be in the future.';
+    }
+    return _validateDepositTerms(a, idx, purchaseDate!);
+  }
+
+  /// The optional deposit terms (backup format v3). Either none of them is
+  /// present, or a complete set on a deposit: a rate, a maturity after the
+  /// purchase (start) date, and a compounding frequency for an FD or a
+  /// monthly instalment for an RD — the same rules the deposit calculator
+  /// applies, so an import can't create a deposit the app can't value.
+  static String? _validateDepositTerms(
+    Map<String, dynamic> a,
+    int idx,
+    DateTime purchaseDate,
+  ) {
+    final rate = a['depositRatePercent'];
+    final maturity = a['depositMaturityDate'];
+    final compounding = a['depositCompounding'];
+    final instalment = a['rdMonthlyInstalment'];
+    if (rate == null &&
+        maturity == null &&
+        compounding == null &&
+        instalment == null) {
+      return null;
+    }
+
+    final label = 'Asset[$idx]';
+    final type = AssetType.values[a['type'] as int];
+    if (type != AssetType.fixedDeposit && type != AssetType.bond) {
+      return '$label has deposit terms but is not a deposit.';
+    }
+    final rateErr = _checkAmount(rate, '$label."depositRatePercent"',
+        allowZero: false);
+    if (rateErr != null) return rateErr;
+    if ((rate as num) > DepositSchedule.maxRatePercent) {
+      return '$label."depositRatePercent" must be at most '
+          '${DepositSchedule.maxRatePercent.toStringAsFixed(0)}.';
+    }
+    final maturityDate = maturity is String ? DateTime.tryParse(maturity) : null;
+    if (maturityDate == null || maturityDate.isAfter(DateTime(2100))) {
+      return '$label."depositMaturityDate" must be a valid ISO-8601 date '
+          'string.';
+    }
+    if (!maturityDate.isAfter(purchaseDate)) {
+      return '$label."depositMaturityDate" must be after its purchaseDate.';
+    }
+    if (instalment != null) {
+      return _checkAmount(instalment, '$label."rdMonthlyInstalment"',
+          allowZero: false);
+    }
+    if (compounding is! String ||
+        CompoundingFrequency.fromName(compounding) == null) {
+      return '$label."depositCompounding" must be one of '
+          '${CompoundingFrequency.values.map((f) => f.name).join(', ')}.';
     }
     return null;
   }
@@ -174,11 +229,37 @@ class ImportValidator {
   /// Null if [value] is a finite number. `jsonDecode` turns an overflowing
   /// literal such as 1e999 into infinity, so "is a num" alone is not enough.
   static String? _checkNumber(dynamic value, String label) {
-    if (value is! num) {
-      return '$label must be a number, got ${value.runtimeType}.';
+    switch (AmountValidator.problemOf(value, allowZero: true)) {
+      case AmountProblem.notANumber:
+        return '$label must be a number, got ${value.runtimeType}.';
+      case AmountProblem.notFinite:
+        return '$label must be a finite number.';
+      case AmountProblem.negative:
+      case AmountProblem.zero:
+      case null:
+        return null;
     }
-    if (!value.isFinite) return '$label must be a finite number.';
-    return null;
+  }
+
+  /// Null if [value] passes the same amount rule the app's forms apply
+  /// ([AmountValidator]): finite, not negative, and not 0 unless
+  /// [allowZero].
+  static String? _checkAmount(
+    dynamic value,
+    String label, {
+    required bool allowZero,
+  }) {
+    switch (AmountValidator.problemOf(value, allowZero: allowZero)) {
+      case AmountProblem.notANumber:
+      case AmountProblem.notFinite:
+        return _checkNumber(value, label);
+      case AmountProblem.negative:
+        return '$label must not be negative.';
+      case AmountProblem.zero:
+        return '$label must be more than 0.';
+      case null:
+        return null;
+    }
   }
 
   static bool _isValidDate(dynamic value) {

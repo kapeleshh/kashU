@@ -44,6 +44,21 @@ void main() {
     expect(find.text(AppConstants.contactEmail), findsOneWidget);
   });
 
+  testWidgets('Open-source licences opens the licence page', (tester) async {
+    tester.view.physicalSize = const Size(1080, 3200);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      const ProviderScope(child: MaterialApp(home: SettingsScreen())),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('Open-source licences'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(LicensePage), findsOneWidget);
+  });
+
   test('the policy URL is the page the web build publishes', () {
     expect(AppConstants.privacyPolicyUrl,
         'https://kash-u.vercel.app/privacy.html');

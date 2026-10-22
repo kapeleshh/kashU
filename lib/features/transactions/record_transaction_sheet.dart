@@ -89,9 +89,11 @@ class _RecordTransactionSheetState
     _type = asset == null || asset.quantity > 0
         ? TransactionType.sell
         : _defaultIncomeType(asset.type);
-    if (asset != null && asset.currentPrice > 0) {
-      // The latest known price is the likeliest sale price — editable.
-      _priceController.text = asset.currentPrice.toStringAsFixed(2);
+    // The latest known price is the likeliest sale price — editable. For a
+    // deposit with terms that is today's value, not the one it was saved at.
+    final price = asset?.effectiveCurrentPrice ?? 0;
+    if (price > 0) {
+      _priceController.text = price.toStringAsFixed(2);
     }
   }
 

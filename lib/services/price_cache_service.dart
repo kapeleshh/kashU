@@ -33,7 +33,8 @@ class CachedPriceEntry {
 /// Hive-backed persistent price cache.
 ///
 /// Purpose:
-/// - Stores the last successfully fetched price for every symbol.
+/// - Stores the last successfully fetched price for every symbol, in each
+///   currency it is held in.
 /// - Used as a fallback when an API call fails (rate limit, offline, timeout).
 /// - Prevents redundant network calls within the TTL window on app restart.
 ///
@@ -43,8 +44,10 @@ class CachedPriceEntry {
 /// are treated as missing. Unbounded stale prices in a finance app are worse
 /// than an honest failure.
 ///
-/// Each entry is stored as a JSON-encoded string keyed by symbol so it
-/// works cleanly with a plain (untyped) Hive box.
+/// Each entry is stored as a JSON-encoded string under [keyFor] (symbol and
+/// currency) so it works cleanly with a plain (untyped) Hive box. Entries
+/// from before prices were keyed by currency sit under the bare symbol; they
+/// are never read again and go with the next Clear All Data.
 class PriceCacheService {
   static const Duration defaultTtl = Duration(minutes: 30);
 
@@ -53,47 +56,66 @@ class PriceCacheService {
 
   Box get _box => Hive.box(AppConstants.priceCacheBox);
 
-  /// Store a successful [PriceResult] in the cache.
-  /// No-op if the result was a failure.
+  /// The key [symbol]'s price in [currency] is cached under, e.g.
+  /// `bitcoin:INR` or `GC=F:USD`.
+  ///
+  /// A cached price is a number in one currency, so the symbol alone is not
+  /// a key: the same coin, share or metal held once in INR and once in USD
+  /// would overwrite each other, and the offline fallback would then hand
+  /// one holding the other's number with no conversion.
+  static String keyFor(String symbol, String currency) =>
+      '$symbol:${currency.toUpperCase()}';
+
+  /// Store a successful [result] as [PriceResult.symbol]'s price in
+  /// [PriceResult.currency]. No-op if the result was a failure, or has no
+  /// currency to file it under.
   Future<void> cachePrice(PriceResult result) async {
-    if (!result.success) return;
+    if (!result.success || result.currency.isEmpty) return;
     final entry = CachedPriceEntry(
       price: result.price,
       currency: result.currency,
       fetchedAt: result.fetchedAt,
     );
-    await _box.put(result.symbol, jsonEncode(entry.toJson()));
+    await _box.put(
+        keyFor(result.symbol, result.currency), jsonEncode(entry.toJson()));
   }
 
-  /// Retrieve the raw [CachedPriceEntry] for [symbol], or null if absent.
-  CachedPriceEntry? getEntry(String symbol) {
-    final raw = _box.get(symbol) as String?;
-    if (raw == null) return null;
+  /// The raw [CachedPriceEntry] for [symbol] in [currency], or null if
+  /// absent or unreadable.
+  CachedPriceEntry? getEntry(String symbol, String currency) {
+    final raw = _box.get(keyFor(symbol, currency));
+    if (raw is! String) return null;
     try {
-      return CachedPriceEntry.fromJson(
-          jsonDecode(raw) as Map<String, dynamic>);
+      final entry =
+          CachedPriceEntry.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+      // Belt and braces: never serve a number in some other currency.
+      if (entry.currency.toUpperCase() != currency.toUpperCase()) return null;
+      return entry;
     } catch (_) {
       return null;
     }
   }
 
   /// Returns true if a cached entry exists and is younger than [maxAge].
-  bool isValid(String symbol, {Duration maxAge = defaultTtl}) {
-    final entry = getEntry(symbol);
+  bool isValid(String symbol, String currency,
+      {Duration maxAge = defaultTtl}) {
+    final entry = getEntry(symbol, currency);
     if (entry == null) return false;
     return DateTime.now().difference(entry.fetchedAt) < maxAge;
   }
 
-  /// Build a [PriceResult] from the cached entry for [symbol].
+  /// Build a [PriceResult] from the cached price of [symbol] in [currency].
   ///
   /// Returns a failure result if no entry exists or the entry is older than
   /// [maxAge]. Entries older than [defaultTtl] but within [maxAge] are
   /// served with [PriceResult.isStale] set, and keep their original
   /// [PriceResult.fetchedAt] so callers can surface the real price age.
-  PriceResult getCachedResult(String symbol, {Duration maxAge = maxStaleAge}) {
-    final entry = getEntry(symbol);
+  PriceResult getCachedResult(String symbol, String currency,
+      {Duration maxAge = maxStaleAge}) {
+    final entry = getEntry(symbol, currency);
     if (entry == null) {
-      return PriceResult.failure(symbol, 'No cached price for $symbol');
+      return PriceResult.failure(
+          symbol, 'No cached price for $symbol in $currency');
     }
     final age = DateTime.now().difference(entry.fetchedAt);
     if (age > maxAge) {
@@ -112,8 +134,9 @@ class PriceCacheService {
     );
   }
 
-  /// Remove a single symbol from the cache.
-  Future<void> invalidate(String symbol) => _box.delete(symbol);
+  /// Remove [symbol]'s cached price in [currency].
+  Future<void> invalidate(String symbol, String currency) =>
+      _box.delete(keyFor(symbol, currency));
 
   /// Remove all cached prices.
   Future<void> clearAll() => _box.clear();

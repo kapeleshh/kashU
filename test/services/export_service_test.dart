@@ -11,7 +11,10 @@ import 'package:kashu/data/models/transaction_type.dart';
 import 'package:kashu/data/repositories/asset_repository.dart';
 import 'package:kashu/data/repositories/portfolio_write_service.dart';
 import 'package:kashu/data/repositories/transaction_repository.dart';
+import 'package:kashu/services/base_currency_converter.dart';
 import 'package:kashu/services/export_service.dart';
+
+import '../fixtures/sample_portfolio.dart';
 
 Asset _asset({
   String id = 'a1',
@@ -161,6 +164,67 @@ void main() {
     });
   });
 
+  // The PDF's totals carry a base-currency label, so a USD holding in an
+  // INR portfolio has to be converted before it is added in.
+  group('PDF totals of a mixed INR + USD portfolio', () {
+    final fx = BaseCurrencyConverter(base: 'INR', rates: sampleRates());
+
+    test('portfolio totals are in the base currency, matching the dashboard',
+        () {
+      final totals = ExportService.portfolioTotals(samplePortfolio(), fx);
+
+      expect(totals.value, closeTo(sampleTotalValueInr, 1e-6));
+      final invested = samplePortfolio()
+          .fold(0.0, (s, a) => s + fx.investedOf(a));
+      expect(totals.invested, closeTo(invested, 1e-6));
+      expect(totals.gain, closeTo(sampleTotalValueInr - invested, 1e-6));
+    });
+
+    test('STCG and LTCG add each sale in the base currency', () {
+      final gains = ExportService.computeCapitalGains(
+        [
+          _asset(id: 'inr', buy: 100, purchaseDate: DateTime(2023, 1, 1)),
+          _asset(
+              id: 'usd',
+              buy: 100,
+              currency: 'USD',
+              purchaseDate: DateTime(2023, 1, 1)),
+        ],
+        [
+          // +150 INR, short term
+          _sell(id: 's1', assetId: 'inr', amount: 650,
+              date: DateTime(2023, 6, 1)),
+          // +$10 short term, and +$50 long term
+          _sell(id: 's2', assetId: 'usd', amount: 510, currency: 'USD',
+              date: DateTime(2023, 6, 1)),
+          _sell(id: 's3', assetId: 'usd', amount: 550, currency: 'USD',
+              date: DateTime(2024, 6, 1)),
+        ],
+        {},
+      );
+
+      final totals = ExportService.capitalGainsTotals(gains, fx);
+
+      expect(totals.shortTerm, closeTo(150 + 10 * usdInr, 1e-6));
+      expect(totals.longTerm, closeTo(50 * usdInr, 1e-6));
+    });
+
+    test('the report lays out and saves', () async {
+      final assets = samplePortfolio();
+      final doc = ExportService.buildCapitalGainsPdf(
+        assets,
+        [
+          _sell(assetId: 'aapl', qty: 2, price: 230, amount: 460,
+              currency: 'USD', date: DateTime(2024, 9, 1)),
+        ],
+        {for (final a in assets) a.id: a.name},
+        fx,
+      );
+
+      expect(await doc.save(), isNotEmpty);
+    });
+  });
+
   group('ExportService.holdingsCsvRows', () {
     test('header + one row per asset with correct columns', () {
       final rows = ExportService.holdingsCsvRows([_asset()]);
@@ -175,11 +239,92 @@ void main() {
       expect(data[11], '30.00%'); // Gain/Loss %
     });
 
+    test("a deposit with terms shows today's price, not the stored one", () {
+      final now = DateTime.now();
+      final opened = DateTime(now.year - 1, now.month, now.day);
+      final fd = Asset(
+        id: 'fd',
+        name: 'SBI FD',
+        type: AssetType.fixedDeposit,
+        quantity: 1,
+        purchasePrice: 100000,
+        currentPrice: 100000, // stored the day it was added
+        currency: 'INR',
+        purchaseDate: opened,
+        createdAt: opened,
+        updatedAt: opened,
+        depositRatePercent: 10,
+        depositMaturityDate: DateTime(now.year + 2, now.month, now.day),
+        depositCompounding: 'yearly',
+      );
+
+      final csv = ExportService.holdingsCsvRows([fd])[1];
+      expect(csv[7], csv[9]); // Current Price = Current Value (1 unit)
+      expect(double.parse(csv[7] as String), greaterThan(109000));
+      expect(csv[6], csv[8]); // Avg Buy Price = Invested
+
+      final pdf = ExportService.pdfHoldingsRows([fd]).single;
+      expect(pdf[5], csv[7]);
+    });
+
     test('null symbol/platform render as empty strings', () {
       final rows =
           ExportService.holdingsCsvRows([_asset(symbol: null, platform: null)]);
       expect(rows[1][1], ''); // Symbol
       expect(rows[1][3], ''); // Platform
+    });
+  });
+
+  // A fully sold holding stays stored at quantity 0 so the capital-gains
+  // report can find its cost basis, but it is no longer a holding.
+  group('fully sold holdings', () {
+    final open = _asset(id: 'open', name: 'Reliance');
+    final sold = _asset(id: 'sold', name: 'Infosys', qty: 0, buy: 1400);
+    final sale = _sell(
+        id: 's1', assetId: 'sold', qty: 10, price: 1500, amount: 15000,
+        date: DateTime(2023, 6, 1));
+
+    test('are left out of the holdings CSV', () {
+      final rows = ExportService.holdingsCsvRows([open, sold]);
+
+      expect(rows, hasLength(2)); // header + the open holding
+      expect(rows[1][0], 'Reliance');
+    });
+
+    test("are left out of the PDF's holdings section and count", () {
+      final rows = ExportService.pdfHoldingsRows([open, sold]);
+
+      expect(rows.map((r) => r.first), ['Reliance']);
+      expect(ExportService.openHoldings([open, sold]), [open]);
+    });
+
+    test('still supply the cost basis of their capital gains', () {
+      final gains = ExportService.computeCapitalGains(
+          [open, sold], [sale], {'open': 'Reliance', 'sold': 'Infosys'});
+
+      expect(gains.single.assetName, 'Infosys');
+      expect(gains.single.costBasis, 14000); // 10 x 1400
+      expect(gains.single.gain, 1000);
+    });
+
+    test('leave the totals unchanged', () {
+      const fx = BaseCurrencyConverter(base: 'INR');
+      final withSold = ExportService.portfolioTotals([open, sold], fx);
+      final without = ExportService.portfolioTotals([open], fx);
+
+      expect(withSold.value, without.value);
+      expect(withSold.invested, without.invested);
+    });
+
+    test('the report still lays out with only sold holdings', () async {
+      final doc = ExportService.buildCapitalGainsPdf(
+        [sold],
+        [sale],
+        {'sold': 'Infosys'},
+        const BaseCurrencyConverter(base: 'INR'),
+      );
+
+      expect(await doc.save(), isNotEmpty);
     });
   });
 

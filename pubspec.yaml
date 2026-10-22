@@ -1,7 +1,7 @@
 name: kashu
 description: "KashU - Your Personal Investment Portfolio Tracker"
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.0+2
 
 environment:
   sdk: ^3.4.0
@@ -12,7 +12,6 @@ dependencies:
 
   # UI
   cupertino_icons: ^1.0.8
-  google_fonts: ^6.1.0
   flutter_svg: ^2.0.9
   
   # State Management
@@ -72,6 +71,31 @@ flutter:
   assets:
     - assets/icons/
     - assets/images/
+    # SIL OFL texts of the bundled fonts, shown on the licences page.
+    - assets/fonts/quicksand/OFL.txt
+    - assets/fonts/plus_jakarta_sans/OFL.txt
 
-  # Using system fonts for Phase 1 (faster load times, no font files needed)
-  # Custom fonts can be added in Phase 2 for branding
+  # The brand fonts ship with the app, so nothing is fetched at runtime and an
+  # offline first launch still renders them. tool/build_fonts.py fetches them:
+  # Quicksand as its project's own static build (its licence reserves the
+  # name, so it is never modified), Plus Jakarta Sans as static instances cut
+  # from the google/fonts variable font. Only the weights AppTheme uses ship.
+  # Adding one: extend that script, rerun it, declare it here.
+  fonts:
+    - family: Quicksand
+      fonts:
+        - asset: assets/fonts/quicksand/Quicksand-Bold.ttf
+          weight: 700
+    - family: PlusJakartaSans
+      fonts:
+        - asset: assets/fonts/plus_jakarta_sans/PlusJakartaSans-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/plus_jakarta_sans/PlusJakartaSans-MediumItalic.ttf
+          weight: 500
+          style: italic
+        - asset: assets/fonts/plus_jakarta_sans/PlusJakartaSans-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/plus_jakarta_sans/PlusJakartaSans-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/plus_jakarta_sans/PlusJakartaSans-ExtraBold.ttf
+          weight: 800
