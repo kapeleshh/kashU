@@ -9,6 +9,7 @@ import '../data/models/asset.dart';
 import '../data/models/asset_type.dart';
 import '../data/models/transaction.dart';
 import '../data/models/transaction_type.dart';
+import 'base_currency_converter.dart';
 
 /// Handles CSV and PDF export of portfolio data for tax filing.
 abstract final class ExportService {
@@ -80,38 +81,18 @@ abstract final class ExportService {
   // ─── PDF ──────────────────────────────────────────────────────────────────
 
   /// Generate and share a PDF capital-gains summary suitable for a CA.
+  ///
+  /// Every total is in [fx]'s base currency; holding, sale and transaction
+  /// rows stay in their own currency, which each table names in a column.
   static Future<void> exportCapitalGainsPdf(
     List<Asset> assets,
     List<Transaction> transactions,
     Map<String, String> assetNames,
-    String baseCurrency,
+    BaseCurrencyConverter fx,
   ) async {
-    final doc = pw.Document();
     final now = DateTime.now();
-
-    // Compute capital gains: sell transactions where buy data is available
-    final gains = computeCapitalGains(assets, transactions, assetNames);
-
-    doc.addPage(
-      pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(32),
-        header: (_) => _pdfHeader(baseCurrency, now),
-        footer: (ctx) => _pdfFooter(ctx),
-        build: (ctx) => [
-          _pdfPortfolioSummary(assets, baseCurrency),
-          pw.SizedBox(height: 20),
-          _pdfHoldingsTable(assets, baseCurrency),
-          pw.SizedBox(height: 20),
-          _pdfCapitalGainsTable(gains, baseCurrency),
-          pw.SizedBox(height: 20),
-          _pdfTransactionsTable(transactions, assetNames, baseCurrency),
-          pw.SizedBox(height: 16),
-          _pdfDisclaimer(),
-        ],
-      ),
-    );
-
+    final doc = buildCapitalGainsPdf(assets, transactions, assetNames, fx,
+        generatedAt: now);
     await saveAndShare(
       bytes: await doc.save(),
       filename: 'kashu_tax_report_${now.year}.pdf',
@@ -125,33 +106,85 @@ abstract final class ExportService {
     List<Asset> assets,
     List<Transaction> transactions,
     Map<String, String> assetNames,
-    String baseCurrency,
+    BaseCurrencyConverter fx,
   ) async {
+    final doc = buildCapitalGainsPdf(assets, transactions, assetNames, fx);
+    await Printing.layoutPdf(onLayout: (_) async => doc.save());
+  }
+
+  /// Lay out the capital-gains report. No I/O, so it can be built in tests.
+  static pw.Document buildCapitalGainsPdf(
+    List<Asset> assets,
+    List<Transaction> transactions,
+    Map<String, String> assetNames,
+    BaseCurrencyConverter fx, {
+    DateTime? generatedAt,
+  }) {
     final doc = pw.Document();
-    final now = DateTime.now();
+    final now = generatedAt ?? DateTime.now();
     final gains = computeCapitalGains(assets, transactions, assetNames);
 
     doc.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(32),
-        header: (_) => _pdfHeader(baseCurrency, now),
+        header: (_) => _pdfHeader(fx.base, now),
         footer: (ctx) => _pdfFooter(ctx),
         build: (ctx) => [
-          _pdfPortfolioSummary(assets, baseCurrency),
+          _pdfPortfolioSummary(assets, gains, fx),
           pw.SizedBox(height: 20),
-          _pdfHoldingsTable(assets, baseCurrency),
+          _pdfHoldingsTable(assets),
           pw.SizedBox(height: 20),
-          _pdfCapitalGainsTable(gains, baseCurrency),
+          _pdfCapitalGainsTable(gains, fx),
           pw.SizedBox(height: 20),
-          _pdfTransactionsTable(transactions, assetNames, baseCurrency),
+          _pdfTransactionsTable(transactions, assetNames),
           pw.SizedBox(height: 16),
           _pdfDisclaimer(),
         ],
       ),
     );
+    return doc;
+  }
 
-    await Printing.layoutPdf(onLayout: (_) async => doc.save());
+  // ─── Totals (base currency) ───────────────────────────────────────────────
+
+  /// The report's portfolio totals, converted into [fx]'s base currency the
+  /// same way the dashboard converts them. Each holding is in its own
+  /// currency, so adding the raw figures would count dollars as rupees.
+  static ({double invested, double value, double gain, double gainPct})
+      portfolioTotals(List<Asset> assets, BaseCurrencyConverter fx) {
+    var invested = 0.0;
+    var value = 0.0;
+    for (final a in assets) {
+      invested += fx.investedOf(a);
+      value += fx.valueOf(a);
+    }
+    final gain = value - invested;
+    return (
+      invested: invested,
+      value: value,
+      gain: gain,
+      gainPct: invested > 0 ? gain / invested * 100 : 0.0,
+    );
+  }
+
+  /// Short- and long-term gains, each converted from its sale's currency
+  /// into [fx]'s base currency before being added up.
+  static ({double shortTerm, double longTerm}) capitalGainsTotals(
+    List<CapitalGainRow> gains,
+    BaseCurrencyConverter fx,
+  ) {
+    var shortTerm = 0.0;
+    var longTerm = 0.0;
+    for (final g in gains) {
+      final gain = fx.convert(g.gain, g.currency);
+      if (g.isLongTerm) {
+        longTerm += gain;
+      } else {
+        shortTerm += gain;
+      }
+    }
+    return (shortTerm: shortTerm, longTerm: longTerm);
   }
 
   // ─── Capital gains calculation ────────────────────────────────────────────
@@ -215,7 +248,7 @@ abstract final class ExportService {
                 style: pw.TextStyle(
                     fontSize: 18, fontWeight: pw.FontWeight.bold)),
             pw.Text(
-                'Generated: ${_date(now)} | Currency: $currency',
+                'Generated: ${_date(now)} | Base currency: $currency',
                 style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey600)),
           ],
         ),
@@ -237,32 +270,53 @@ abstract final class ExportService {
   }
 
   static pw.Widget _pdfPortfolioSummary(
-      List<Asset> assets, String currency) {
-    final totalInvested =
-        assets.fold(0.0, (s, a) => s + a.totalInvested);
-    final totalValue = assets.fold(0.0, (s, a) => s + a.currentValue);
-    final totalGain = totalValue - totalInvested;
-    final gainPct =
-        totalInvested > 0 ? (totalGain / totalInvested) * 100 : 0.0;
+    List<Asset> assets,
+    List<CapitalGainRow> gains,
+    BaseCurrencyConverter fx,
+  ) {
+    final currency = fx.base;
+    final totals = portfolioTotals(assets, fx);
+    final converted = assets.any((a) => fx.currencyOf(a) != currency) ||
+        gains.any((g) => g.currency.isNotEmpty && g.currency != currency);
+    final rates = fx.rates;
+    final rateSource = rates == null || !rates.success
+        ? 'approximate offline exchange rates'
+        : 'exchange rates of ${_date(rates.fetchedAt)}';
 
-    return pw.Container(
-      padding: const pw.EdgeInsets.all(12),
-      decoration: pw.BoxDecoration(
-        color: PdfColors.grey100,
-        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
-      ),
-      child: pw.Row(
-        mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
-        children: [
-          _summaryCell('Total Invested', '$currency ${_fmt(totalInvested)}'),
-          _summaryCell('Current Value', '$currency ${_fmt(totalValue)}'),
-          _summaryCell(
-              'Gain / Loss',
-              '${totalGain >= 0 ? '+' : ''}$currency ${_fmt(totalGain)} '
-                  '(${gainPct.toStringAsFixed(2)}%)'),
-          _summaryCell('Holdings', '${assets.length}'),
-        ],
-      ),
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Container(
+          padding: const pw.EdgeInsets.all(12),
+          decoration: pw.BoxDecoration(
+            color: PdfColors.grey100,
+            borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+          ),
+          child: pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
+            children: [
+              _summaryCell(
+                  'Total Invested', '$currency ${_fmt(totals.invested)}'),
+              _summaryCell('Current Value', '$currency ${_fmt(totals.value)}'),
+              _summaryCell(
+                  'Gain / Loss',
+                  '${totals.gain >= 0 ? '+' : ''}$currency '
+                      '${_fmt(totals.gain)} '
+                      '(${totals.gainPct.toStringAsFixed(2)}%)'),
+              _summaryCell('Holdings', '${assets.length}'),
+            ],
+          ),
+        ),
+        pw.SizedBox(height: 4),
+        pw.Text(
+          converted
+              ? 'All totals are in $currency. Amounts in other currencies '
+                  'are converted at $rateSource; the tables below list each '
+                  'row in its own currency.'
+              : 'All amounts are in $currency.',
+          style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
+        ),
+      ],
     );
   }
 
@@ -281,8 +335,7 @@ abstract final class ExportService {
     );
   }
 
-  static pw.Widget _pdfHoldingsTable(
-      List<Asset> assets, String currency) {
+  static pw.Widget _pdfHoldingsTable(List<Asset> assets) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
@@ -292,13 +345,14 @@ abstract final class ExportService {
         pw.SizedBox(height: 8),
         pw.TableHelper.fromTextArray(
           headers: [
-            'Asset', 'Type', 'Qty', 'Buy Price',
+            'Asset', 'Type', 'Cur.', 'Qty', 'Buy Price',
             'Current', 'Invested', 'Value', 'Gain/Loss',
           ],
           data: assets
               .map((a) => [
                     a.name,
                     a.type.displayName,
+                    a.currency,
                     _fmt(a.quantity),
                     _fmt(a.purchasePrice),
                     _fmt(a.currentPrice),
@@ -316,12 +370,13 @@ abstract final class ExportService {
           cellAlignments: {
             0: pw.Alignment.centerLeft,
             1: pw.Alignment.center,
-            2: pw.Alignment.centerRight,
+            2: pw.Alignment.center,
             3: pw.Alignment.centerRight,
             4: pw.Alignment.centerRight,
             5: pw.Alignment.centerRight,
             6: pw.Alignment.centerRight,
             7: pw.Alignment.centerRight,
+            8: pw.Alignment.centerRight,
           },
         ),
       ],
@@ -329,7 +384,8 @@ abstract final class ExportService {
   }
 
   static pw.Widget _pdfCapitalGainsTable(
-      List<CapitalGainRow> gains, String currency) {
+      List<CapitalGainRow> gains, BaseCurrencyConverter fx) {
+    final currency = fx.base;
     if (gains.isEmpty) {
       return pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -345,10 +401,7 @@ abstract final class ExportService {
       );
     }
 
-    final stcg = gains.where((g) => !g.isLongTerm);
-    final ltcg = gains.where((g) => g.isLongTerm);
-    final totalStcg = stcg.fold(0.0, (s, g) => s + g.gain);
-    final totalLtcg = ltcg.fold(0.0, (s, g) => s + g.gain);
+    final totals = capitalGainsTotals(gains, fx);
 
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -360,8 +413,9 @@ abstract final class ExportService {
         pw.Row(
           children: [
             pw.Text(
-                'STCG (held < 1 year): $currency ${_fmt(totalStcg)}  |  '
-                'LTCG (held ≥ 1 year): $currency ${_fmt(totalLtcg)}',
+                'STCG (held < 1 year): $currency ${_fmt(totals.shortTerm)}  |  '
+                'LTCG (held ≥ 1 year): $currency ${_fmt(totals.longTerm)}  '
+                '(totals in $currency)',
                 style: const pw.TextStyle(
                     fontSize: 9, color: PdfColors.grey700)),
           ],
@@ -369,7 +423,7 @@ abstract final class ExportService {
         pw.SizedBox(height: 8),
         pw.TableHelper.fromTextArray(
           headers: [
-            'Asset', 'Type', 'Sale Date', 'Qty',
+            'Asset', 'Type', 'Sale Date', 'Cur.', 'Qty',
             'Avg Cost', 'Sale Price', 'Cost Basis',
             'Proceeds', 'Gain/Loss', 'Term',
           ],
@@ -378,6 +432,7 @@ abstract final class ExportService {
                     g.assetName,
                     g.assetType.displayName,
                     _date(g.saleDate),
+                    g.currency,
                     _fmt(g.quantity),
                     _fmt(g.avgCostBasis),
                     _fmt(g.salePrice),
@@ -400,7 +455,6 @@ abstract final class ExportService {
   static pw.Widget _pdfTransactionsTable(
     List<Transaction> transactions,
     Map<String, String> assetNames,
-    String currency,
   ) {
     final sorted = [...transactions]
       ..sort((a, b) => b.date.compareTo(a.date));
@@ -413,7 +467,9 @@ abstract final class ExportService {
                 fontSize: 13, fontWeight: pw.FontWeight.bold)),
         pw.SizedBox(height: 8),
         pw.TableHelper.fromTextArray(
-          headers: ['Date', 'Asset', 'Type', 'Qty', 'Price', 'Amount', 'Notes'],
+          headers: [
+            'Date', 'Asset', 'Type', 'Qty', 'Price', 'Amount', 'Cur.', 'Notes',
+          ],
           data: sorted
               .map((t) => [
                     _date(t.date),
@@ -422,6 +478,7 @@ abstract final class ExportService {
                     _fmt(t.quantity),
                     _fmt(t.price),
                     _fmt(t.amount),
+                    t.currency,
                     t.notes ?? '',
                   ])
               .toList(),

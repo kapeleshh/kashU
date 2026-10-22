@@ -11,7 +11,10 @@ import 'package:kashu/data/models/transaction_type.dart';
 import 'package:kashu/data/repositories/asset_repository.dart';
 import 'package:kashu/data/repositories/portfolio_write_service.dart';
 import 'package:kashu/data/repositories/transaction_repository.dart';
+import 'package:kashu/services/base_currency_converter.dart';
 import 'package:kashu/services/export_service.dart';
+
+import '../fixtures/sample_portfolio.dart';
 
 Asset _asset({
   String id = 'a1',
@@ -158,6 +161,67 @@ void main() {
       );
       expect(rows.map((r) => r.saleDate),
           [DateTime(2023, 5, 1), DateTime(2023, 8, 1)]);
+    });
+  });
+
+  // The PDF's totals carry a base-currency label, so a USD holding in an
+  // INR portfolio has to be converted before it is added in.
+  group('PDF totals of a mixed INR + USD portfolio', () {
+    final fx = BaseCurrencyConverter(base: 'INR', rates: sampleRates());
+
+    test('portfolio totals are in the base currency, matching the dashboard',
+        () {
+      final totals = ExportService.portfolioTotals(samplePortfolio(), fx);
+
+      expect(totals.value, closeTo(sampleTotalValueInr, 1e-6));
+      final invested = samplePortfolio()
+          .fold(0.0, (s, a) => s + fx.investedOf(a));
+      expect(totals.invested, closeTo(invested, 1e-6));
+      expect(totals.gain, closeTo(sampleTotalValueInr - invested, 1e-6));
+    });
+
+    test('STCG and LTCG add each sale in the base currency', () {
+      final gains = ExportService.computeCapitalGains(
+        [
+          _asset(id: 'inr', buy: 100, purchaseDate: DateTime(2023, 1, 1)),
+          _asset(
+              id: 'usd',
+              buy: 100,
+              currency: 'USD',
+              purchaseDate: DateTime(2023, 1, 1)),
+        ],
+        [
+          // +150 INR, short term
+          _sell(id: 's1', assetId: 'inr', amount: 650,
+              date: DateTime(2023, 6, 1)),
+          // +$10 short term, and +$50 long term
+          _sell(id: 's2', assetId: 'usd', amount: 510, currency: 'USD',
+              date: DateTime(2023, 6, 1)),
+          _sell(id: 's3', assetId: 'usd', amount: 550, currency: 'USD',
+              date: DateTime(2024, 6, 1)),
+        ],
+        {},
+      );
+
+      final totals = ExportService.capitalGainsTotals(gains, fx);
+
+      expect(totals.shortTerm, closeTo(150 + 10 * usdInr, 1e-6));
+      expect(totals.longTerm, closeTo(50 * usdInr, 1e-6));
+    });
+
+    test('the report lays out and saves', () async {
+      final assets = samplePortfolio();
+      final doc = ExportService.buildCapitalGainsPdf(
+        assets,
+        [
+          _sell(assetId: 'aapl', qty: 2, price: 230, amount: 460,
+              currency: 'USD', date: DateTime(2024, 9, 1)),
+        ],
+        {for (final a in assets) a.id: a.name},
+        fx,
+      );
+
+      expect(await doc.save(), isNotEmpty);
     });
   });
 

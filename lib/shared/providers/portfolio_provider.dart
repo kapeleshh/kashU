@@ -9,6 +9,7 @@ import '../../data/repositories/asset_repository.dart';
 import '../../data/repositories/portfolio_write_service.dart';
 import '../../data/repositories/transaction_repository.dart';
 import '../../services/auth_service.dart';
+import '../../services/base_currency_converter.dart';
 import '../../services/currency_converter_service.dart';
 import '../../services/gold_price_service.dart';
 import '../../services/price_history_service.dart';
@@ -66,25 +67,23 @@ final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
     return PortfolioSummary.empty();
   }
 
-  String currencyOf(Asset a) => a.currency.isNotEmpty ? a.currency : base;
-
-  // Offline-first: only touch the forex network when a holding is actually
-  // in a different currency than the base. An all-INR (all-base) portfolio
-  // converts by identity, so it must not block on (or require) a fetch.
-  final needsConversion = assets.any((a) => currencyOf(a) != base);
-  final rates =
-      needsConversion ? await ref.watch(exchangeRatesProvider.future) : null;
-
-  double toBase(double amount, Asset a) =>
-      rates == null ? amount : rates.convertBetween(amount, currencyOf(a), base);
+  // Offline-first: the forex network is only touched when a holding is
+  // actually in a different currency than the base. The rebalancing screen
+  // reads this summary and the capital-gains PDF builds the same converter,
+  // so all three total a mixed-currency portfolio identically.
+  final fx = await BaseCurrencyConverter.forAssets(
+    assets,
+    base: base,
+    loadRates: () => ref.watch(exchangeRatesProvider.future),
+  );
 
   double totalValue = 0;
   double totalInvested = 0;
   final allocation = <AssetType, double>{};
   for (final a in assets) {
-    final value = toBase(a.currentValue, a);
+    final value = fx.valueOf(a);
     totalValue += value;
-    totalInvested += toBase(a.totalInvested, a);
+    totalInvested += fx.investedOf(a);
     allocation.update(a.type, (v) => v + value, ifAbsent: () => value);
   }
 
@@ -93,7 +92,7 @@ final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
   if (totalValue == 0 && totalInvested > 0) {
     allocation.clear();
     for (final a in assets) {
-      final inv = toBase(a.totalInvested, a);
+      final inv = fx.investedOf(a);
       allocation.update(a.type, (v) => v + inv, ifAbsent: () => inv);
     }
   }
@@ -128,10 +127,8 @@ final portfolioSummaryProvider = FutureProvider<PortfolioSummary>((ref) async {
           ? priorValue / priorQty * a.quantity
           : priorValue;
       hasTodaysChange = true;
-      final priorBase = rates == null
-          ? priorNative
-          : rates.convertBetween(priorNative, currencyOf(a), base);
-      final nowBase = toBase(a.currentValue, a);
+      final priorBase = fx.convert(priorNative, a.currency);
+      final nowBase = fx.valueOf(a);
       todaysChange += nowBase - priorBase;
       priorBaseline += priorBase;
     }

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/theme/app_decorations.dart';
 import '../../core/theme/app_theme.dart';
+import '../../services/base_currency_converter.dart';
 import '../../services/export_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
 import '../../shared/widgets/soft_disclaimer.dart';
@@ -147,9 +148,18 @@ class _TaxExportScreenState extends ConsumerState<TaxExportScreen> {
     final txRepo = ref.read(transactionRepositoryProvider);
     final transactions = txRepo.getAllTransactions();
     final assetNames = {for (final a in assets) a.id: a.name};
-    final baseCurrency = ref.read(baseCurrencyProvider);
+    // The same conversion the dashboard totals with, so the report's
+    // base-currency totals match what the app shows.
+    final fx = await BaseCurrencyConverter.forCurrencies(
+      [
+        for (final a in assets) a.currency,
+        for (final t in transactions) t.currency,
+      ],
+      base: ref.read(baseCurrencyProvider),
+      loadRates: () => ref.read(exchangeRatesProvider.future),
+    );
     await ExportService.previewCapitalGainsPdf(
-        assets, transactions, assetNames, baseCurrency);
+        assets, transactions, assetNames, fx);
   }
 }
 
