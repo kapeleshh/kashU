@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../core/utils/transaction_validator.dart';
+import '../../services/widget_update_service.dart';
 import '../models/asset.dart';
 import '../models/transaction.dart';
 import '../models/transaction_type.dart';
@@ -26,15 +27,25 @@ class PortfolioWriteService {
   final AssetRepository _assetRepository;
   final TransactionRepository _transactionRepository;
   final Box? _settingsBoxOverride;
+  final Box? _priceHistoryBoxOverride;
+  final Box? _priceCacheBoxOverride;
+  final Future<void> Function() _clearHomeWidget;
 
   PortfolioWriteService({
     AssetRepository? assetRepository,
     TransactionRepository? transactionRepository,
     Box? settingsBox,
+    Box? priceHistoryBox,
+    Box? priceCacheBox,
+    Future<void> Function()? clearHomeWidget,
   })  : _assetRepository = assetRepository ?? AssetRepository(),
         _transactionRepository =
             transactionRepository ?? TransactionRepository(),
-        _settingsBoxOverride = settingsBox;
+        _settingsBoxOverride = settingsBox,
+        _priceHistoryBoxOverride = priceHistoryBox,
+        _priceCacheBoxOverride = priceCacheBox,
+        _clearHomeWidget =
+            clearHomeWidget ?? WidgetUpdateService.clearPortfolioWidget;
 
   Box get _settings =>
       _settingsBoxOverride ?? Hive.box(AppConstants.settingsBox);
@@ -117,21 +128,53 @@ class PortfolioWriteService {
     }
   }
 
-  /// Clear both boxes as one logical write (Settings → Clear All Data).
+  /// Erase all portfolio data as one logical write (Settings → Clear All
+  /// Data): holdings, transactions, the daily price history, the price
+  /// cache, every settings entry that describes the portfolio (rebalancing
+  /// targets, pending-write markers and journals, refresh and backup
+  /// timestamps) and the home-screen widget's figures. Only the user's
+  /// preferences survive — see [AppConstants.preservedSettingsKeys].
   ///
   /// Protected like single deletes: a pending-clear flag is set before the
   /// first clear and removed after the last, so a crash in between is
   /// finished by [completeInterruptedWrites] instead of leaving ghost
   /// history that the tax export would keep including. Transactions are
   /// cleared before assets so even an unmarked partial failure leaves an
-  /// empty history, not an orphaned one. All delete tombstones are dropped
-  /// too — after a full clear there is nothing left for them to clean up.
+  /// empty history, not an orphaned one.
+  ///
+  /// Blanking the widget is best-effort (there is none on web, and a
+  /// platform hiccup must not undo or fail the clear); everything else
+  /// throws, leaving the flag set so the next launch finishes the job.
   Future<void> clearAllData() async {
     await _settings.put(AppConstants.keyPendingClearAll, true);
     await _transactionRepository.clearAll();
     await _assetRepository.clearAll();
-    await _settings.put(AppConstants.keyPendingAssetDeletes, <String>[]);
+    await _clearBox(_priceHistoryBoxOverride, AppConstants.priceHistoryBox);
+    await _clearBox(_priceCacheBoxOverride, AppConstants.priceCacheBox);
+    await _settings.deleteAll(_settings.keys
+        .where((key) =>
+            key != AppConstants.keyPendingClearAll &&
+            !AppConstants.preservedSettingsKeys.contains(key))
+        .toList());
+    try {
+      await _clearHomeWidget();
+    } catch (e) {
+      debugPrint('[KashU] Could not blank the home-screen widget: $e');
+    }
     await _settings.put(AppConstants.keyPendingClearAll, false);
+  }
+
+  /// Empty the box [name] ([override] in tests). The app opens every box at
+  /// startup; should one not be open, its file is deleted instead, which
+  /// erases it just the same.
+  static Future<void> _clearBox(Box? override, String name) async {
+    if (override != null) {
+      await override.clear();
+    } else if (Hive.isBoxOpen(name)) {
+      await Hive.box(name).clear();
+    } else {
+      await Hive.deleteBoxFromDisk(name);
+    }
   }
 
   /// Finish combined writes that were interrupted mid-way.
