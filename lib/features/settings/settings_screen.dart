@@ -309,6 +309,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 AppConstants.contactEmail,
               ),
             ),
+            // Flutter's licence page: every package's licence plus the
+            // bundled fonts' OFL texts (registered in main()).
+            _SettingsTile(
+              icon: Icons.description_outlined,
+              title: 'Open-source licences',
+              subtitle: 'The fonts and libraries KashU is built with',
+              onTap: () => showLicensePage(
+                context: context,
+                applicationName: AppStrings.appName,
+              ),
+            ),
           ]),
 
           const SizedBox(height: 32),
