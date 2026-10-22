@@ -239,6 +239,34 @@ void main() {
       expect(data[11], '30.00%'); // Gain/Loss %
     });
 
+    test("a deposit with terms shows today's price, not the stored one", () {
+      final now = DateTime.now();
+      final opened = DateTime(now.year - 1, now.month, now.day);
+      final fd = Asset(
+        id: 'fd',
+        name: 'SBI FD',
+        type: AssetType.fixedDeposit,
+        quantity: 1,
+        purchasePrice: 100000,
+        currentPrice: 100000, // stored the day it was added
+        currency: 'INR',
+        purchaseDate: opened,
+        createdAt: opened,
+        updatedAt: opened,
+        depositRatePercent: 10,
+        depositMaturityDate: DateTime(now.year + 2, now.month, now.day),
+        depositCompounding: 'yearly',
+      );
+
+      final csv = ExportService.holdingsCsvRows([fd])[1];
+      expect(csv[7], csv[9]); // Current Price = Current Value (1 unit)
+      expect(double.parse(csv[7] as String), greaterThan(109000));
+      expect(csv[6], csv[8]); // Avg Buy Price = Invested
+
+      final pdf = ExportService.pdfHoldingsRows([fd]).single;
+      expect(pdf[5], csv[7]);
+    });
+
     test('null symbol/platform render as empty strings', () {
       final rows =
           ExportService.holdingsCsvRows([_asset(symbol: null, platform: null)]);

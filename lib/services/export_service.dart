@@ -24,6 +24,9 @@ abstract final class ExportService {
   /// Build the holdings CSV rows (header + one row per open holding, see
   /// [openHoldings]). Pure — no I/O, so it's unit-testable independently of
   /// the share sheet.
+  /// Prices are today's: a deposit valued from its terms shows its value
+  /// and (for an RD) the instalments paid so far, not the figures stored
+  /// the day it was added, so price × quantity matches the value columns.
   static List<List<dynamic>> holdingsCsvRows(List<Asset> assets) => [
         [
           'Name', 'Symbol', 'Type', 'Platform', 'Currency',
@@ -39,8 +42,8 @@ abstract final class ExportService {
             a.platform ?? '',
             a.currency,
             _fmt(a.quantity),
-            _fmt(a.purchasePrice),
-            _fmt(a.currentPrice),
+            _fmt(a.investedPriceOn(DateTime.now())),
+            _fmt(a.effectiveCurrentPrice),
             _fmt(a.totalInvested),
             _fmt(a.currentValue),
             _fmt(a.gainLoss),
@@ -358,8 +361,8 @@ abstract final class ExportService {
             a.type.displayName,
             a.currency,
             _fmt(a.quantity),
-            _fmt(a.purchasePrice),
-            _fmt(a.currentPrice),
+            _fmt(a.investedPriceOn(DateTime.now())),
+            _fmt(a.effectiveCurrentPrice),
             _fmt(a.totalInvested),
             _fmt(a.currentValue),
             '${a.gainLoss >= 0 ? '+' : ''}${_fmt(a.gainLoss)} '
