@@ -76,9 +76,11 @@ flutter:
     - assets/fonts/plus_jakarta_sans/OFL.txt
 
   # The brand fonts ship with the app, so nothing is fetched at runtime and an
-  # offline first launch still renders them. Static instances cut from the
-  # google/fonts variable fonts by tool/build_fonts.py — only the weights
-  # AppTheme uses. Adding one: extend that script, rerun it, declare it here.
+  # offline first launch still renders them. tool/build_fonts.py fetches them:
+  # Quicksand as its project's own static build (its licence reserves the
+  # name, so it is never modified), Plus Jakarta Sans as static instances cut
+  # from the google/fonts variable font. Only the weights AppTheme uses ship.
+  # Adding one: extend that script, rerun it, declare it here.
   fonts:
     - family: Quicksand
       fonts:
