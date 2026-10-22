@@ -18,6 +18,12 @@ class MockAssetRepository extends Mock implements AssetRepository {}
 class MockTransactionRepository extends Mock
     implements TransactionRepository {}
 
+/// A box whose clear fails, as on a full disk.
+class _ThrowingBox extends Mock implements Box<dynamic> {
+  @override
+  Future<int> clear() async => throw HiveError('disk full');
+}
+
 Asset makeAsset({String id = 'a1'}) {
   final now = DateTime(2024, 1, 15);
   return Asset(
@@ -315,17 +321,52 @@ void main() {
   group('clearAllData', () {
     late AssetRepository assetRepo;
     late TransactionRepository txRepo;
+    late Box history;
+    late Box priceCache;
+    late int widgetClears;
     late PortfolioWriteService service;
 
-    setUp(() {
+    setUp(() async {
       assetRepo = AssetRepository();
       txRepo = TransactionRepository();
+      history = await Hive.openBox(AppConstants.priceHistoryBox);
+      priceCache = await Hive.openBox(AppConstants.priceCacheBox);
+      widgetClears = 0;
       service = PortfolioWriteService(
         assetRepository: assetRepo,
         transactionRepository: txRepo,
         settingsBox: settings,
+        priceHistoryBox: history,
+        priceCacheBox: priceCache,
+        clearHomeWidget: () async => widgetClears++,
       );
     });
+
+    /// A portfolio with something in every place Clear All must reach,
+    /// next to the user's preferences.
+    Future<void> seedEverything() async {
+      await assetRepo.addAsset(makeAsset(id: 'a1'));
+      await txRepo.addTransaction(makeTransaction(id: 't1', assetId: 'a1'));
+      await history.put('2026-10-21', '{"total":1000}');
+      await priceCache.put('RELIANCE.NS:INR', '{"price":2450}');
+      await settings.putAll({
+        // portfolio data
+        'rebal_stock': 60.0,
+        'rebal_crypto': 40.0,
+        AppConstants.keyPendingAssetDeletes: ['stale'],
+        AppConstants.keyPendingImport: {'assets': {}},
+        AppConstants.keyLastExportAt: '2026-10-01T00:00:00.000',
+        AppConstants.keyBackupNudgeDismissedAt: '2026-10-02T00:00:00.000',
+        'lastPriceRefreshAt': '2026-10-21T09:00:00.000',
+        // preferences
+        AppConstants.keyBaseCurrency: 'USD',
+        AppConstants.keyThemeMode: 'dark',
+        AppConstants.keyOnboardingComplete: true,
+        AppConstants.keyAppLockEnabled: true,
+        AppConstants.keyCrashReportingEnabled: true,
+        AppConstants.keySchemaVersion: 1,
+      });
+    }
 
     test('clears both boxes, all tombstones, and the pending-clear flag',
         () async {
@@ -341,18 +382,106 @@ void main() {
       expect(settings.get(AppConstants.keyPendingClearAll), isFalse);
     });
 
+    test(
+        'erases price history, price cache, rebalancing targets, markers '
+        'and the widget — and keeps every preference', () async {
+      await seedEverything();
+
+      await service.clearAllData();
+
+      expect(history.isEmpty, isTrue);
+      expect(priceCache.isEmpty, isTrue);
+      expect(widgetClears, 1);
+      expect(
+        Map.of(settings.toMap())..remove(AppConstants.keyPendingClearAll),
+        {
+          AppConstants.keyBaseCurrency: 'USD',
+          AppConstants.keyThemeMode: 'dark',
+          AppConstants.keyOnboardingComplete: true,
+          AppConstants.keyAppLockEnabled: true,
+          AppConstants.keyCrashReportingEnabled: true,
+          AppConstants.keySchemaVersion: 1,
+        },
+      );
+    });
+
+    test('a widget that cannot be blanked does not fail the clear', () async {
+      await seedEverything();
+      final noWidget = PortfolioWriteService(
+        assetRepository: assetRepo,
+        transactionRepository: txRepo,
+        settingsBox: settings,
+        priceHistoryBox: history,
+        priceCacheBox: priceCache,
+        clearHomeWidget: () async => throw Exception('MissingPlugin'),
+      );
+
+      await noWidget.clearAllData();
+
+      expect(assetRepo.getAllAssets(), isEmpty);
+      expect(history.isEmpty, isTrue);
+      expect(settings.get(AppConstants.keyPendingClearAll), isFalse);
+    });
+
+    test('a failure leaves the flag set, so the next launch finishes it',
+        () async {
+      await seedEverything();
+      final failing = PortfolioWriteService(
+        assetRepository: assetRepo,
+        transactionRepository: txRepo,
+        settingsBox: settings,
+        priceHistoryBox: history,
+        priceCacheBox: _ThrowingBox(),
+        clearHomeWidget: () async => widgetClears++,
+      );
+
+      await expectLater(failing.clearAllData, throwsA(isA<HiveError>()));
+      expect(settings.get(AppConstants.keyPendingClearAll), isTrue);
+
+      await service.completeInterruptedWrites();
+
+      expect(priceCache.isEmpty, isTrue);
+      expect(settings.get('rebal_stock'), isNull);
+      expect(widgetClears, 1);
+      expect(settings.get(AppConstants.keyPendingClearAll), isFalse);
+    });
+
     test('an interrupted clear-all is finished at the next launch', () async {
       // Crash happened after the flag was set but before the boxes were
       // fully cleared: assets box already empty, transactions left behind.
       await settings.put(AppConstants.keyPendingClearAll, true);
       await txRepo.addTransaction(makeTransaction(id: 't1', assetId: 'a1'));
       await txRepo.addTransaction(makeTransaction(id: 't2', assetId: 'a2'));
+      await history.put('2026-10-21', '{"total":1000}');
+      await settings.put('rebal_stock', 100.0);
 
       final removed = await service.completeInterruptedWrites();
 
       expect(removed, 2);
       expect(txRepo.getAllTransactions(), isEmpty);
+      expect(history.isEmpty, isTrue);
+      expect(settings.get('rebal_stock'), isNull);
+      expect(widgetClears, 1);
       expect(settings.get(AppConstants.keyPendingClearAll), isFalse);
+    });
+
+    test('works on boxes the service was not handed (the app path)',
+        () async {
+      // The app constructs the service without overrides; the history and
+      // cache boxes are found by name.
+      await history.put('2026-10-21', '{"total":1000}');
+      await priceCache.put('BTC:INR', '{"price":1}');
+      final appService = PortfolioWriteService(
+        assetRepository: assetRepo,
+        transactionRepository: txRepo,
+        settingsBox: settings,
+        clearHomeWidget: () async {},
+      );
+
+      await appService.clearAllData();
+
+      expect(history.isEmpty, isTrue);
+      expect(priceCache.isEmpty, isTrue);
     });
   });
 

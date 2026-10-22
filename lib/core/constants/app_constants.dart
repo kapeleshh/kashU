@@ -52,6 +52,31 @@ class AppConstants {
   /// is complete; a leftover journal is rolled back at startup.
   static const String keyPendingImport = 'pending_import';
 
+  /// Journal of sales being recorded or deleted, keyed by transaction id:
+  /// the holding's quantity before the write (and, for a delete, the SELL
+  /// itself). Written before the first box write, removed after the last;
+  /// a leftover entry is rolled back at startup.
+  static const String keyPendingSales = 'pending_sales';
+
+  /// The settings_box entries that survive Clear All Data: the user's
+  /// preferences (base currency, theme, app lock and PIN, crash-reporting
+  /// consent, onboarding done) plus the on-disk schema version. Everything
+  /// else in the box describes the portfolio (rebalancing targets,
+  /// pending-write markers, refresh and backup timestamps) and is wiped
+  /// with it, so a NEW PREFERENCE KEY MUST BE ADDED HERE or Clear All Data
+  /// will reset it.
+  static const Set<String> preservedSettingsKeys = {
+    keyBaseCurrency,
+    keyThemeMode,
+    keyOnboardingComplete,
+    keyAppLockEnabled,
+    keyBiometricEnabled,
+    keyPinEnabled,
+    keyPin,
+    keyCrashReportingEnabled,
+    keySchemaVersion,
+  };
+
   /// Version of the backup/export JSON file format. Independent of the Hive
   /// on-disk schema version tracked by HiveMigrationService — bump this only
   /// when the structure of exported JSON changes.

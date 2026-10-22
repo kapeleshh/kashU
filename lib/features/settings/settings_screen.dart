@@ -599,7 +599,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Clear All Data'),
         content: const Text(
-          'This will permanently delete all your assets and transactions. This action cannot be undone.',
+          'This will permanently delete all your assets and transactions, '
+          'their price history and your rebalancing targets. Your settings '
+          'are kept. This action cannot be undone.',
         ),
         actions: [
           TextButton(
@@ -608,17 +610,33 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           TextButton(
             onPressed: () async {
-              // One logical write: pending-clear marker + both boxes +
-              // tombstones, completed at startup if interrupted.
-              await ref.read(portfolioWriteServiceProvider).clearAllData();
+              // One logical write: pending-clear marker, every portfolio box
+              // and setting, the home-screen widget — completed at startup
+              // if interrupted.
+              var cleared = true;
+              try {
+                await ref.read(portfolioWriteServiceProvider).clearAllData();
+              } catch (e) {
+                cleared = false;
+                debugPrint('[KashU] Clear All Data failed: $e');
+              }
 
+              // Either way: a failed clear may still have removed some data.
               ref.invalidate(portfolioSummaryProvider);
               ref.invalidate(allAssetsProvider);
+              ref.invalidate(lastRefreshResultProvider);
 
               if (context.mounted) {
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('All data cleared')),
+                  cleared
+                      ? const SnackBar(content: Text('All data cleared'))
+                      : SnackBar(
+                          content: const Text(
+                            "Couldn't clear all your data. Please try again.",
+                          ),
+                          backgroundColor: AppColors.lossOn(context),
+                        ),
                 );
               }
             },
