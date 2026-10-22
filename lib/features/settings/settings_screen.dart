@@ -17,6 +17,7 @@ import '../../core/utils/file_saver.dart';
 import '../../services/auth_service.dart';
 import '../../services/backup_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
+import '../../shared/providers/settings_providers.dart';
 import '../rebalancing/rebalancing_screen.dart';
 import '../export/tax_export_screen.dart';
 
@@ -160,31 +161,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                 onChanged: _appLockBusy ? null : _toggleAppLock,
               ),
-            SwitchListTile(
-              secondary: _tileIcon(Icons.bug_report_outlined),
-              title: Text(
-                'Help improve KashU',
-                style: AppTheme.body(
-                  size: 15,
-                  weight: FontWeight.w700,
-                  color: Theme.of(context).colorScheme.onSurface,
+            // A build without a Sentry DSN can't send reports, so the
+            // opt-in would be a switch that does nothing — don't offer it.
+            if (ref.watch(crashReportingAvailableProvider))
+              SwitchListTile(
+                secondary: _tileIcon(Icons.bug_report_outlined),
+                title: Text(
+                  'Help improve KashU',
+                  style: AppTheme.body(
+                    size: 15,
+                    weight: FontWeight.w700,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
                 ),
-              ),
-              subtitle: Text(
-                'Anonymous crash reports (applies after restart)',
-                style: AppTheme.body(
-                  size: 12.5,
-                  weight: FontWeight.w500,
-                  color: AppColors.textTertiaryOn(context),
+                subtitle: Text(
+                  'Anonymous crash reports (applies after restart)',
+                  style: AppTheme.body(
+                    size: 12.5,
+                    weight: FontWeight.w500,
+                    color: AppColors.textTertiaryOn(context),
+                  ),
                 ),
+                value: _crashReportingEnabled,
+                activeThumbColor: AppColors.primary,
+                activeTrackColor: AppColors.primary.withValues(alpha: 0.4),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                onChanged: _toggleCrashReporting,
               ),
-              value: _crashReportingEnabled,
-              activeThumbColor: AppColors.primary,
-              activeTrackColor: AppColors.primary.withValues(alpha: 0.4),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              onChanged: _toggleCrashReporting,
-            ),
           ]),
 
           const SizedBox(height: 22),
