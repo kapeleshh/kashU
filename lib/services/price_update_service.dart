@@ -123,9 +123,17 @@ class PriceUpdateService {
   // Public API
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// Refresh prices for all assets that have a symbol or auto-trackable type.
+  /// Refresh prices for all open holdings that have a symbol or an
+  /// auto-trackable type.
+  ///
+  /// A fully sold holding stays stored at quantity 0, because the
+  /// capital-gains report needs its cost basis, but it is closed: there is
+  /// nothing left to value, so it is neither fetched nor counted.
   Future<PriceRefreshResult> refreshAllPrices() async {
-    final assets = _assetRepository.getAllAssets();
+    final assets = _assetRepository
+        .getAllAssets()
+        .where((a) => a.quantity > 0)
+        .toList();
     final baseCurrency = _assetRepository.getBaseCurrency();
     final trackable = assets
         .where((a) => _isTrackable(a, baseCurrency: baseCurrency))
@@ -200,6 +208,10 @@ class PriceUpdateService {
 
   /// Refresh price for a single asset with proper currency conversion.
   Future<PriceResult> refreshSinglePrice(Asset asset) async {
+    if (asset.quantity <= 0) {
+      return PriceResult.failure(
+          asset.name, '"${asset.name}" is sold — there is nothing to price');
+    }
     final baseCurrency = _assetRepository.getBaseCurrency();
     final symbol = _getSymbol(asset);
 

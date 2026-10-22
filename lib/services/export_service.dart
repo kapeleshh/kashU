@@ -15,8 +15,15 @@ import 'base_currency_converter.dart';
 abstract final class ExportService {
   // ─── CSV ──────────────────────────────────────────────────────────────────
 
-  /// Build the holdings CSV rows (header + one row per asset). Pure — no I/O,
-  /// so it's unit-testable independently of the share sheet.
+  /// The holdings still held. A fully sold holding stays stored at quantity
+  /// 0 because the capital-gains report needs its cost basis, but it is
+  /// closed, so it is left out of every holdings listing.
+  static List<Asset> openHoldings(Iterable<Asset> assets) =>
+      assets.where((a) => a.quantity > 0).toList();
+
+  /// Build the holdings CSV rows (header + one row per open holding, see
+  /// [openHoldings]). Pure — no I/O, so it's unit-testable independently of
+  /// the share sheet.
   static List<List<dynamic>> holdingsCsvRows(List<Asset> assets) => [
         [
           'Name', 'Symbol', 'Type', 'Platform', 'Currency',
@@ -24,7 +31,7 @@ abstract final class ExportService {
           'Invested', 'Current Value', 'Gain/Loss', 'Gain/Loss %',
           'Purchase Date',
         ],
-        for (final a in assets)
+        for (final a in openHoldings(assets))
           [
             a.name,
             a.symbol ?? '',
@@ -122,7 +129,10 @@ abstract final class ExportService {
   }) {
     final doc = pw.Document();
     final now = generatedAt ?? DateTime.now();
+    // Sold-out holdings still supply the cost basis of their sales...
     final gains = computeCapitalGains(assets, transactions, assetNames);
+    // ...but are no longer holdings (their value and cost are 0 anyway).
+    final open = openHoldings(assets);
 
     doc.addPage(
       pw.MultiPage(
@@ -131,9 +141,9 @@ abstract final class ExportService {
         header: (_) => _pdfHeader(fx.base, now),
         footer: (ctx) => _pdfFooter(ctx),
         build: (ctx) => [
-          _pdfPortfolioSummary(assets, gains, fx),
+          _pdfPortfolioSummary(open, gains, fx),
           pw.SizedBox(height: 20),
-          _pdfHoldingsTable(assets),
+          _pdfHoldingsTable(open),
           pw.SizedBox(height: 20),
           _pdfCapitalGainsTable(gains, fx),
           pw.SizedBox(height: 20),
@@ -335,6 +345,24 @@ abstract final class ExportService {
     );
   }
 
+  /// The PDF's holdings rows: one per open holding (see [openHoldings]), in
+  /// the holding's own currency. Pure, for tests.
+  static List<List<String>> pdfHoldingsRows(List<Asset> assets) => [
+        for (final a in openHoldings(assets))
+          [
+            a.name,
+            a.type.displayName,
+            a.currency,
+            _fmt(a.quantity),
+            _fmt(a.purchasePrice),
+            _fmt(a.currentPrice),
+            _fmt(a.totalInvested),
+            _fmt(a.currentValue),
+            '${a.gainLoss >= 0 ? '+' : ''}${_fmt(a.gainLoss)} '
+                '(${a.gainLossPercentage.toStringAsFixed(1)}%)',
+          ],
+      ];
+
   static pw.Widget _pdfHoldingsTable(List<Asset> assets) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -343,42 +371,34 @@ abstract final class ExportService {
             style: pw.TextStyle(
                 fontSize: 13, fontWeight: pw.FontWeight.bold)),
         pw.SizedBox(height: 8),
-        pw.TableHelper.fromTextArray(
-          headers: [
-            'Asset', 'Type', 'Cur.', 'Qty', 'Buy Price',
-            'Current', 'Invested', 'Value', 'Gain/Loss',
-          ],
-          data: assets
-              .map((a) => [
-                    a.name,
-                    a.type.displayName,
-                    a.currency,
-                    _fmt(a.quantity),
-                    _fmt(a.purchasePrice),
-                    _fmt(a.currentPrice),
-                    _fmt(a.totalInvested),
-                    _fmt(a.currentValue),
-                    '${a.gainLoss >= 0 ? '+' : ''}${_fmt(a.gainLoss)} '
-                        '(${a.gainLossPercentage.toStringAsFixed(1)}%)',
-                  ])
-              .toList(),
-          headerStyle:
-              pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8),
-          cellStyle: const pw.TextStyle(fontSize: 8),
-          headerDecoration:
-              const pw.BoxDecoration(color: PdfColors.grey200),
-          cellAlignments: {
-            0: pw.Alignment.centerLeft,
-            1: pw.Alignment.center,
-            2: pw.Alignment.center,
-            3: pw.Alignment.centerRight,
-            4: pw.Alignment.centerRight,
-            5: pw.Alignment.centerRight,
-            6: pw.Alignment.centerRight,
-            7: pw.Alignment.centerRight,
-            8: pw.Alignment.centerRight,
-          },
-        ),
+        if (assets.isEmpty)
+          pw.Text('No open holdings.',
+              style:
+                  const pw.TextStyle(fontSize: 9, color: PdfColors.grey500))
+        else
+          pw.TableHelper.fromTextArray(
+            headers: [
+              'Asset', 'Type', 'Cur.', 'Qty', 'Buy Price',
+              'Current', 'Invested', 'Value', 'Gain/Loss',
+            ],
+            data: pdfHoldingsRows(assets),
+            headerStyle:
+                pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8),
+            cellStyle: const pw.TextStyle(fontSize: 8),
+            headerDecoration:
+                const pw.BoxDecoration(color: PdfColors.grey200),
+            cellAlignments: {
+              0: pw.Alignment.centerLeft,
+              1: pw.Alignment.center,
+              2: pw.Alignment.center,
+              3: pw.Alignment.centerRight,
+              4: pw.Alignment.centerRight,
+              5: pw.Alignment.centerRight,
+              6: pw.Alignment.centerRight,
+              7: pw.Alignment.centerRight,
+              8: pw.Alignment.centerRight,
+            },
+          ),
       ],
     );
   }

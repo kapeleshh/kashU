@@ -911,6 +911,47 @@ void main() {
     });
   });
 
+  // A fully sold holding stays stored at quantity 0 for its cost basis, but
+  // it is closed: nothing to price, and nothing to count.
+  group('fully sold holdings', () {
+    test('are not refreshed or counted', () async {
+      final open = _makeAsset(id: 'open', symbol: 'TCS.NS');
+      final sold =
+          _makeAsset(id: 'sold', symbol: 'INFY.NS').copyWith(quantity: 0);
+      final soldCoin =
+          _makeAsset(id: 'coin', symbol: 'bitcoin', type: AssetType.crypto)
+              .copyWith(quantity: 0);
+      when(() => mockRepo.getAllAssets()).thenReturn([open, sold, soldCoin]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
+      when(() => mockYahoo.fetchPrice('TCS.NS'))
+          .thenAnswer((_) async => _success('TCS.NS', 4000.0));
+      when(() => mockRepo.updateAssetPrice(any(), any()))
+          .thenAnswer((_) async {});
+
+      final result = await service.refreshAllPrices();
+
+      expect(result.total, 1);
+      expect(result.updated, 1);
+      expect(result.skipped, 0);
+      expect(result.summary, 'Updated 1/1 assets');
+      verifyNever(() => mockYahoo.fetchPrice('INFY.NS'));
+      verifyNever(() => mockCoinGecko.fetchMultiplePrices(any()));
+      verifyNever(() => mockRepo.updateAssetPrice('sold', any()));
+    });
+
+    test('a single refresh of a sold holding fetches nothing', () async {
+      final sold =
+          _makeAsset(id: 'sold', symbol: 'INFY.NS').copyWith(quantity: 0);
+
+      final result = await service.refreshSinglePrice(sold);
+
+      expect(result.success, isFalse);
+      verifyNever(() => mockYahoo.fetchPrice(any()));
+      verifyNever(() => mockRepo.updateAssetPrice(any(), any()));
+    });
+  });
+
   // Two holdings of one symbol in different currencies used to share a
   // bare-symbol cache entry, so offline each could get the other's number.
   group('the offline fallback reads the holding\'s own currency', () {

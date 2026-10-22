@@ -247,6 +247,59 @@ void main() {
     });
   });
 
+  // A fully sold holding stays stored at quantity 0 so the capital-gains
+  // report can find its cost basis, but it is no longer a holding.
+  group('fully sold holdings', () {
+    final open = _asset(id: 'open', name: 'Reliance');
+    final sold = _asset(id: 'sold', name: 'Infosys', qty: 0, buy: 1400);
+    final sale = _sell(
+        id: 's1', assetId: 'sold', qty: 10, price: 1500, amount: 15000,
+        date: DateTime(2023, 6, 1));
+
+    test('are left out of the holdings CSV', () {
+      final rows = ExportService.holdingsCsvRows([open, sold]);
+
+      expect(rows, hasLength(2)); // header + the open holding
+      expect(rows[1][0], 'Reliance');
+    });
+
+    test("are left out of the PDF's holdings section and count", () {
+      final rows = ExportService.pdfHoldingsRows([open, sold]);
+
+      expect(rows.map((r) => r.first), ['Reliance']);
+      expect(ExportService.openHoldings([open, sold]), [open]);
+    });
+
+    test('still supply the cost basis of their capital gains', () {
+      final gains = ExportService.computeCapitalGains(
+          [open, sold], [sale], {'open': 'Reliance', 'sold': 'Infosys'});
+
+      expect(gains.single.assetName, 'Infosys');
+      expect(gains.single.costBasis, 14000); // 10 x 1400
+      expect(gains.single.gain, 1000);
+    });
+
+    test('leave the totals unchanged', () {
+      const fx = BaseCurrencyConverter(base: 'INR');
+      final withSold = ExportService.portfolioTotals([open, sold], fx);
+      final without = ExportService.portfolioTotals([open], fx);
+
+      expect(withSold.value, without.value);
+      expect(withSold.invested, without.invested);
+    });
+
+    test('the report still lays out with only sold holdings', () async {
+      final doc = ExportService.buildCapitalGainsPdf(
+        [sold],
+        [sale],
+        {'sold': 'Infosys'},
+        const BaseCurrencyConverter(base: 'INR'),
+      );
+
+      expect(await doc.save(), isNotEmpty);
+    });
+  });
+
   group('ExportService.transactionsCsvRows', () {
     test('header + rows, asset name falls back to id when unknown', () {
       final tx = _sell(assetId: 'a1', date: DateTime(2023, 6, 1));
