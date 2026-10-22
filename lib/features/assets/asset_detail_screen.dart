@@ -5,6 +5,7 @@ import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_strings.dart';
 import '../../core/theme/app_decorations.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/amount_validator.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../data/models/asset.dart';
 import '../../data/models/asset_type.dart';
@@ -33,6 +34,10 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
   /// the holding instead of a blank page.
   Asset? _lastSeen;
   bool _leaving = false;
+
+  /// True while a delete is being written, so a second confirm can't start
+  /// another one.
+  bool _deleting = false;
 
   @override
   Widget build(BuildContext context) {
@@ -128,7 +133,7 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
                     child: _StatTile(
                       label: 'CURRENT',
                       value: CurrencyFormatter.formatCurrency(
-                        asset.currentPrice,
+                        asset.effectiveCurrentPrice,
                         priceCurrency,
                       ),
                     ),
@@ -176,9 +181,25 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
               const SizedBox(height: 16),
 
               // ── Update price ───────────────────────────────────────────────
-              _SectionLabel(AppStrings.updatePrices),
-              const SizedBox(height: 10),
-              _UpdatePriceCard(key: ValueKey(asset.id), asset: asset),
+              // A deposit with terms is valued from them every day; a typed
+              // price would be ignored, so there is nothing to update.
+              if (asset.hasDepositSchedule)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: Text(
+                    'Its value grows every day from these terms — no price '
+                    'updates needed. Edit the deposit to change them.',
+                    style: AppTheme.body(
+                      size: 12.5,
+                      color: AppColors.textSecondaryOn(context),
+                    ),
+                  ),
+                )
+              else ...[
+                _SectionLabel(AppStrings.updatePrices),
+                const SizedBox(height: 10),
+                _UpdatePriceCard(key: ValueKey(asset.id), asset: asset),
+              ],
 
               const SizedBox(height: 18),
 
@@ -205,7 +226,7 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: _SoftButton(
-                      label: 'Delete',
+                      label: _deleting ? 'Deleting…' : 'Delete',
                       icon: Icons.delete_outline_rounded,
                       color: AppColors.lossOn(context),
                       onTap: () => _confirmDelete(asset),
@@ -248,8 +269,9 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
     if (changed == true) _leave();
   }
 
-  void _confirmDelete(Asset asset) {
-    showDialog(
+  Future<void> _confirmDelete(Asset asset) async {
+    if (_deleting) return;
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Delete asset?'),
@@ -258,20 +280,11 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
+            onPressed: () => Navigator.pop(dialogContext, false),
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () async {
-              Navigator.pop(dialogContext);
-              await ref
-                  .read(portfolioWriteServiceProvider)
-                  .deleteAssetWithTransactions(asset.id);
-              if (!mounted) return;
-              ref.invalidate(allAssetsProvider);
-              ref.invalidate(portfolioSummaryProvider);
-              _leave();
-            },
+            onPressed: () => Navigator.pop(dialogContext, true),
             style: TextButton.styleFrom(
               foregroundColor: AppColors.lossOn(context),
             ),
@@ -280,6 +293,30 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
         ],
       ),
     );
+    if (confirmed != true || _deleting || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _deleting = true);
+    try {
+      await ref
+          .read(portfolioWriteServiceProvider)
+          .deleteAssetWithTransactions(asset.id);
+    } catch (e, stack) {
+      // The raw error stays in the log; the user gets a plain sentence and
+      // the holding, which is still there, stays on screen.
+      debugPrint('[KashU] Deleting asset ${asset.id} failed: $e\n$stack');
+      if (mounted) setState(() => _deleting = false);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text("Couldn't delete ${asset.name}. Please try again."),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
+    ref.invalidate(allAssetsProvider);
+    ref.invalidate(portfolioSummaryProvider);
+    _leave();
   }
 }
 
@@ -384,7 +421,8 @@ class _Header extends StatelessWidget {
 /// Relative age of the asset's last price update, or null when never fetched.
 /// Mirrors the wording used on the assets list tiles.
 String? _priceAge(Asset asset) {
-  if (asset.priceUpdatedAt == null) return null;
+  // A deposit with terms is valued as of today, whatever was last saved.
+  if (asset.priceUpdatedAt == null || asset.hasDepositSchedule) return null;
   final diff = DateTime.now().difference(asset.priceUpdatedAt!);
   if (diff.inMinutes < 1) return 'just now';
   if (diff.inHours < 1) return '${diff.inMinutes}m ago';
@@ -587,11 +625,29 @@ class _DetailsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final terms = asset.depositSchedule;
+    String date(DateTime d) => '${d.day}/${d.month}/${d.year}';
+    String money(double v) =>
+        CurrencyFormatter.formatCurrency(v, asset.currency);
     final rows = <(String, String)>[
       (
-        'Purchase date',
-        '${asset.purchaseDate.day}/${asset.purchaseDate.month}/${asset.purchaseDate.year}',
+        terms != null ? 'Started' : 'Purchase date',
+        date(asset.purchaseDate),
       ),
+      if (terms != null) ...[
+        if (terms.isRecurring)
+          ('Monthly instalment', money(terms.monthlyInstalment!)),
+        (
+          'Interest rate',
+          '${terms.annualRatePercent.toStringAsFixed(2)}% p.a.'
+              '${terms.isRecurring ? '' : ' · ${terms.compounding.label}'}',
+        ),
+        (
+          terms.isMaturedOn(DateTime.now()) ? 'Matured on' : 'Matures on',
+          date(terms.maturityDate),
+        ),
+        ('Value at maturity', money(asset.quantity * terms.maturityValue)),
+      ],
       if (asset.platform != null) ('Platform', asset.platform!),
       if (asset.currency != 'INR') ('Currency', asset.currency),
     ];
@@ -769,6 +825,12 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
   GoldPriceBreakdown? _lastBreakdown;
   String? _fetchError;
 
+  /// Inline error under the manual price field (e.g. a negative price).
+  String? _priceError;
+
+  /// True while a price is being written; Update is disabled meanwhile.
+  bool _savingPrice = false;
+
   @override
   void initState() {
     super.initState();
@@ -828,18 +890,29 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
                 children: [
                   Expanded(
                     child: TextField(
+                      key: const ValueKey('manual-price'),
                       controller: _priceController,
                       decoration: InputDecoration(
                         labelText: 'Price per ${_priceUnit(widget.asset.type)}',
                         prefixText:
                             '${AppConstants.currencies[widget.asset.currency] ?? widget.asset.currency} ',
+                        errorText: _priceError,
+                        errorMaxLines: 2,
                       ),
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (_) {
+                        if (_priceError != null) {
+                          setState(() => _priceError = null);
+                        }
+                      },
                     ),
                   ),
                   const SizedBox(width: 12),
-                  _UpdateButton(onTap: _updatePrice),
+                  _UpdateButton(
+                    onTap: _savingPrice ? null : _updatePrice,
+                    busy: _savingPrice,
+                  ),
                 ],
               ),
             ],
@@ -1012,9 +1085,9 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
 
   Future<void> _applyLivePrice(double price) async {
     _priceController.text = price.toStringAsFixed(2);
-    await _updatePrice(showSnackbar: false);
+    final saved = await _updatePrice(showSnackbar: false);
 
-    if (!mounted) return;
+    if (!saved || !mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -1027,33 +1100,62 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
     );
   }
 
-  Future<void> _updatePrice({bool showSnackbar = true}) async {
-    final newPrice = double.tryParse(_priceController.text);
-    if (newPrice == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text(AppStrings.errorInvalidNumber)),
-      );
-      return;
+  /// Save the typed price. Returns whether it was written.
+  Future<bool> _updatePrice({bool showSnackbar = true}) async {
+    if (_savingPrice) return false;
+    // Same rule as the asset form's current price: finite, not negative,
+    // and 0 allowed (a delisted share is worth nothing).
+    final error =
+        AmountValidator.validate(_priceController.text, allowZero: true);
+    if (error != null) {
+      setState(() => _priceError = error);
+      return false;
     }
+    final newPrice = AmountValidator.parse(_priceController.text)!;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() {
+      _priceError = null;
+      _savingPrice = true;
+    });
 
-    final repository = ref.read(assetRepositoryProvider);
-    await repository.updateAssetPrice(widget.asset.id, newPrice);
+    try {
+      await ref
+          .read(assetRepositoryProvider)
+          .updateAssetPrice(widget.asset.id, newPrice);
+    } catch (e, stack) {
+      debugPrint('[KashU] Price update for ${widget.asset.id} failed: '
+          '$e\n$stack');
+      if (mounted) setState(() => _savingPrice = false);
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text("Couldn't update the price. Please try again."),
+        ),
+      );
+      return false;
+    }
+    if (mounted) setState(() => _savingPrice = false);
 
     ref.invalidate(allAssetsProvider);
     ref.invalidate(portfolioSummaryProvider);
 
-    if (showSnackbar && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+    if (showSnackbar) {
+      messenger.showSnackBar(
         const SnackBar(content: Text('Price updated successfully')),
       );
     }
+    return true;
   }
 }
 
 /// Small gradient "Update" CTA matching the soft-pop direction.
 class _UpdateButton extends StatelessWidget {
-  final VoidCallback onTap;
-  const _UpdateButton({required this.onTap});
+  /// Null while a write is in flight, which disables the button.
+  final VoidCallback? onTap;
+
+  /// Shows a spinner in place of the label.
+  final bool busy;
+
+  const _UpdateButton({required this.onTap, this.busy = false});
 
   @override
   Widget build(BuildContext context) {
@@ -1072,10 +1174,19 @@ class _UpdateButton extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 18),
             child: Center(
-              child: Text(
-                AppStrings.update,
-                style: AppTheme.heading(size: 14, color: Colors.white),
-              ),
+              child: busy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(
+                      AppStrings.update,
+                      style: AppTheme.heading(size: 14, color: Colors.white),
+                    ),
             ),
           ),
         ),

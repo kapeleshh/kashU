@@ -31,13 +31,17 @@ class AssetAdapter extends TypeAdapter<Asset> {
       createdAt: fields[11] as DateTime,
       updatedAt: fields[12] as DateTime,
       priceUpdatedAt: fields[13] as DateTime?,
+      depositRatePercent: fields[14] as double?,
+      depositMaturityDate: fields[15] as DateTime?,
+      depositCompounding: fields[16] as String?,
+      rdMonthlyInstalment: fields[17] as double?,
     );
   }
 
   @override
   void write(BinaryWriter writer, Asset obj) {
     writer
-      ..writeByte(14)
+      ..writeByte(18)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -65,7 +69,15 @@ class AssetAdapter extends TypeAdapter<Asset> {
       ..writeByte(12)
       ..write(obj.updatedAt)
       ..writeByte(13)
-      ..write(obj.priceUpdatedAt);
+      ..write(obj.priceUpdatedAt)
+      ..writeByte(14)
+      ..write(obj.depositRatePercent)
+      ..writeByte(15)
+      ..write(obj.depositMaturityDate)
+      ..writeByte(16)
+      ..write(obj.depositCompounding)
+      ..writeByte(17)
+      ..write(obj.rdMonthlyInstalment);
   }
 
   @override

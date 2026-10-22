@@ -1,4 +1,5 @@
 import 'package:hive/hive.dart';
+import '../../services/fd_bond_calculator.dart';
 import 'asset_type.dart';
 
 part 'asset.g.dart';
@@ -48,6 +49,30 @@ class Asset extends HiveObject {
   @HiveField(13)
   DateTime? priceUpdatedAt;
 
+  // ── Deposit terms (schema v2) ─────────────────────────────────────────
+  // Set only on a fixed/recurring deposit entered through the deposit
+  // calculator, so its value can grow every day without a price refresh.
+  // The start date is [purchaseDate] and an FD's principal is
+  // [purchasePrice]. Older deposits have none of these and stay manually
+  // valued through [currentPrice].
+
+  /// Annual interest rate, e.g. 7.5 for 7.5% p.a.
+  @HiveField(14)
+  double? depositRatePercent;
+
+  @HiveField(15)
+  DateTime? depositMaturityDate;
+
+  /// A fixed deposit's [CompoundingFrequency], by name. Null for an RD,
+  /// which compounds monthly.
+  @HiveField(16)
+  String? depositCompounding;
+
+  /// A recurring deposit's monthly instalment. Its presence is what makes
+  /// the deposit an RD rather than an FD.
+  @HiveField(17)
+  double? rdMonthlyInstalment;
+
   Asset({
     required this.id,
     required this.name,
@@ -63,13 +88,59 @@ class Asset extends HiveObject {
     required this.createdAt,
     required this.updatedAt,
     this.priceUpdatedAt,
+    this.depositRatePercent,
+    this.depositMaturityDate,
+    this.depositCompounding,
+    this.rdMonthlyInstalment,
   });
 
-  /// Calculate total invested amount
-  double get totalInvested => quantity * purchasePrice;
+  /// The deposit's terms when it has a complete set, else null — a
+  /// manually valued holding (every non-deposit, and deposits saved before
+  /// the terms were kept).
+  DepositSchedule? get depositSchedule {
+    if (type != AssetType.fixedDeposit && type != AssetType.bond) return null;
+    final rate = depositRatePercent;
+    final maturity = depositMaturityDate;
+    if (rate == null || maturity == null || !maturity.isAfter(purchaseDate)) {
+      return null;
+    }
+    final instalment = rdMonthlyInstalment;
+    final compounding = instalment != null
+        ? CompoundingFrequency.monthly
+        : CompoundingFrequency.fromName(depositCompounding);
+    if (compounding == null) return null;
+    return DepositSchedule(
+      startDate: purchaseDate,
+      maturityDate: maturity,
+      annualRatePercent: rate,
+      principal: purchasePrice,
+      compounding: compounding,
+      monthlyInstalment: instalment,
+    );
+  }
 
-  /// Calculate current value
-  double get currentValue => quantity * currentPrice;
+  /// Whether this holding is valued from its deposit terms.
+  bool get hasDepositSchedule => depositSchedule != null;
+
+  /// Price per unit on [day]: a scheduled deposit's value then (capped at
+  /// maturity), otherwise the stored [currentPrice].
+  double currentPriceOn(DateTime day) =>
+      depositSchedule?.valueAsOf(day) ?? currentPrice;
+
+  /// Cost per unit on [day]: an RD's instalments paid by then, otherwise
+  /// [purchasePrice].
+  double investedPriceOn(DateTime day) =>
+      depositSchedule?.investedAsOf(day) ?? purchasePrice;
+
+  /// Price per unit today — what a screen should show wherever it would
+  /// show [currentPrice]. Equal to it for anything without deposit terms.
+  double get effectiveCurrentPrice => currentPriceOn(DateTime.now());
+
+  /// Calculate total invested amount (an RD's grows with each instalment)
+  double get totalInvested => quantity * investedPriceOn(DateTime.now());
+
+  /// Calculate current value (a scheduled deposit's grows daily)
+  double get currentValue => quantity * effectiveCurrentPrice;
 
   /// Calculate absolute gain/loss
   double get gainLoss => currentValue - totalInvested;
@@ -99,6 +170,10 @@ class Asset extends HiveObject {
     DateTime? createdAt,
     DateTime? updatedAt,
     DateTime? priceUpdatedAt,
+    double? depositRatePercent,
+    DateTime? depositMaturityDate,
+    String? depositCompounding,
+    double? rdMonthlyInstalment,
   }) {
     return Asset(
       id: id ?? this.id,
@@ -115,6 +190,10 @@ class Asset extends HiveObject {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       priceUpdatedAt: priceUpdatedAt ?? this.priceUpdatedAt,
+      depositRatePercent: depositRatePercent ?? this.depositRatePercent,
+      depositMaturityDate: depositMaturityDate ?? this.depositMaturityDate,
+      depositCompounding: depositCompounding ?? this.depositCompounding,
+      rdMonthlyInstalment: rdMonthlyInstalment ?? this.rdMonthlyInstalment,
     );
   }
 
@@ -135,6 +214,11 @@ class Asset extends HiveObject {
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'priceUpdatedAt': priceUpdatedAt?.toIso8601String(),
+      // Backup format v3. Null for anything without deposit terms.
+      'depositRatePercent': depositRatePercent,
+      'depositMaturityDate': depositMaturityDate?.toIso8601String(),
+      'depositCompounding': depositCompounding,
+      'rdMonthlyInstalment': rdMonthlyInstalment,
     };
   }
 
@@ -157,6 +241,13 @@ class Asset extends HiveObject {
       priceUpdatedAt: json['priceUpdatedAt'] != null 
           ? DateTime.parse(json['priceUpdatedAt'] as String)
           : null,
+      // Absent from v1/v2 backups: those deposits stay manually valued.
+      depositRatePercent: (json['depositRatePercent'] as num?)?.toDouble(),
+      depositMaturityDate: json['depositMaturityDate'] != null
+          ? DateTime.parse(json['depositMaturityDate'] as String)
+          : null,
+      depositCompounding: json['depositCompounding'] as String?,
+      rdMonthlyInstalment: (json['rdMonthlyInstalment'] as num?)?.toDouble(),
     );
   }
 
