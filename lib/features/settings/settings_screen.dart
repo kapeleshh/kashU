@@ -193,6 +193,39 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           const SizedBox(height: 22),
 
+          // Appearance Section — applies at once, no restart.
+          _buildSectionHeader(context, 'Appearance'),
+          const SizedBox(height: 11),
+          RadioGroup<ThemeMode>(
+            groupValue: ref.watch(themeModeProvider),
+            onChanged: (mode) {
+              if (mode == null) return;
+              ref.read(themeModeProvider.notifier).setThemeMode(mode);
+            },
+            child: _buildSettingsCard([
+              _themeModeTile(
+                mode: ThemeMode.system,
+                icon: Icons.brightness_auto_outlined,
+                title: 'System',
+                subtitle: "Match your phone's light or dark setting",
+              ),
+              _themeModeTile(
+                mode: ThemeMode.light,
+                icon: Icons.light_mode_outlined,
+                title: 'Light',
+                subtitle: 'Always use the light theme',
+              ),
+              _themeModeTile(
+                mode: ThemeMode.dark,
+                icon: Icons.dark_mode_outlined,
+                title: 'Dark',
+                subtitle: 'Always use the dark theme',
+              ),
+            ]),
+          ),
+
+          const SizedBox(height: 22),
+
           // Tools Section
           _buildSectionHeader(context, 'Tools'),
           const SizedBox(height: 11),
@@ -347,6 +380,39 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         borderRadius: BorderRadius.circular(AppRadii.avatar),
       ),
       child: Icon(icon, color: tone, size: 20),
+    );
+  }
+
+  /// One choice in the Appearance card. The enclosing [RadioGroup] holds the
+  /// selection, so the tile only needs its [mode].
+  Widget _themeModeTile({
+    required ThemeMode mode,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    return RadioListTile<ThemeMode>(
+      value: mode,
+      secondary: _tileIcon(icon),
+      controlAffinity: ListTileControlAffinity.trailing,
+      activeColor: AppColors.primary,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      title: Text(
+        title,
+        style: AppTheme.body(
+          size: 15,
+          weight: FontWeight.w700,
+          color: Theme.of(context).colorScheme.onSurface,
+        ),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: AppTheme.body(
+          size: 12.5,
+          weight: FontWeight.w500,
+          color: AppColors.textTertiaryOn(context),
+        ),
+      ),
     );
   }
 

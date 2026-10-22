@@ -5,8 +5,9 @@ import 'app_decorations.dart';
 
 /// KashU "C · Soft" theme — calm soft-pop. Quicksand for headings (display /
 /// headline / title) and Plus Jakarta Sans for body & labels. Both a light and
-/// a dark [ThemeData] are provided; every screen is theme-aware, so `main.dart`
-/// follows the device with `ThemeMode.system`.
+/// a dark [ThemeData] are provided; every screen is theme-aware, and
+/// `main.dart` picks between them from the Settings › Appearance choice
+/// (`themeModeProvider`: System by default, Light or Dark).
 ///
 /// Both families ship inside the app (assets/fonts/, declared under `fonts:`
 /// in pubspec.yaml): text renders in the brand fonts on an offline first
