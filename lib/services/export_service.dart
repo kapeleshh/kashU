@@ -267,11 +267,15 @@ abstract final class ExportService {
     );
   }
 
+  // PDF text uses the pdf package's built-in Helvetica, which has no
+  // glyph for characters like an em dash, ≥ or ⚠ (they print as
+  // nothing). Keep report strings plain ASCII; currencies are written as
+  // codes (INR, USD) for the same reason.
   static pw.Widget _pdfFooter(pw.Context ctx) {
     return pw.Row(
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       children: [
-        pw.Text('KashU — Privacy-first Portfolio Tracker',
+        pw.Text('KashU - Privacy-first Portfolio Tracker',
             style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey500)),
         pw.Text('Page ${ctx.pageNumber} of ${ctx.pagesCount}',
             style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey500)),
@@ -434,7 +438,7 @@ abstract final class ExportService {
           children: [
             pw.Text(
                 'STCG (held < 1 year): $currency ${_fmt(totals.shortTerm)}  |  '
-                'LTCG (held ≥ 1 year): $currency ${_fmt(totals.longTerm)}  '
+                'LTCG (held 1 year or more): $currency ${_fmt(totals.longTerm)}  '
                 '(totals in $currency)',
                 style: const pw.TextStyle(
                     fontSize: 9, color: PdfColors.grey700)),
@@ -520,7 +524,7 @@ abstract final class ExportService {
         borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
       ),
       child: pw.Text(
-        '⚠ Disclaimer: This report is generated from manually entered data '
+        'Disclaimer: This report is generated from manually entered data '
         'and is provided for informational purposes only. It does not '
         'constitute financial or tax advice. Please verify all figures with '
         'your broker statements and consult a qualified CA/tax advisor before filing.',
