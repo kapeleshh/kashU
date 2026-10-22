@@ -155,7 +155,7 @@ void main() {
 
     // Default: cache returns miss (no cached price)
     when(() => mockCache.cachePrice(any())).thenAnswer((_) async {});
-    when(() => mockCache.getCachedResult(any()))
+    when(() => mockCache.getCachedResult(any(), any()))
         .thenReturn(PriceResult.failure('x', 'no cache'));
 
     // Default: fallback providers fail too (individual tests override).
@@ -249,7 +249,7 @@ void main() {
               PriceResult.failure('RELIANCE.NS', 'timeout'));
       // Cache has a valid price
       final cachedAt = DateTime.now().subtract(const Duration(hours: 2));
-      when(() => mockCache.getCachedResult('RELIANCE.NS')).thenReturn(
+      when(() => mockCache.getCachedResult('RELIANCE.NS', 'INR')).thenReturn(
           PriceResult(
               symbol: 'RELIANCE.NS',
               price: 2800.0,
@@ -289,7 +289,7 @@ void main() {
       expect(result.updated, 1);
       expect(result.failed, 0);
       verify(() => mockRepo.updateAssetPrice('s1', 2810.0)).called(1);
-      verifyNever(() => mockCache.getCachedResult(any()));
+      verifyNever(() => mockCache.getCachedResult(any(), any()));
     });
 
     test('skips non-trackable asset types (e.g. cash)', () async {
@@ -360,7 +360,7 @@ void main() {
           .thenAnswer((_) async => [
                 PriceResult.failure('bitcoin', 'rate limit'),
               ]);
-      when(() => mockCache.getCachedResult('bitcoin'))
+      when(() => mockCache.getCachedResult('bitcoin', 'INR'))
           .thenReturn(_success('bitcoin', 5750000.0));
       when(() => mockRepo.updateAssetPrice('cr1', 5750000.0,
           asOf: any(named: 'asOf'))).thenAnswer((_) async {});
@@ -399,7 +399,7 @@ void main() {
           that: predicate<PriceResult>(
               (r) => r.symbol == 'bitcoin' && r.price == 5820000.0))))
           .called(1);
-      verifyNever(() => mockCache.getCachedResult(any()));
+      verifyNever(() => mockCache.getCachedResult(any(), any()));
     });
 
     test('single-asset refresh falls back to CryptoCompare', () async {
@@ -459,7 +459,7 @@ void main() {
       when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
       when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
       stubMetal((_) => null);
-      when(() => mockCache.getCachedResult('${PriceSymbols.goldComex}:INR'))
+      when(() => mockCache.getCachedResult(PriceSymbols.goldComex, 'INR'))
           .thenReturn(_success(PriceSymbols.goldComex, 6500.0));
       when(() => mockRepo.updateAssetPrice('g1', 6500.0,
           asOf: any(named: 'asOf'))).thenAnswer((_) async {});
@@ -566,7 +566,7 @@ void main() {
       // other's per-gram number.
       final cached = verify(() => mockCache.cachePrice(captureAny())).captured
           .cast<PriceResult>();
-      expect(cached.map((r) => r.symbol),
+      expect(cached.map((r) => PriceCacheService.keyFor(r.symbol, r.currency)),
           containsAll(<String>['GC=F:INR', 'GC=F:USD']));
     });
 
@@ -579,11 +579,8 @@ void main() {
       when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
       stubMetal((_) => null);
 
-      // An INR price is cached (both under the old symbol-only key and the
-      // new composite one) but nothing in USD is.
-      when(() => mockCache.getCachedResult(PriceSymbols.goldComex))
-          .thenReturn(_success(PriceSymbols.goldComex, 6500.0));
-      when(() => mockCache.getCachedResult('${PriceSymbols.goldComex}:INR'))
+      // An INR price is cached but nothing in USD is.
+      when(() => mockCache.getCachedResult(PriceSymbols.goldComex, 'INR'))
           .thenReturn(_success(PriceSymbols.goldComex, 6500.0));
 
       final result = await service.refreshAllPrices();
@@ -677,7 +674,7 @@ void main() {
       when(() => mockYahoo.fetchPrice('FAIL.NS'))
           .thenAnswer((_) async =>
               PriceResult.failure('FAIL.NS', 'not found'));
-      when(() => mockCache.getCachedResult('FAIL.NS'))
+      when(() => mockCache.getCachedResult('FAIL.NS', 'INR'))
           .thenReturn(_success('FAIL.NS', 3900.0));
       when(() => mockRepo.updateAssetPrice('s1', 3900.0,
           asOf: any(named: 'asOf'))).thenAnswer((_) async {});
@@ -737,7 +734,7 @@ void main() {
       when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
       when(() => mockMutualFund.fetchNav(120503))
           .thenAnswer((_) async => Err('mfapi down'));
-      when(() => mockCache.getCachedResult('120503'))
+      when(() => mockCache.getCachedResult('120503', 'INR'))
           .thenReturn(_success('120503', 94.0));
       when(() => mockRepo.updateAssetPrice('mf1', 94.0,
           asOf: any(named: 'asOf'))).thenAnswer((_) async {});
@@ -911,6 +908,109 @@ void main() {
       await service.refreshAllPrices();
 
       expect(written['mf1'], closeTo(10.0, 1e-9));
+    });
+  });
+
+  // Two holdings of one symbol in different currencies used to share a
+  // bare-symbol cache entry, so offline each could get the other's number.
+  group('the offline fallback reads the holding\'s own currency', () {
+    Asset coin(String id, String currency) => _makeAsset(
+        id: id, symbol: 'bitcoin', type: AssetType.crypto, currency: currency);
+    Asset apple(String id, String currency) =>
+        _makeAsset(id: id, symbol: 'AAPL', currency: currency);
+
+    /// Cached prices by `symbol:currency`; everything else misses.
+    void cacheHolds(Map<String, double> prices) {
+      when(() => mockCache.getCachedResult(any(), any())).thenAnswer((inv) {
+        final symbol = inv.positionalArguments[0] as String;
+        final currency = inv.positionalArguments[1] as String;
+        final price = prices[PriceCacheService.keyFor(symbol, currency)];
+        return price == null
+            ? PriceResult.failure(symbol, 'no cache')
+            : _success(symbol, price, currency: currency);
+      });
+    }
+
+    Map<String, double> recordFallbackWrites() {
+      final written = <String, double>{};
+      when(() => mockRepo.updateAssetPrice(any(), any(),
+          asOf: any(named: 'asOf'))).thenAnswer((inv) async {
+        written[inv.positionalArguments[0] as String] =
+            inv.positionalArguments[1] as double;
+      });
+      return written;
+    }
+
+    test('crypto held in INR and in USD each get their own cached price',
+        () async {
+      when(() => mockRepo.getAllAssets())
+          .thenReturn([coin('inr', 'INR'), coin('usd', 'USD')]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
+      when(() => mockCoinGecko.fetchMultiplePrices(any())).thenAnswer(
+          (_) async => [PriceResult.failure('bitcoin', 'offline')]);
+      cacheHolds({'bitcoin:INR': 5800000.0, 'bitcoin:USD': 70000.0});
+      final written = recordFallbackWrites();
+
+      final result = await service.refreshAllPrices();
+
+      expect(result.updated, 2);
+      expect(written, {'inr': 5800000.0, 'usd': 70000.0});
+    });
+
+    test('a live crypto price is cached under the holding currency',
+        () async {
+      when(() => mockRepo.getAllAssets()).thenReturn([coin('usd', 'USD')]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
+      // A provider that labels its quote in lower case still files it
+      // under the key the fallback will look for.
+      when(() => mockCoinGecko.fetchMultiplePrices(any())).thenAnswer(
+          (_) async => [_success('bitcoin', 70000.0, currency: 'usd')]);
+      when(() => mockRepo.updateAssetPrice(any(), any()))
+          .thenAnswer((_) async {});
+
+      await service.refreshAllPrices();
+
+      final cached = verify(() => mockCache.cachePrice(captureAny()))
+          .captured
+          .cast<PriceResult>()
+          .single;
+      expect(PriceCacheService.keyFor(cached.symbol, cached.currency),
+          'bitcoin:USD');
+    });
+
+    test('a stock held in USD and in INR each get their own cached price',
+        () async {
+      when(() => mockRepo.getAllAssets())
+          .thenReturn([apple('usd', 'USD'), apple('inr', 'INR')]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
+      when(() => mockYahoo.fetchPrice('AAPL'))
+          .thenAnswer((_) async => PriceResult.failure('AAPL', 'offline'));
+      cacheHolds({'AAPL:USD': 230.0, 'AAPL:INR': 19205.0});
+      final written = recordFallbackWrites();
+
+      final result = await service.refreshAllPrices();
+
+      expect(result.updated, 2);
+      expect(written, {'usd': 230.0, 'inr': 19205.0});
+    });
+
+    test('with only another currency cached, the holding counts as failed',
+        () async {
+      when(() => mockRepo.getAllAssets()).thenReturn([apple('inr', 'INR')]);
+      when(() => mockRepo.getBaseCurrency()).thenReturn('INR');
+      when(() => mockFx.fetchRates()).thenAnswer((_) async => _fxSuccess());
+      when(() => mockYahoo.fetchPrice('AAPL'))
+          .thenAnswer((_) async => PriceResult.failure('AAPL', 'offline'));
+      cacheHolds({'AAPL:USD': 230.0});
+      final written = recordFallbackWrites();
+
+      final result = await service.refreshAllPrices();
+
+      expect(result.failed, 1);
+      expect(written, isEmpty, reason: r'$230 is not ₹230');
     });
   });
 }

@@ -299,12 +299,15 @@ class PriceUpdateService {
       final result = results[i];
 
       if (result.success) {
-        await _priceCache.cachePrice(result);
+        // Filed under the batch's currency, which is what the offline
+        // fallback below (and next time) looks it up by.
+        await _priceCache
+            .cachePrice(_inCurrency(result, result.price, vsCurrency));
         await _assetRepository.updateAssetPrice(asset.id, result.price);
         updated++;
       } else {
-        final cached =
-            _priceCache.getCachedResult(_getSymbol(asset) ?? asset.name);
+        final cached = _priceCache.getCachedResult(
+            _getSymbol(asset) ?? asset.name, vsCurrency);
         if (cached.success) {
           await _assetRepository.updateAssetPrice(asset.id, cached.price,
               asOf: cached.fetchedAt);
@@ -355,15 +358,6 @@ class PriceUpdateService {
       QuoteCurrency.normalize(quote.price, quote.currency).currency !=
           assetCurrency;
 
-  /// Cache key for a metal price.
-  ///
-  /// The cached number is a per-gram price **in a particular currency**, so
-  /// the COMEX symbol alone is not a key: gold held in INR and gold held in
-  /// USD would overwrite each other, and the offline fallback would then hand
-  /// one of them the other's number with no conversion.
-  static String _metalCacheKey(String comexSymbol, String currency) =>
-      '$comexSymbol:$currency';
-
   /// Human name for [comexSymbol], for error messages.
   static String _metalName(String comexSymbol) =>
       PriceSymbols.isComexSilver(comexSymbol) ? 'silver' : 'gold';
@@ -398,10 +392,12 @@ class PriceUpdateService {
     for (final asset in assets) {
       final targetCurrency =
           asset.currency.isNotEmpty ? asset.currency : baseCurrency;
-      final cacheKey = _metalCacheKey(comexSymbol, targetCurrency);
 
       if (breakdown == null) {
-        final cached = _priceCache.getCachedResult(cacheKey);
+        // A per-gram price in the holding's own currency (the cache is keyed
+        // by symbol and currency), never another holding's.
+        final cached =
+            _priceCache.getCachedResult(comexSymbol, targetCurrency);
         if (cached.success) {
           await _assetRepository.updateAssetPrice(asset.id, cached.price,
               asOf: cached.fetchedAt);
@@ -433,7 +429,7 @@ class PriceUpdateService {
       }
 
       await _priceCache.cachePrice(PriceResult(
-        symbol: cacheKey,
+        symbol: comexSymbol,
         price: pricePerGram,
         currency: targetCurrency,
         fetchedAt: DateTime.now(),
@@ -473,7 +469,7 @@ class PriceUpdateService {
         await _assetRepository.updateAssetPrice(asset.id, price);
         updated++;
       } else {
-        final cached = _priceCache.getCachedResult(symbol);
+        final cached = _priceCache.getCachedResult(symbol, assetCurrency);
         if (cached.success) {
           await _assetRepository.updateAssetPrice(asset.id, cached.price,
               asOf: cached.fetchedAt);
@@ -529,7 +525,7 @@ class PriceUpdateService {
         await _assetRepository.updateAssetPrice(asset.id, price);
         updated++;
       } else {
-        final cached = _priceCache.getCachedResult(symbol);
+        final cached = _priceCache.getCachedResult(symbol, assetCurrency);
         if (cached.success) {
           await _assetRepository.updateAssetPrice(asset.id, cached.price,
               asOf: cached.fetchedAt);
@@ -567,12 +563,13 @@ class PriceUpdateService {
     }
 
     if (result.success) {
-      await _priceCache.cachePrice(result);
+      await _priceCache
+          .cachePrice(_inCurrency(result, result.price, targetCurrency));
       await _assetRepository.updateAssetPrice(asset.id, result.price);
       return result;
     }
 
-    final cached = _priceCache.getCachedResult(symbol);
+    final cached = _priceCache.getCachedResult(symbol, targetCurrency);
     if (cached.success) {
       await _assetRepository.updateAssetPrice(asset.id, cached.price,
           asOf: cached.fetchedAt);
@@ -585,7 +582,6 @@ class PriceUpdateService {
     final comexSymbol = PriceSymbols.metalSymbolFor(asset.symbol);
     final targetCurrency =
         asset.currency.isNotEmpty ? asset.currency : baseCurrency;
-    final cacheKey = _metalCacheKey(comexSymbol, targetCurrency);
 
     final breakdown = await _goldPriceService.fetchMetalPriceBreakdown(
       comexSymbol: comexSymbol,
@@ -594,20 +590,11 @@ class PriceUpdateService {
     );
 
     if (breakdown == null) {
-      final cached = _priceCache.getCachedResult(cacheKey);
+      final cached = _priceCache.getCachedResult(comexSymbol, targetCurrency);
       if (cached.success) {
         await _assetRepository.updateAssetPrice(asset.id, cached.price,
             asOf: cached.fetchedAt);
-        // Re-label with the bare COMEX symbol: the composite cache key is an
-        // internal detail and would otherwise surface in the UI.
-        return PriceResult(
-          symbol: comexSymbol,
-          price: cached.price,
-          currency: cached.currency,
-          fetchedAt: cached.fetchedAt,
-          success: true,
-          isStale: cached.isStale,
-        );
+        return cached;
       }
       return PriceResult.failure(
         asset.name,
@@ -618,7 +605,7 @@ class PriceUpdateService {
 
     final fetchedAt = DateTime.now();
     await _priceCache.cachePrice(PriceResult(
-      symbol: cacheKey,
+      symbol: comexSymbol,
       price: breakdown.finalPerGram,
       currency: targetCurrency,
       fetchedAt: fetchedAt,
@@ -652,7 +639,7 @@ class PriceUpdateService {
       return stored;
     }
 
-    final cached = _priceCache.getCachedResult(symbol);
+    final cached = _priceCache.getCachedResult(symbol, assetCurrency);
     if (cached.success) {
       await _assetRepository.updateAssetPrice(asset.id, cached.price,
           asOf: cached.fetchedAt);
@@ -714,7 +701,7 @@ class PriceUpdateService {
       return finalResult;
     }
 
-    final cached = _priceCache.getCachedResult(symbol);
+    final cached = _priceCache.getCachedResult(symbol, assetCurrency);
     if (cached.success) {
       await _assetRepository.updateAssetPrice(asset.id, cached.price,
           asOf: cached.fetchedAt);

@@ -123,7 +123,7 @@ Key behaviors to preserve when editing:
 
 **Silver rides on `AssetType.gold`, so every metal path must branch on the symbol.** `PriceSymbols.isComexSilver` / `metalSymbolFor` resolve the contract and `GoldTaxConfig.forMetal` the duty set (gold carries AIDC; silver pays a higher BCD). `_refreshMetalAssets` and `_refreshSingleMetal` both route through them — anything that reaches for `fetchGoldPriceBreakdown` directly will reprice silver at the gold rate, which is roughly 100× off.
 
-**The metal price cache is keyed `SYMBOL:CURRENCY`** (`_metalCacheKey`), not by symbol alone. The cached number is a per-gram price in one currency, so a bare `GC=F` key lets an INR and a USD holding overwrite each other and hands one of them the other's number on the offline fallback.
+**The price cache is keyed `SYMBOL:CURRENCY`** (`PriceCacheService.keyFor`) for every asset type, not by symbol alone: `cachePrice` files a result under its symbol and currency, and `getCachedResult(symbol, currency)` is always asked for the holding's own currency. A cached number is a price in one currency (per gram, for metals), so a bare `GC=F` or `bitcoin` key lets an INR and a USD holding overwrite each other and hands one of them the other's number on the offline fallback. Entries cached under a bare symbol before this are simply never read again.
 
 **Never call `kIsWeb` from a service to pick a URL.** `PlatformConfig.buildUrl()` (`core/utils/platform_config.dart`) is the single place that decides between the direct URL (mobile/desktop) and the same-origin `/api/proxy?url=…` route (web), resolved against `Uri.base` so it works unchanged on localhost, Vercel previews, and production.
 
