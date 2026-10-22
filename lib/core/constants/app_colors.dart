@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'brand_mark.dart';
+
 /// KashU App Colors — "C · Soft" direction (calm soft-pop).
 ///
 /// Gentle depth, candy pastels, indigo→lavender brand. The semantic tokens
@@ -28,6 +30,22 @@ class AppColors {
     begin: Alignment(-0.8, -1),
     end: Alignment(0.8, 1),
   );
+
+  // ── Logo ("Cashew U", generated into brand_mark.dart) ──────────────────
+  /// The icon tile, Sau Lavender (the ₹100 note's ink).
+  static const Color brandLavender = BrandMark.tile;
+
+  /// The cashew; also the wordmark on dark grounds.
+  static const Color brandCream = BrandMark.nut;
+
+  /// The coin.
+  static const Color brandGold = BrandMark.coin;
+
+  /// The wordmark on light grounds.
+  static const Color brandInk = BrandMark.ink;
+
+  /// The wordmark's U on dark grounds.
+  static const Color brandPaper = BrandMark.paper;
 
   /// Mint gradient — the floating action button & positive accents.
   static const LinearGradient mintGradient = LinearGradient(

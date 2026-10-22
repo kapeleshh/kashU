@@ -163,10 +163,12 @@ Play needs an **App Bundle** (`.aab`), not an APK. The build deliberately
 a debug-signed bundle that Play would reject. A debug-signed *APK* is still
 allowed, since that is what CI smoke-builds.
 
-Listing graphics are generated from the app icon so they cannot drift from it:
+Every logo asset (app icons on each platform, the Play icon and feature graphic,
+and the geometry the app draws) is generated from one definition of the mark,
+so none of them can drift:
 
 ```bash
-python3 tool/generate_store_assets.py   # -> store/play/
+python3 tool/generate_brand_assets.py
 ```
 
 Privacy policy: `web/privacy.html`, published at
