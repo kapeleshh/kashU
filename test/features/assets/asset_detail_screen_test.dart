@@ -6,6 +6,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:kashu/data/models/asset.dart';
 import 'package:kashu/data/models/asset_type.dart';
 import 'package:kashu/data/repositories/asset_repository.dart';
+import 'package:kashu/data/repositories/portfolio_write_service.dart';
 import 'package:kashu/features/assets/asset_detail_screen.dart';
 import 'package:kashu/services/currency_converter_service.dart';
 import 'package:kashu/services/price_history_service.dart';
@@ -14,6 +15,8 @@ import 'package:kashu/shared/providers/portfolio_provider.dart';
 class MockAssetRepository extends Mock implements AssetRepository {}
 
 class MockPriceHistoryService extends Mock implements PriceHistoryService {}
+
+class MockPortfolioWriteService extends Mock implements PortfolioWriteService {}
 
 Asset _asset({double currentPrice = 100}) {
   final created = DateTime(2024, 1, 15);
@@ -40,11 +43,13 @@ final _storedAssets = StateProvider<List<Asset>>((ref) => [_asset()]);
 void main() {
   late ProviderContainer container;
   late MockAssetRepository repo;
+  late MockPortfolioWriteService writes;
 
   setUpAll(() => registerFallbackValue(_asset()));
 
   setUp(() {
     repo = MockAssetRepository();
+    writes = MockPortfolioWriteService();
     final history = MockPriceHistoryService();
     when(() => history.assetSeries(any())).thenReturn(const []);
 
@@ -59,6 +64,7 @@ void main() {
             success: true,
           )),
       priceHistoryServiceProvider.overrideWithValue(history),
+      portfolioWriteServiceProvider.overrideWithValue(writes),
     ]);
 
     // Saving from Edit stores a fresh copy, as the real repository does.
@@ -171,6 +177,58 @@ void main() {
     await tester.pump();
 
     verify(() => repo.updateAssetPrice('a1', 0)).called(1);
+  });
+
+  testWidgets('a failed price update says so plainly', (tester) async {
+    when(() => repo.updateAssetPrice(any(), any()))
+        .thenThrow(Exception('HiveError: Box has already been closed'));
+    await openDetail(tester);
+
+    await tester.enterText(find.byKey(const ValueKey('manual-price')), '120');
+    await tester.ensureVisible(find.text('Update'));
+    await tester.tap(find.text('Update'));
+    await tester.pumpAndSettle();
+
+    expect(find.text("Couldn't update the price. Please try again."),
+        findsOneWidget);
+    expect(find.textContaining('HiveError'), findsNothing);
+    expect(find.text('Price updated successfully'), findsNothing);
+  });
+
+  testWidgets('a failed delete says so and keeps the holding on screen',
+      (tester) async {
+    when(() => writes.deleteAssetWithTransactions(any()))
+        .thenThrow(Exception('HiveError: Box has already been closed'));
+    await openDetail(tester);
+
+    await tester.ensureVisible(find.text('Delete'));
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    expect(find.text("Couldn't delete Reliance. Please try again."),
+        findsOneWidget);
+    expect(find.textContaining('HiveError'), findsNothing);
+    expect(find.byType(AssetDetailScreen), findsOneWidget);
+    expect(find.text('Delete'), findsOneWidget); // usable again
+  });
+
+  testWidgets('a confirmed delete is written once and closes the detail',
+      (tester) async {
+    when(() => writes.deleteAssetWithTransactions(any())).thenAnswer((_) async {
+      store([]);
+    });
+    await openDetail(tester);
+
+    await tester.ensureVisible(find.text('Delete'));
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    verify(() => writes.deleteAssetWithTransactions('a1')).called(1);
+    expect(find.byType(AssetDetailScreen), findsNothing);
   });
 
   testWidgets('Edit gets the current price and saving closes the detail',

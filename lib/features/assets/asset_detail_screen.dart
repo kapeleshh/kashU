@@ -35,6 +35,10 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
   Asset? _lastSeen;
   bool _leaving = false;
 
+  /// True while a delete is being written, so a second confirm can't start
+  /// another one.
+  bool _deleting = false;
+
   @override
   Widget build(BuildContext context) {
     final live = ref.watch(assetByIdProvider(widget.assetId));
@@ -206,7 +210,7 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: _SoftButton(
-                      label: 'Delete',
+                      label: _deleting ? 'Deleting…' : 'Delete',
                       icon: Icons.delete_outline_rounded,
                       color: AppColors.lossOn(context),
                       onTap: () => _confirmDelete(asset),
@@ -249,8 +253,9 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
     if (changed == true) _leave();
   }
 
-  void _confirmDelete(Asset asset) {
-    showDialog(
+  Future<void> _confirmDelete(Asset asset) async {
+    if (_deleting) return;
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Delete asset?'),
@@ -259,20 +264,11 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
+            onPressed: () => Navigator.pop(dialogContext, false),
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () async {
-              Navigator.pop(dialogContext);
-              await ref
-                  .read(portfolioWriteServiceProvider)
-                  .deleteAssetWithTransactions(asset.id);
-              if (!mounted) return;
-              ref.invalidate(allAssetsProvider);
-              ref.invalidate(portfolioSummaryProvider);
-              _leave();
-            },
+            onPressed: () => Navigator.pop(dialogContext, true),
             style: TextButton.styleFrom(
               foregroundColor: AppColors.lossOn(context),
             ),
@@ -281,6 +277,30 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
         ],
       ),
     );
+    if (confirmed != true || _deleting || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _deleting = true);
+    try {
+      await ref
+          .read(portfolioWriteServiceProvider)
+          .deleteAssetWithTransactions(asset.id);
+    } catch (e, stack) {
+      // The raw error stays in the log; the user gets a plain sentence and
+      // the holding, which is still there, stays on screen.
+      debugPrint('[KashU] Deleting asset ${asset.id} failed: $e\n$stack');
+      if (mounted) setState(() => _deleting = false);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text("Couldn't delete ${asset.name}. Please try again."),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
+    ref.invalidate(allAssetsProvider);
+    ref.invalidate(portfolioSummaryProvider);
+    _leave();
   }
 }
 
@@ -773,6 +793,9 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
   /// Inline error under the manual price field (e.g. a negative price).
   String? _priceError;
 
+  /// True while a price is being written; Update is disabled meanwhile.
+  bool _savingPrice = false;
+
   @override
   void initState() {
     super.initState();
@@ -851,7 +874,10 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  _UpdateButton(onTap: _updatePrice),
+                  _UpdateButton(
+                    onTap: _savingPrice ? null : _updatePrice,
+                    busy: _savingPrice,
+                  ),
                 ],
               ),
             ],
@@ -1024,9 +1050,9 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
 
   Future<void> _applyLivePrice(double price) async {
     _priceController.text = price.toStringAsFixed(2);
-    await _updatePrice(showSnackbar: false);
+    final saved = await _updatePrice(showSnackbar: false);
 
-    if (!mounted) return;
+    if (!saved || !mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -1039,36 +1065,62 @@ class _UpdatePriceCardState extends ConsumerState<_UpdatePriceCard> {
     );
   }
 
-  Future<void> _updatePrice({bool showSnackbar = true}) async {
+  /// Save the typed price. Returns whether it was written.
+  Future<bool> _updatePrice({bool showSnackbar = true}) async {
+    if (_savingPrice) return false;
     // Same rule as the asset form's current price: finite, not negative,
     // and 0 allowed (a delisted share is worth nothing).
     final error =
         AmountValidator.validate(_priceController.text, allowZero: true);
     if (error != null) {
       setState(() => _priceError = error);
-      return;
+      return false;
     }
     final newPrice = AmountValidator.parse(_priceController.text)!;
-    if (_priceError != null) setState(() => _priceError = null);
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() {
+      _priceError = null;
+      _savingPrice = true;
+    });
 
-    final repository = ref.read(assetRepositoryProvider);
-    await repository.updateAssetPrice(widget.asset.id, newPrice);
+    try {
+      await ref
+          .read(assetRepositoryProvider)
+          .updateAssetPrice(widget.asset.id, newPrice);
+    } catch (e, stack) {
+      debugPrint('[KashU] Price update for ${widget.asset.id} failed: '
+          '$e\n$stack');
+      if (mounted) setState(() => _savingPrice = false);
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text("Couldn't update the price. Please try again."),
+        ),
+      );
+      return false;
+    }
+    if (mounted) setState(() => _savingPrice = false);
 
     ref.invalidate(allAssetsProvider);
     ref.invalidate(portfolioSummaryProvider);
 
-    if (showSnackbar && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+    if (showSnackbar) {
+      messenger.showSnackBar(
         const SnackBar(content: Text('Price updated successfully')),
       );
     }
+    return true;
   }
 }
 
 /// Small gradient "Update" CTA matching the soft-pop direction.
 class _UpdateButton extends StatelessWidget {
-  final VoidCallback onTap;
-  const _UpdateButton({required this.onTap});
+  /// Null while a write is in flight, which disables the button.
+  final VoidCallback? onTap;
+
+  /// Shows a spinner in place of the label.
+  final bool busy;
+
+  const _UpdateButton({required this.onTap, this.busy = false});
 
   @override
   Widget build(BuildContext context) {
@@ -1087,10 +1139,19 @@ class _UpdateButton extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 18),
             child: Center(
-              child: Text(
-                AppStrings.update,
-                style: AppTheme.heading(size: 14, color: Colors.white),
-              ),
+              child: busy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(
+                      AppStrings.update,
+                      style: AppTheme.heading(size: 14, color: Colors.white),
+                    ),
             ),
           ),
         ),

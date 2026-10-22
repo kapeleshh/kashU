@@ -94,6 +94,10 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   // ignore: unused_field
   FdBondInputResult? _fdBondResult;
 
+  /// True while a save or delete is being written. Save is disabled
+  /// meanwhile, so a second tap can't add the holding twice.
+  bool _isWriting = false;
+
   bool get isEditing => widget.existingAsset != null;
 
   /// Types that use the stock search autocomplete
@@ -560,19 +564,28 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
                 color: Colors.transparent,
                 child: InkWell(
                   borderRadius: BorderRadius.circular(AppRadii.tile),
-                  onTap: _saveAsset,
+                  onTap: _isWriting ? null : _saveAsset,
                   child: SizedBox(
                     height: 54,
                     child: Center(
-                      child: Text(
-                        isEditing
-                            ? AppStrings.update
-                            : 'Add to portfolio',
-                        style: AppTheme.heading(
-                          size: 16,
-                          color: Colors.white,
-                        ),
-                      ),
+                      child: _isWriting
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.5,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Text(
+                              isEditing
+                                  ? AppStrings.update
+                                  : 'Add to portfolio',
+                              style: AppTheme.heading(
+                                size: 16,
+                                color: Colors.white,
+                              ),
+                            ),
                     ),
                   ),
                 ),
@@ -1177,6 +1190,7 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
   }
 
   Future<void> _saveAsset() async {
+    if (_isWriting) return;
     if (!_formKey.currentState!.validate()) return;
 
     final now = DateTime.now();
@@ -1209,12 +1223,32 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
               : now,
     );
 
-    if (isEditing) {
-      await ref.read(assetRepositoryProvider).updateAsset(asset);
-    } else {
-      await ref
-          .read(portfolioWriteServiceProvider)
-          .addAssetWithBuyTransaction(asset);
+    setState(() => _isWriting = true);
+    try {
+      if (isEditing) {
+        await ref.read(assetRepositoryProvider).updateAsset(asset);
+      } else {
+        await ref
+            .read(portfolioWriteServiceProvider)
+            .addAssetWithBuyTransaction(asset);
+      }
+    } catch (e, stack) {
+      // The raw error (a Hive or file-system message) means nothing to the
+      // user; it goes to the log, a plain sentence goes on screen.
+      debugPrint('[KashU] Saving asset ${asset.id} failed: $e\n$stack');
+      if (!mounted) return;
+      setState(() => _isWriting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isNew
+                ? "Couldn't add this asset. Nothing was saved — please try "
+                    'again.'
+                : "Couldn't save your changes. Please try again.",
+          ),
+        ),
+      );
+      return;
     }
 
     ref.invalidate(allAssetsProvider);
@@ -1236,40 +1270,20 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
     }
   }
 
-  void _showDeleteDialog() {
-    showDialog(
+  Future<void> _showDeleteDialog() async {
+    if (_isWriting) return;
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text(AppStrings.delete),
         content: const Text(AppStrings.confirmDelete),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext, false),
             child: const Text(AppStrings.cancel),
           ),
           TextButton(
-            onPressed: () async {
-              final assetId = widget.existingAsset!.id;
-              final navigator = Navigator.of(context);
-              final messenger = ScaffoldMessenger.of(context);
-
-              await ref
-                  .read(portfolioWriteServiceProvider)
-                  .deleteAssetWithTransactions(assetId);
-
-              ref.invalidate(allAssetsProvider);
-              ref.invalidate(portfolioSummaryProvider);
-
-              if (mounted) {
-                navigator.pop(); // the dialog
-                navigator.pop(true); // this screen — deleted counts as done
-                messenger.showSnackBar(
-                  const SnackBar(
-                      content:
-                          Text('Asset and its transactions deleted')),
-                );
-              }
-            },
+            onPressed: () => Navigator.pop(dialogContext, true),
             child: Text(
               AppStrings.delete,
               style: TextStyle(color: AppColors.error),
@@ -1278,6 +1292,40 @@ class _AddAssetScreenState extends ConsumerState<AddAssetScreen> {
         ],
       ),
     );
+    if (confirmed == true) await _deleteAsset();
+  }
+
+  Future<void> _deleteAsset() async {
+    if (_isWriting || !mounted) return;
+    final assetId = widget.existingAsset!.id;
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+
+    setState(() => _isWriting = true);
+    try {
+      await ref
+          .read(portfolioWriteServiceProvider)
+          .deleteAssetWithTransactions(assetId);
+    } catch (e, stack) {
+      debugPrint('[KashU] Deleting asset $assetId failed: $e\n$stack');
+      if (mounted) setState(() => _isWriting = false);
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text("Couldn't delete this asset. Please try again."),
+        ),
+      );
+      return;
+    }
+
+    ref.invalidate(allAssetsProvider);
+    ref.invalidate(portfolioSummaryProvider);
+
+    if (mounted) {
+      navigator.pop(true); // this screen — deleted counts as done
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Asset and its transactions deleted')),
+      );
+    }
   }
 }
 

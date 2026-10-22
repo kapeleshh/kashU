@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -68,9 +70,40 @@ void main() {
         assetRepositoryProvider.overrideWithValue(repo),
         portfolioWriteServiceProvider.overrideWithValue(writes),
       ],
-      child: MaterialApp(home: AddAssetScreen(existingAsset: existing)),
+      // Opened from a launcher so a finished save can be seen popping it.
+      child: MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: TextButton(
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => AddAssetScreen(existingAsset: existing),
+                )),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ),
     ));
+    await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
+  }
+
+  Future<void> fillValidStock(WidgetTester tester) async {
+    await tester.enterText(
+        find.byKey(const ValueKey('asset-name')), 'Reliance Industries');
+    await tester.enterText(find.byKey(const ValueKey('asset-quantity')), '10');
+    await tester.enterText(
+        find.byKey(const ValueKey('asset-purchase-price')), '2500');
+    await tester.enterText(
+        find.byKey(const ValueKey('asset-current-price')), '2900');
+  }
+
+  Future<void> tapSave(WidgetTester tester, String label) async {
+    await tester.ensureVisible(find.text(label));
+    await tester.tap(find.text(label));
+    await tester.pump();
   }
 
   String text(WidgetTester tester, String key) => tester
@@ -191,6 +224,78 @@ void main() {
 
       expect(find.text('Must be more than 0'), findsOneWidget);
       verifyNever(() => writes.addAssetWithBuyTransaction(any()));
+    });
+  });
+
+  group('saving', () {
+    testWidgets('Save is disabled while the write is in flight',
+        (tester) async {
+      final write = Completer<void>();
+      when(() => writes.addAssetWithBuyTransaction(any()))
+          .thenAnswer((_) => write.future);
+      await openForm(tester);
+      await fillValidStock(tester);
+
+      await tapSave(tester, 'Add to portfolio');
+      // The label gives way to a spinner; tapping there again is ignored.
+      expect(find.text('Add to portfolio'), findsNothing);
+      await tester.tap(find.byType(CircularProgressIndicator));
+      await tester.pump();
+      verify(() => writes.addAssetWithBuyTransaction(any())).called(1);
+
+      write.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('open'), findsOneWidget); // form closed
+      expect(find.text('Asset added & transaction logged'), findsOneWidget);
+    });
+
+    testWidgets('a failed add says so plainly and keeps the form',
+        (tester) async {
+      when(() => writes.addAssetWithBuyTransaction(any())).thenThrow(
+          Exception('HiveError: Box has already been closed'));
+      await openForm(tester);
+      await fillValidStock(tester);
+
+      await tapSave(tester, 'Add to portfolio');
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining("Couldn't add this asset"), findsOneWidget);
+      expect(find.textContaining('HiveError'), findsNothing);
+      // Still on the form, with Save usable again.
+      expect(find.text('open'), findsNothing);
+      expect(find.text('Add to portfolio'), findsOneWidget);
+      expect(text(tester, 'asset-name'), 'Reliance Industries');
+    });
+
+    testWidgets('a failed edit says so plainly and keeps the form',
+        (tester) async {
+      when(() => repo.updateAsset(any()))
+          .thenThrow(Exception('FileSystemException: No space left'));
+      await openForm(tester, existing: _stock());
+
+      await tapSave(tester, 'Update');
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining("Couldn't save your changes"),
+          findsOneWidget);
+      expect(find.textContaining('FileSystemException'), findsNothing);
+      expect(find.text('Update'), findsOneWidget);
+    });
+
+    testWidgets('a failed delete from Edit says so and keeps the form',
+        (tester) async {
+      when(() => writes.deleteAssetWithTransactions(any()))
+          .thenThrow(Exception('HiveError'));
+      await openForm(tester, existing: _stock());
+
+      await tester.tap(find.byIcon(Icons.delete_outline_rounded));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, 'Delete'));
+      await tester.pumpAndSettle();
+
+      expect(find.text("Couldn't delete this asset. Please try again."),
+          findsOneWidget);
+      expect(find.text('Edit asset'), findsOneWidget);
     });
   });
 
