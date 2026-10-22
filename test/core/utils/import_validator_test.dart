@@ -52,8 +52,20 @@ void main() {
     });
 
     test('rejects a newer (unknown) version', () {
-      final error = ImportValidator.validateEnvelope({'schemaVersion': 3});
+      final error = ImportValidator.validateEnvelope(
+          {'schemaVersion': AppConstants.backupFormatVersion + 1});
       expect(error, contains('Unsupported backup version'));
+    });
+
+    test('still accepts every older numeric version', () {
+      for (final version in [1, 2, 3]) {
+        expect(
+          ImportValidator.validateEnvelope(
+              {'schemaVersion': version, 'assets': [], 'transactions': []}),
+          isNull,
+          reason: 'v$version',
+        );
+      }
     });
 
     test('rejects a missing version', () {
@@ -140,6 +152,57 @@ void main() {
     test('rejects a repeated asset id', () {
       expect(ImportValidator.validateAssets([validAsset(), validAsset()]),
           contains('Asset[1]."id" appears more than once'));
+    });
+  });
+
+  group('ImportValidator.validateAssets — deposit terms (v3)', () {
+    Map<String, dynamic> fd() => validAsset()
+      ..['type'] = 5 // AssetType.fixedDeposit
+      ..['depositRatePercent'] = 7.5
+      ..['depositMaturityDate'] = '2027-01-15T00:00:00.000'
+      ..['depositCompounding'] = 'quarterly';
+
+    Map<String, dynamic> rd() => validAsset()
+      ..['type'] = 5
+      ..['depositRatePercent'] = 7.0
+      ..['depositMaturityDate'] = '2025-01-15T00:00:00.000'
+      ..['rdMonthlyInstalment'] = 5000.0;
+
+    test('accepts a complete FD or RD, and a deposit with no terms', () {
+      expect(ImportValidator.validateAssets([fd()]), isNull);
+      expect(ImportValidator.validateAssets([rd()..['id'] = 'r1']), isNull);
+      expect(
+          ImportValidator.validateAssets([validAsset()..['type'] = 5]),
+          isNull);
+    });
+
+    test('accepts a maturity more than ten years out', () {
+      expect(
+          ImportValidator.validateAssets(
+              [fd()..['depositMaturityDate'] = '2045-01-15T00:00:00.000']),
+          isNull);
+    });
+
+    test('rejects incomplete or impossible terms', () {
+      String? check(Map<String, dynamic> a) =>
+          ImportValidator.validateAssets([a]);
+      expect(check(fd()..remove('depositMaturityDate')),
+          contains('"depositMaturityDate"'));
+      expect(check(fd()..['depositRatePercent'] = 0),
+          contains('"depositRatePercent"'));
+      expect(check(fd()..['depositRatePercent'] = 750),
+          contains('at most 100'));
+      expect(check(fd()..['depositCompounding'] = 'weekly'),
+          contains('"depositCompounding"'));
+      expect(check(fd()..['depositMaturityDate'] = '2023-01-01T00:00:00.000'),
+          contains('after its purchaseDate'));
+      expect(check(rd()..['rdMonthlyInstalment'] = -5000),
+          contains('"rdMonthlyInstalment"'));
+    });
+
+    test('rejects terms on something that is not a deposit', () {
+      expect(ImportValidator.validateAssets([fd()..['type'] = 0]),
+          contains('not a deposit'));
     });
   });
 

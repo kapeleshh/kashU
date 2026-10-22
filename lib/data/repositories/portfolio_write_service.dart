@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../core/utils/transaction_validator.dart';
+import '../../services/widget_update_service.dart';
 import '../models/asset.dart';
 import '../models/transaction.dart';
 import '../models/transaction_type.dart';
@@ -16,7 +17,7 @@ import 'transaction_repository.dart';
 /// a combined write can leave the boxes inconsistent. This service keeps them
 /// consistent with compensation (for adds) and pending-write markers that
 /// [completeInterruptedWrites] finishes on the next launch (for deletes and
-/// Clear All Data).
+/// Clear All Data) or rolls back (for imports, sales and sale deletes).
 ///
 /// Only marked writes are ever cleaned up. Transactions whose asset is
 /// missing for any *other* reason — the pre-tombstone delete path kept them,
@@ -26,15 +27,25 @@ class PortfolioWriteService {
   final AssetRepository _assetRepository;
   final TransactionRepository _transactionRepository;
   final Box? _settingsBoxOverride;
+  final Box? _priceHistoryBoxOverride;
+  final Box? _priceCacheBoxOverride;
+  final Future<void> Function() _clearHomeWidget;
 
   PortfolioWriteService({
     AssetRepository? assetRepository,
     TransactionRepository? transactionRepository,
     Box? settingsBox,
+    Box? priceHistoryBox,
+    Box? priceCacheBox,
+    Future<void> Function()? clearHomeWidget,
   })  : _assetRepository = assetRepository ?? AssetRepository(),
         _transactionRepository =
             transactionRepository ?? TransactionRepository(),
-        _settingsBoxOverride = settingsBox;
+        _settingsBoxOverride = settingsBox,
+        _priceHistoryBoxOverride = priceHistoryBox,
+        _priceCacheBoxOverride = priceCacheBox,
+        _clearHomeWidget =
+            clearHomeWidget ?? WidgetUpdateService.clearPortfolioWidget;
 
   Box get _settings =>
       _settingsBoxOverride ?? Hive.box(AppConstants.settingsBox);
@@ -117,27 +128,61 @@ class PortfolioWriteService {
     }
   }
 
-  /// Clear both boxes as one logical write (Settings → Clear All Data).
+  /// Erase all portfolio data as one logical write (Settings → Clear All
+  /// Data): holdings, transactions, the daily price history, the price
+  /// cache, every settings entry that describes the portfolio (rebalancing
+  /// targets, pending-write markers and journals, refresh and backup
+  /// timestamps) and the home-screen widget's figures. Only the user's
+  /// preferences survive — see [AppConstants.preservedSettingsKeys].
   ///
   /// Protected like single deletes: a pending-clear flag is set before the
   /// first clear and removed after the last, so a crash in between is
   /// finished by [completeInterruptedWrites] instead of leaving ghost
   /// history that the tax export would keep including. Transactions are
   /// cleared before assets so even an unmarked partial failure leaves an
-  /// empty history, not an orphaned one. All delete tombstones are dropped
-  /// too — after a full clear there is nothing left for them to clean up.
+  /// empty history, not an orphaned one.
+  ///
+  /// Blanking the widget is best-effort (there is none on web, and a
+  /// platform hiccup must not undo or fail the clear); everything else
+  /// throws, leaving the flag set so the next launch finishes the job.
   Future<void> clearAllData() async {
     await _settings.put(AppConstants.keyPendingClearAll, true);
     await _transactionRepository.clearAll();
     await _assetRepository.clearAll();
-    await _settings.put(AppConstants.keyPendingAssetDeletes, <String>[]);
+    await _clearBox(_priceHistoryBoxOverride, AppConstants.priceHistoryBox);
+    await _clearBox(_priceCacheBoxOverride, AppConstants.priceCacheBox);
+    await _settings.deleteAll(_settings.keys
+        .where((key) =>
+            key != AppConstants.keyPendingClearAll &&
+            !AppConstants.preservedSettingsKeys.contains(key))
+        .toList());
+    try {
+      await _clearHomeWidget();
+    } catch (e) {
+      debugPrint('[KashU] Could not blank the home-screen widget: $e');
+    }
     await _settings.put(AppConstants.keyPendingClearAll, false);
+  }
+
+  /// Empty the box [name] ([override] in tests). The app opens every box at
+  /// startup; should one not be open, its file is deleted instead, which
+  /// erases it just the same.
+  static Future<void> _clearBox(Box? override, String name) async {
+    if (override != null) {
+      await override.clear();
+    } else if (Hive.isBoxOpen(name)) {
+      await Hive.box(name).clear();
+    } else {
+      await Hive.deleteBoxFromDisk(name);
+    }
   }
 
   /// Finish combined writes that were interrupted mid-way.
   ///
-  /// Runs once per launch (after migrations). An interrupted Clear All Data
-  /// is finished first — it supersedes individual tombstones. Then each
+  /// Runs once per launch (after migrations). An interrupted import is
+  /// rolled back first, then an interrupted Clear All Data is finished — it
+  /// supersedes everything else. Interrupted sales and sale deletes are
+  /// rolled back next (see [_rollBackInterruptedSales]). Then each
   /// asset id tombstoned by [deleteAssetWithTransactions] is processed: its
   /// remaining transactions — and the asset itself, if the interruption
   /// happened before it was removed — are deleted, then the tombstone is
@@ -155,10 +200,11 @@ class PortfolioWriteService {
       return removed;
     }
 
-    final pending = _pendingDeletes();
-    if (pending.isEmpty) return 0;
+    var removed = await _rollBackInterruptedSales();
 
-    var removed = 0;
+    final pending = _pendingDeletes();
+    if (pending.isEmpty) return removed;
+
     for (final assetId in pending) {
       final leftovers =
           _transactionRepository.getTransactionsForAsset(assetId);
@@ -193,6 +239,9 @@ class PortfolioWriteService {
   ///
   /// The transaction is written first and removed again if lowering the
   /// quantity throws (compensation), so a failed sale leaves neither half.
+  /// A sale journal entry ([AppConstants.keyPendingSales]) is written before
+  /// either half and removed after both, so a sale the app is killed in the
+  /// middle of is rolled back the same way by [completeInterruptedWrites].
   /// Throws [ArgumentError] for input the form would reject (see
   /// [TransactionValidator]) and [StateError] if the asset no longer exists.
   Future<Transaction> recordSell({
@@ -221,17 +270,29 @@ class PortfolioWriteService {
       createdAt: now,
     );
 
-    await _transactionRepository.addTransaction(sell);
+    await _addPendingSale(sell.id, {
+      'op': _saleRecorded,
+      'assetId': asset.id,
+      'previousQuantity': asset.quantity,
+    });
     try {
+      await _transactionRepository.addTransaction(sell);
       await _assetRepository.updateAsset(asset.copyWith(
         quantity:
             TransactionValidator.remainingAfterSell(asset.quantity, quantity),
         updatedAt: now,
       ));
     } catch (_) {
-      await _transactionRepository.deleteTransaction(sell.id);
+      try {
+        await _transactionRepository.deleteTransaction(sell.id);
+        await _removePendingSale(sell.id);
+      } catch (e) {
+        debugPrint('[KashU] Could not undo a failed sale — it will be rolled '
+            'back on the next launch: $e');
+      }
       rethrow;
     }
+    await _removePendingSale(sell.id);
     return sell;
   }
 
@@ -275,24 +336,136 @@ class PortfolioWriteService {
   /// holding (when the asset still exists), so undoing a mistaken sale
   /// restores the quantity it took away. Other types only remove the record.
   ///
-  /// Compensated like [recordSell]: if restoring the quantity throws, the
-  /// transaction is put back and the error rethrown.
+  /// Compensated and journaled like [recordSell]: if restoring the quantity
+  /// throws, the transaction is put back and the error rethrown; if the app
+  /// is killed in between, [completeInterruptedWrites] puts it back.
   Future<void> deleteTransaction(Transaction transaction) async {
     final asset = transaction.type == TransactionType.sell
         ? _assetRepository.getAssetById(transaction.assetId)
         : null;
 
-    await _transactionRepository.deleteTransaction(transaction.id);
-    if (asset == null) return;
+    if (asset == null) {
+      await _transactionRepository.deleteTransaction(transaction.id);
+      return;
+    }
+
+    await _addPendingSale(transaction.id, {
+      'op': _saleDeleted,
+      'assetId': asset.id,
+      'previousQuantity': asset.quantity,
+      'transaction': transaction.toJson(),
+    });
     try {
+      await _transactionRepository.deleteTransaction(transaction.id);
       await _assetRepository.updateAsset(asset.copyWith(
         quantity: asset.quantity + transaction.quantity,
         updatedAt: DateTime.now(),
       ));
     } catch (_) {
-      // A fresh copy: the deleted HiveObject is detached from its box.
-      await _transactionRepository.addTransaction(transaction.copyWith());
+      try {
+        // A fresh copy: the deleted HiveObject is detached from its box.
+        await _transactionRepository.addTransaction(transaction.copyWith());
+        await _removePendingSale(transaction.id);
+      } catch (e) {
+        debugPrint('[KashU] Could not undo a failed sale delete — it will be '
+            'rolled back on the next launch: $e');
+      }
       rethrow;
+    }
+    await _removePendingSale(transaction.id);
+  }
+
+  // ─── Sale journal ─────────────────────────────────────────────────────────
+
+  /// Journal ops: a SELL being recorded, or a SELL being deleted.
+  static const String _saleRecorded = 'record';
+  static const String _saleDeleted = 'delete';
+
+  /// Sale journal entries by transaction id. Entries that aren't maps (a
+  /// corrupted value) are skipped.
+  Map<String, Map<String, dynamic>> _pendingSales() {
+    final raw = _settings.get(AppConstants.keyPendingSales);
+    if (raw is! Map) return {};
+    return {
+      for (final entry in raw.entries)
+        if (entry.key is String && entry.value is Map)
+          entry.key as String: Map<String, dynamic>.from(entry.value as Map),
+    };
+  }
+
+  Future<void> _addPendingSale(
+      String transactionId, Map<String, dynamic> entry) async {
+    await _settings.put(AppConstants.keyPendingSales,
+        {..._pendingSales(), transactionId: entry});
+  }
+
+  Future<void> _removePendingSale(String transactionId) async {
+    final pending = _pendingSales()..remove(transactionId);
+    if (pending.isEmpty) {
+      await _settings.delete(AppConstants.keyPendingSales);
+    } else {
+      await _settings.put(AppConstants.keyPendingSales, pending);
+    }
+  }
+
+  /// Roll back every sale the app died in the middle of recording or
+  /// deleting: a recorded SELL is removed, a deleted one is put back, and
+  /// the holding's quantity is set back to what it was before. Each entry is
+  /// idempotent and cleared once done, so a crash during the repair is
+  /// simply repaired again. Returns the number of SELLs removed.
+  ///
+  /// Rolling back rather than finishing: the user never saw the sale
+  /// confirmed, a rollback is exactly what [recordSell] and
+  /// [deleteTransaction] already do when a write fails in-process, and it
+  /// restores a state the user actually saw. Finishing it would complete a
+  /// sale nobody saw confirmed, which the user may well enter again and so
+  /// record twice; a rolled-back sale shows as units still held, which is
+  /// noticed and re-entered once.
+  Future<int> _rollBackInterruptedSales() async {
+    if (_settings.get(AppConstants.keyPendingSales) == null) return 0;
+    var removed = 0;
+    for (final MapEntry(key: transactionId, value: entry)
+        in _pendingSales().entries) {
+      switch (entry['op']) {
+        case _saleRecorded:
+          if (_transactionRepository
+              .getAllTransactions()
+              .any((t) => t.id == transactionId)) {
+            await _transactionRepository.deleteTransaction(transactionId);
+            removed++;
+          }
+        case _saleDeleted:
+          final sell = _decodeTransaction(entry['transaction']);
+          if (sell != null) await _transactionRepository.addTransaction(sell);
+      }
+
+      final assetId = entry['assetId'];
+      final previousQuantity = entry['previousQuantity'];
+      final asset =
+          assetId is String ? _assetRepository.getAssetById(assetId) : null;
+      if (asset != null &&
+          previousQuantity is num &&
+          asset.quantity != previousQuantity) {
+        await _assetRepository.updateAsset(asset.copyWith(
+          quantity: previousQuantity.toDouble(),
+          updatedAt: DateTime.now(),
+        ));
+      }
+      await _removePendingSale(transactionId);
+      debugPrint('[KashU] Rolled back an interrupted sale ($transactionId)');
+    }
+    // Junk that _pendingSales() skipped must not linger either.
+    await _settings.delete(AppConstants.keyPendingSales);
+    return removed;
+  }
+
+  static Transaction? _decodeTransaction(Object? json) {
+    if (json is! Map) return null;
+    try {
+      return Transaction.fromJson(Map<String, dynamic>.from(json));
+    } catch (e) {
+      debugPrint('[KashU] Unreadable sale journal entry, skipped: $e');
+      return null;
     }
   }
 

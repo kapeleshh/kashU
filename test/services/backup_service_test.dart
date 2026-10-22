@@ -14,6 +14,7 @@ import 'package:kashu/data/repositories/portfolio_write_service.dart';
 import 'package:kashu/data/repositories/transaction_repository.dart';
 import 'package:kashu/services/backup_service.dart';
 import 'package:kashu/services/export_service.dart';
+import 'package:kashu/services/fd_bond_calculator.dart';
 
 /// One device's Hive storage, in its own temp directory.
 class _Device {
@@ -331,5 +332,101 @@ void main() {
     final backup = BackupService.parse(text, existingAssetIds: const {});
     expect(backup.assets, hasLength(2));
     await phone.close();
+  });
+
+  group('deposit terms (backup format v3)', () {
+    // Opened a year ago, so the value has visibly grown since.
+    final now = DateTime.now();
+    final day = DateTime(now.year - 1, now.month, now.day);
+
+    Asset fd() => Asset(
+          id: 'sbi-fd',
+          name: 'SBI FD',
+          type: AssetType.fixedDeposit,
+          quantity: 1,
+          purchasePrice: 100000,
+          currentPrice: 100000, // the figure on the day it was added
+          currency: 'INR',
+          purchaseDate: day,
+          createdAt: day,
+          updatedAt: day,
+          depositRatePercent: 7.5,
+          depositMaturityDate: DateTime(day.year + 3, day.month, day.day),
+          depositCompounding: 'quarterly',
+        );
+
+    Asset rd() => Asset(
+          id: 'hdfc-rd',
+          name: 'HDFC RD',
+          type: AssetType.fixedDeposit,
+          quantity: 1,
+          purchasePrice: 5000,
+          currentPrice: 5000,
+          currency: 'INR',
+          purchaseDate: day,
+          createdAt: day,
+          updatedAt: day,
+          depositRatePercent: 7.0,
+          depositMaturityDate: DateTime(day.year + 2, day.month, day.day),
+          rdMonthlyInstalment: 5000,
+        );
+
+    test('survive export → import and keep the deposit growing', () async {
+      final phoneA = await _Device.open('dep-a');
+      await phoneA.assets.addAsset(fd());
+      await phoneA.assets.addAsset(rd());
+      final file = phoneA.exportFile();
+      final original = phoneA.contents();
+      await phoneA.close();
+
+      final json = jsonDecode(utf8.decode(file)) as Map<String, dynamic>;
+      expect(json['schemaVersion'], AppConstants.backupFormatVersion);
+      final fdJson = (json['assets'] as List)
+          .cast<Map<String, dynamic>>()
+          .firstWhere((a) => a['id'] == 'sbi-fd');
+      expect(fdJson['depositRatePercent'], 7.5);
+      expect(fdJson['depositCompounding'], 'quarterly');
+
+      final phoneB = await _Device.open('dep-b');
+      final backup =
+          BackupService.parseBytes(file, existingAssetIds: phoneB.assetIds);
+      await phoneB.writer.importBackup(
+          assets: backup.assets, transactions: backup.transactions);
+
+      expect(phoneB.contents(), original);
+      final restoredFd = phoneB.assets.getAssetById('sbi-fd')!;
+      final restoredRd = phoneB.assets.getAssetById('hdfc-rd')!;
+      expect(restoredFd.depositSchedule, isNotNull);
+      expect(restoredRd.depositSchedule!.isRecurring, isTrue);
+      // Valued from its terms, not frozen at the stored 100000.
+      expect(restoredFd.currentValue, closeTo(107714, 60));
+      // Thirteen instalments are due a year in (the 13th falls today).
+      expect(restoredRd.totalInvested,
+          5000 * (FdBondCalculator.monthsBetween(day, DateTime.now()) + 1));
+      expect(restoredRd.totalInvested, greaterThan(5000));
+      await phoneB.close();
+    });
+
+    test('a v2 backup from before deposit terms still imports', () async {
+      final legacy = fd().toJson()
+        ..remove('depositRatePercent')
+        ..remove('depositMaturityDate')
+        ..remove('depositCompounding')
+        ..remove('rdMonthlyInstalment')
+        ..['currentPrice'] = 104000.0;
+      final text = jsonEncode({
+        'schemaVersion': 2,
+        'exportedAt': DateTime(2026, 1, 1).toIso8601String(),
+        'assets': [legacy],
+        'transactions': [],
+      });
+
+      final backup = BackupService.parse(text, existingAssetIds: const {});
+      final deposit = backup.assets.single;
+      expect(deposit.depositSchedule, isNull);
+      // Manually valued, exactly as before v3.
+      expect(deposit.currentValue, 104000);
+      expect(deposit.totalInvested, 100000);
+    });
   });
 }

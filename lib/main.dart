@@ -8,6 +8,7 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'core/config/app_config.dart';
 import 'core/config/crash_reporting_consent.dart';
 import 'core/theme/app_theme.dart';
+import 'core/theme/font_licenses.dart';
 import 'core/constants/app_strings.dart';
 import 'core/constants/app_constants.dart';
 import 'data/migration/hive_migration_service.dart';
@@ -22,6 +23,7 @@ import 'features/dashboard/dashboard_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
 import 'features/startup/database_error_app.dart';
 import 'shared/providers/portfolio_provider.dart';
+import 'shared/providers/settings_providers.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Database recovery
@@ -216,7 +218,12 @@ bool _readCrashReportingConsent() {
 /// recovery screen doesn't initialise it a second time.
 bool _sentryStarted = false;
 
-void main() => _startApp();
+void main() {
+  // Once per process: _startApp re-runs after "Try again" on the recovery
+  // screen, and the licence registry does not de-duplicate.
+  registerFontLicenses();
+  _startApp();
+}
 
 Future<void> _startApp() async {
   final cipher = await _preBootstrap();
@@ -335,25 +342,44 @@ class _KashUAppState extends ConsumerState<KashUApp>
     return MaterialApp(
       title: AppStrings.appName,
       debugShowCheckedModeBanner: false,
-      // C·Soft theme — all screens are theme-aware, so follow the device.
+      // C·Soft theme — all screens are theme-aware. Settings › Appearance
+      // picks System (follow the device, the default), Light or Dark; the
+      // lock overlay below sits inside this theme too.
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      themeMode: ThemeMode.system,
+      themeMode: ref.watch(themeModeProvider),
       home: home,
       // The lock is an overlay above the whole app rather than a route:
       // navigation state survives lock/unlock, and there is no way to
       // navigate around the lock.
-      builder: (context, child) => Stack(
-        children: [
-          if (child != null) child,
-          // The lock gets its own ScaffoldMessenger: the app's root
-          // messenger presents snackbars on every Scaffold it manages, so
-          // without this a snackbar completing after a re-lock (e.g. a price
-          // refresh result naming failed symbols — the user's holdings)
-          // would paint on top of the lock screen.
-          if (locked) const ScaffoldMessenger(child: LockScreen()),
-        ],
+      builder: (context, child) => AnnotatedRegion<SystemUiOverlayStyle>(
+        // Screens without an AppBar (home, onboarding, lock) take their
+        // status-bar icon colour from here, so it follows the theme too —
+        // otherwise Light would keep the white icons main() starts with.
+        value: _statusBarStyle(Theme.of(context).brightness),
+        child: Stack(
+          children: [
+            if (child != null) child,
+            // The lock gets its own ScaffoldMessenger: the app's root
+            // messenger presents snackbars on every Scaffold it manages, so
+            // without this a snackbar completing after a re-lock (e.g. a
+            // price refresh result naming failed symbols — the user's
+            // holdings) would paint on top of the lock screen.
+            if (locked) const ScaffoldMessenger(child: LockScreen()),
+          ],
+        ),
       ),
+    );
+  }
+
+  /// Status bar only: the navigation-bar fields stay null, so the system
+  /// keeps managing that bar exactly as before.
+  static SystemUiOverlayStyle _statusBarStyle(Brightness theme) {
+    final dark = theme == Brightness.dark;
+    return SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
+      statusBarBrightness: theme, // iOS: the background the icons sit on
     );
   }
 }

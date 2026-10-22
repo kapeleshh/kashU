@@ -1,3 +1,4 @@
+import 'amount_validator.dart';
 import 'currency_formatter.dart';
 
 /// Rules for recording a sell, dividend or interest payment.
@@ -12,12 +13,9 @@ abstract final class TransactionValidator {
   /// refused nor left as a dust remainder.
   static const double quantityTolerance = 1e-9;
 
-  /// A finite, positive number: a quantity, a price or an amount.
-  static String? positive(double? value) {
-    if (value == null || !value.isFinite) return 'Enter a valid number';
-    if (value <= 0) return 'Must be more than 0';
-    return null;
-  }
+  /// A finite, positive number: a quantity, a price or an amount. The rule
+  /// itself is [AmountValidator]'s, shared with the asset form and imports.
+  static String? positive(double? value) => AmountValidator.check(value);
 
   /// The quantity of a sale out of a holding of [holding] units.
   static String? sellQuantity(double? quantity, double holding) {

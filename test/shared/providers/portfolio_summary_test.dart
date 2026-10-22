@@ -9,6 +9,8 @@ import 'package:kashu/data/repositories/asset_repository.dart';
 import 'package:kashu/services/price_history_service.dart';
 import 'package:kashu/shared/providers/portfolio_provider.dart';
 
+import '../../fixtures/sample_portfolio.dart';
+
 class MockAssetRepository extends Mock implements AssetRepository {}
 
 class MockPriceHistoryService extends Mock implements PriceHistoryService {}
@@ -95,6 +97,70 @@ void main() {
         [_asset(), _asset(id: 'a2', quantity: 0)], _yesterday());
 
     expect(summary.totalAssets, 1);
+  });
+
+  test('a mixed INR + USD portfolio is totalled in the base currency',
+      () async {
+    final repo = MockAssetRepository();
+    when(() => repo.getAllAssets()).thenReturn(samplePortfolio());
+    when(() => repo.getTopGainers()).thenReturn(const []);
+    when(() => repo.getTopLosers()).thenReturn(const []);
+    final history = MockPriceHistoryService();
+    when(() => history.previousDaySnapshot()).thenReturn(null);
+    final container = ProviderContainer(overrides: [
+      assetRepositoryProvider.overrideWithValue(repo),
+      baseCurrencyProvider.overrideWith((ref) => 'INR'),
+      priceHistoryServiceProvider.overrideWithValue(history),
+      exchangeRatesProvider.overrideWith((ref) async => sampleRates()),
+    ]);
+    addTearDown(container.dispose);
+
+    final summary = await container.read(portfolioSummaryProvider.future);
+
+    // Apple's $1,840 is ₹1,56,400, not ₹1,840.
+    expect(summary.totalValue, closeTo(sampleTotalValueInr, 1e-6));
+    expect(summary.assetAllocation[AssetType.stock],
+        closeTo(sampleStockValueInr, 1e-6));
+  });
+
+  test('a deposit with terms counts at today\'s value, interest included',
+      () async {
+    final now = DateTime.now();
+    final opened = DateTime(now.year - 1, now.month, now.day);
+    final fd = Asset(
+      id: 'fd',
+      name: 'SBI FD',
+      type: AssetType.fixedDeposit,
+      quantity: 1,
+      purchasePrice: 100000,
+      currentPrice: 100000, // stored the day it was added, never refreshed
+      currency: 'INR',
+      purchaseDate: opened,
+      createdAt: opened,
+      updatedAt: opened,
+      depositRatePercent: 10,
+      depositMaturityDate: DateTime(now.year + 2, now.month, now.day),
+      depositCompounding: 'yearly',
+    );
+    // Yesterday's snapshot held the deposit a day's interest lower.
+    final yesterday = DailySnapshot(
+      date: now.subtract(const Duration(days: 1)),
+      total: fd.currentPriceOn(now.subtract(const Duration(days: 1))),
+      assetValues: {
+        'fd': fd.currentPriceOn(now.subtract(const Duration(days: 1))),
+      },
+      assetQuantities: const {'fd': 1},
+    );
+
+    final summary = await summaryFor([fd], yesterday);
+
+    expect(summary.totalInvested, 100000);
+    expect(summary.totalValue, closeTo(110000, 30)); // a year at 10%
+    expect(summary.totalGainLoss, closeTo(10000, 30));
+    // The day's interest shows up as today's change, with no refresh.
+    expect(summary.hasTodaysChange, isTrue);
+    expect(summary.todaysChange, greaterThan(0));
+    expect(summary.todaysChange, lessThan(40)); // ~110000 × 10% / 365
   });
 
   test('a snapshot round-trips its quantities through JSON', () {

@@ -289,7 +289,8 @@ class _AssetsScreenState extends ConsumerState<AssetsScreen>
   }
 
   String? _priceAge(Asset asset) {
-    if (asset.priceUpdatedAt == null) return null;
+    // A deposit with terms is valued as of today, whatever was last saved.
+    if (asset.priceUpdatedAt == null || asset.hasDepositSchedule) return null;
     final diff = DateTime.now().difference(asset.priceUpdatedAt!);
     if (diff.inMinutes < 1) return 'Just now';
     if (diff.inHours < 1) return '${diff.inMinutes}m ago';
