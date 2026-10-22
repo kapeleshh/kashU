@@ -17,6 +17,7 @@ import '../../core/utils/file_saver.dart';
 import '../../services/auth_service.dart';
 import '../../services/backup_service.dart';
 import '../../shared/providers/portfolio_provider.dart';
+import '../../shared/providers/settings_providers.dart';
 import '../rebalancing/rebalancing_screen.dart';
 import '../export/tax_export_screen.dart';
 
@@ -160,32 +161,68 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                 onChanged: _appLockBusy ? null : _toggleAppLock,
               ),
-            SwitchListTile(
-              secondary: _tileIcon(Icons.bug_report_outlined),
-              title: Text(
-                'Help improve KashU',
-                style: AppTheme.body(
-                  size: 15,
-                  weight: FontWeight.w700,
-                  color: Theme.of(context).colorScheme.onSurface,
+            // A build without a Sentry DSN can't send reports, so the
+            // opt-in would be a switch that does nothing — don't offer it.
+            if (ref.watch(crashReportingAvailableProvider))
+              SwitchListTile(
+                secondary: _tileIcon(Icons.bug_report_outlined),
+                title: Text(
+                  'Help improve KashU',
+                  style: AppTheme.body(
+                    size: 15,
+                    weight: FontWeight.w700,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
                 ),
-              ),
-              subtitle: Text(
-                'Anonymous crash reports (applies after restart)',
-                style: AppTheme.body(
-                  size: 12.5,
-                  weight: FontWeight.w500,
-                  color: AppColors.textTertiaryOn(context),
+                subtitle: Text(
+                  'Anonymous crash reports (applies after restart)',
+                  style: AppTheme.body(
+                    size: 12.5,
+                    weight: FontWeight.w500,
+                    color: AppColors.textTertiaryOn(context),
+                  ),
                 ),
+                value: _crashReportingEnabled,
+                activeThumbColor: AppColors.primary,
+                activeTrackColor: AppColors.primary.withValues(alpha: 0.4),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                onChanged: _toggleCrashReporting,
               ),
-              value: _crashReportingEnabled,
-              activeThumbColor: AppColors.primary,
-              activeTrackColor: AppColors.primary.withValues(alpha: 0.4),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              onChanged: _toggleCrashReporting,
-            ),
           ]),
+
+          const SizedBox(height: 22),
+
+          // Appearance Section — applies at once, no restart.
+          _buildSectionHeader(context, 'Appearance'),
+          const SizedBox(height: 11),
+          RadioGroup<ThemeMode>(
+            groupValue: ref.watch(themeModeProvider),
+            onChanged: (mode) {
+              if (mode == null) return;
+              ref.read(themeModeProvider.notifier).setThemeMode(mode);
+            },
+            child: _buildSettingsCard([
+              _themeModeTile(
+                mode: ThemeMode.system,
+                icon: Icons.brightness_auto_outlined,
+                title: 'System',
+                subtitle: "Match your phone's light or dark setting",
+              ),
+              _themeModeTile(
+                mode: ThemeMode.light,
+                icon: Icons.light_mode_outlined,
+                title: 'Light',
+                subtitle: 'Always use the light theme',
+              ),
+              _themeModeTile(
+                mode: ThemeMode.dark,
+                icon: Icons.dark_mode_outlined,
+                title: 'Dark',
+                subtitle: 'Always use the dark theme',
+              ),
+            ]),
+          ),
 
           const SizedBox(height: 22),
 
@@ -272,6 +309,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 AppConstants.contactEmail,
               ),
             ),
+            // Flutter's licence page: every package's licence plus the
+            // bundled fonts' OFL texts (registered in main()).
+            _SettingsTile(
+              icon: Icons.description_outlined,
+              title: 'Open-source licences',
+              subtitle: 'The fonts and libraries KashU is built with',
+              onTap: () => showLicensePage(
+                context: context,
+                applicationName: AppStrings.appName,
+              ),
+            ),
           ]),
 
           const SizedBox(height: 32),
@@ -343,6 +391,39 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         borderRadius: BorderRadius.circular(AppRadii.avatar),
       ),
       child: Icon(icon, color: tone, size: 20),
+    );
+  }
+
+  /// One choice in the Appearance card. The enclosing [RadioGroup] holds the
+  /// selection, so the tile only needs its [mode].
+  Widget _themeModeTile({
+    required ThemeMode mode,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    return RadioListTile<ThemeMode>(
+      value: mode,
+      secondary: _tileIcon(icon),
+      controlAffinity: ListTileControlAffinity.trailing,
+      activeColor: AppColors.primary,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      title: Text(
+        title,
+        style: AppTheme.body(
+          size: 15,
+          weight: FontWeight.w700,
+          color: Theme.of(context).colorScheme.onSurface,
+        ),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: AppTheme.body(
+          size: 12.5,
+          weight: FontWeight.w500,
+          color: AppColors.textTertiaryOn(context),
+        ),
+      ),
     );
   }
 
